@@ -24,6 +24,26 @@ const SYSTEM_USER_PERMISSIONS: PermissionDefinition[] = [
     name: SystemPermission.USER_DELETE,
     description: 'حذف المستخدم',
   },
+  {
+    name: SystemPermission.ROLE_VIEW,
+    description: 'عرض الأدوار والصلاحيات',
+  },
+  {
+    name: SystemPermission.ROLE_CREATE,
+    description: 'إنشاء دور جديد',
+  },
+  {
+    name: SystemPermission.ROLE_UPDATE,
+    description: 'تعديل بيانات الدور',
+  },
+  {
+    name: SystemPermission.ROLE_DELETE,
+    description: 'حذف أو أرشفة الدور',
+  },
+  {
+    name: SystemPermission.ROLE_PERMISSION_MANAGE,
+    description: 'إدارة وإسناد صلاحيات الدور',
+  },
 ];
 
 export async function seedSystemUserPermissions(

@@ -4,6 +4,7 @@ import { requirePermission } from '../modules/system/authorization/authorization
 import { SystemPermission } from '../modules/system/permission/constants/system-permission.enum.js';
 import { validateUuidParam } from '../common/middleware/validate-uuid-param.middleware.js';
 import { userWebController } from '../modules/system/user/user.web.controller.js';
+import { roleWebController } from '../modules/system/role/role.web.controller.js';
 
 const webRouter: Router = Router();
 
@@ -62,6 +63,40 @@ webRouter.get(
   requirePermission(SystemPermission.USER_UPDATE),
   validateUuidParam('id'),
   userWebController.renderEditUserForm
+);
+
+// GET /system/roles - System Roles List (Protected)
+webRouter.get(
+  '/system/roles',
+  requireWebAuth,
+  requirePermission(SystemPermission.ROLE_VIEW),
+  roleWebController.renderRolesList
+);
+
+// GET /system/roles/create - Create Role Page (Protected)
+webRouter.get(
+  '/system/roles/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.ROLE_CREATE),
+  roleWebController.renderCreateRoleForm
+);
+
+// GET /system/roles/:id/edit - Edit Role Page (Protected)
+webRouter.get(
+  '/system/roles/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.ROLE_UPDATE),
+  validateUuidParam('id'),
+  roleWebController.renderEditRoleForm
+);
+
+// GET /system/roles/:id/permissions - Role Permissions Page (Protected)
+webRouter.get(
+  '/system/roles/:id/permissions',
+  requireWebAuth,
+  requirePermission(SystemPermission.ROLE_VIEW),
+  validateUuidParam('id'),
+  roleWebController.renderRolePermissionsForm
 );
 
 export { webRouter };
