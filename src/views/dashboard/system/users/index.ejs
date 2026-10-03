@@ -92,11 +92,11 @@
                     </a>
                     <% if (u.id !== currentUserId) { %>
                       <% if (u.isActive) { %>
-                        <button type="button" class="btn btn-sm btn-outline-warning" title="تعطيل المستخدم" onclick="toggleUserStatus('<%= u.id %>', false, '<%= u.fullName %>')">
+                        <button type="button" class="btn btn-sm btn-outline-warning" title="تعطيل المستخدم" data-action="toggle-user-status" data-user-id="<%= u.id %>" data-user-name="<%= u.fullName %>" data-new-status="false">
                           <i class="fa-solid fa-user-slash"></i>
                         </button>
                       <% } else { %>
-                        <button type="button" class="btn btn-sm btn-outline-success" title="تفعيل المستخدم" onclick="toggleUserStatus('<%= u.id %>', true, '<%= u.fullName %>')">
+                        <button type="button" class="btn btn-sm btn-outline-success" title="تفعيل المستخدم" data-action="toggle-user-status" data-user-id="<%= u.id %>" data-user-name="<%= u.fullName %>" data-new-status="true">
                           <i class="fa-solid fa-user-check"></i>
                         </button>
                       <% } %>
@@ -104,7 +104,7 @@
                   <% } %>
 
                   <% if (typeof canDelete !== 'undefined' && canDelete && u.id !== currentUserId) { %>
-                    <button type="button" class="btn btn-sm btn-outline-danger" title="أرشفة / حذف" onclick="confirmDeleteUser('<%= u.id %>', '<%= u.fullName %>')">
+                    <button type="button" class="btn btn-sm btn-outline-danger" title="أرشفة / حذف" data-action="delete-user" data-user-id="<%= u.id %>" data-user-name="<%= u.fullName %>">
                       <i class="fa-solid fa-trash-can"></i>
                     </button>
                   <% } %>

@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class ListUsersQueryDto {
@@ -15,7 +15,9 @@ export class ListUsersQueryDto {
   @Max(100, { message: 'الحد الأقصى لعدد العناصر في الصفحة هو 100' })
   limit: number = 20;
 
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()
   @IsString({ message: 'نص البحث يجب أن يكون نصاً' })
   search?: string;
 }
+

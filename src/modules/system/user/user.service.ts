@@ -123,76 +123,92 @@ export class UserService {
     dto: UpdateUserDto,
     currentPrincipal: AuthPrincipal
   ): Promise<SafeUserOutput> {
-    const user = await this.userRepository.findOne({
-      where: { id, deletedAt: IsNull() },
-      relations: { role: true },
-    });
-
-    if (!user) {
-      throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
-    }
-
     // 1. Self Protection Rules
     if (currentPrincipal.id === id) {
       if (dto.isActive !== undefined && dto.isActive === false) {
         throw new ForbiddenError('لا يمكنك تعطيل حسابك الحالي', 'CANNOT_DEACTIVATE_OWN_ACCOUNT');
       }
-      if (dto.roleId !== undefined && dto.roleId !== user.roleId) {
-        throw new ForbiddenError('لا يمكنك تغيير الدور الخاص بحسابك الحالي', 'CANNOT_CHANGE_OWN_ROLE');
-      }
     }
 
-    // 2. Phone Uniqueness Check
-    if (dto.phone !== undefined) {
-      const cleanPhone = dto.phone.trim();
-      if (cleanPhone !== user.phone) {
-        const duplicate = await this.userRepository
-          .createQueryBuilder('u')
-          .withDeleted()
-          .where('u.phone = :phone AND u.id != :id', { phone: cleanPhone, id })
-          .getOne();
-
-        if (duplicate) {
-          throw new ConflictError('رقم الهاتف مستخدم بالفعل', 'USER_PHONE_ALREADY_EXISTS');
-        }
-      }
-    }
-
-    // 3. Role Change Rules
-    if (dto.roleId !== undefined && dto.roleId !== user.roleId) {
-      if (user.role?.code === SystemRole.SYSTEM_ADMIN && user.isActive) {
-        const adminCount = await this.countActiveSystemAdmins();
-        if (adminCount <= 1) {
-          throw new BusinessRuleError(
-            'لا يمكن تغيير دور آخر مدير نظام فعال',
-            'CANNOT_CHANGE_LAST_ADMIN_ROLE'
-          );
-        }
-      }
-
-      const targetRole = await this.roleService.findActiveRoleById(dto.roleId);
-      if (!targetRole) {
-        throw new NotFoundError('الدور المحدد غير موجود أو غير نشط', 'ROLE_NOT_FOUND_OR_INACTIVE');
-      }
-    }
-
-    // 4. Deactivation Rules
-    if (dto.isActive === false && user.isActive === true) {
-      if (user.role?.code === SystemRole.SYSTEM_ADMIN) {
-        const adminCount = await this.countActiveSystemAdmins();
-        if (adminCount <= 1) {
-          throw new BusinessRuleError(
-            'لا يمكن تعطيل آخر مدير نظام فعال',
-            'CANNOT_DEACTIVATE_LAST_ADMIN'
-          );
-        }
-      }
-    }
-
-    // 5. Transaction execution
+    // 2. Transaction execution with Pessimistic Locking for Last Admin Safety
     return await AppDataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(UserEntity);
 
+      // Reload target user inside transaction
+      const user = await userRepo.findOne({
+        where: { id, deletedAt: IsNull() },
+        relations: { role: true },
+      });
+
+      if (!user) {
+        throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
+      }
+
+      // Self role protection check against reloaded user
+      if (currentPrincipal.id === id && dto.roleId !== undefined && dto.roleId !== user.roleId) {
+        throw new ForbiddenError('لا يمكنك تغيير الدور الخاص بحسابك الحالي', 'CANNOT_CHANGE_OWN_ROLE');
+      }
+
+      // Invariant checks for SYSTEM_ADMIN reduction
+      const isCurrentActiveAdmin = user.role?.code === SystemRole.SYSTEM_ADMIN && user.isActive;
+      const willDeactivate = dto.isActive === false && user.isActive === true;
+      const willChangeRoleAway =
+        dto.roleId !== undefined &&
+        dto.roleId !== user.roleId &&
+        user.role?.code === SystemRole.SYSTEM_ADMIN;
+
+      if (isCurrentActiveAdmin && (willDeactivate || willChangeRoleAway)) {
+        // Pessimistic write lock on all active SYSTEM_ADMIN rows
+        const activeAdmins = await userRepo
+          .createQueryBuilder('u')
+          .setLock('pessimistic_write')
+          .innerJoin('u.role', 'role')
+          .where('role.code = :adminCode', { adminCode: SystemRole.SYSTEM_ADMIN })
+          .andWhere('u.isActive = :isActive', { isActive: true })
+          .andWhere('u.deletedAt IS NULL')
+          .select(['u.id'])
+          .getMany();
+
+        if (activeAdmins.length <= 1) {
+          if (willChangeRoleAway) {
+            throw new BusinessRuleError(
+              'لا يمكن تغيير دور آخر مدير نظام فعال',
+              'CANNOT_CHANGE_LAST_ADMIN_ROLE'
+            );
+          } else {
+            throw new BusinessRuleError(
+              'لا يمكن تعطيل آخر مدير نظام فعال',
+              'CANNOT_DEACTIVATE_LAST_ADMIN'
+            );
+          }
+        }
+      }
+
+      // Role Change Validation
+      if (dto.roleId !== undefined && dto.roleId !== user.roleId) {
+        const targetRole = await this.roleService.findActiveRoleById(dto.roleId, manager);
+        if (!targetRole) {
+          throw new NotFoundError('الدور المحدد غير موجود أو غير نشط', 'ROLE_NOT_FOUND_OR_INACTIVE');
+        }
+      }
+
+      // Phone Uniqueness Check
+      if (dto.phone !== undefined) {
+        const cleanPhone = dto.phone.trim();
+        if (cleanPhone !== user.phone) {
+          const duplicate = await userRepo
+            .createQueryBuilder('u')
+            .withDeleted()
+            .where('u.phone = :phone AND u.id != :id', { phone: cleanPhone, id })
+            .getOne();
+
+          if (duplicate) {
+            throw new ConflictError('رقم الهاتف مستخدم بالفعل', 'USER_PHONE_ALREADY_EXISTS');
+          }
+        }
+      }
+
+      // Apply Updates
       if (dto.fullName !== undefined) {
         user.fullName = dto.fullName.trim();
       }
@@ -227,54 +243,53 @@ export class UserService {
     id: string,
     currentPrincipal: AuthPrincipal
   ): Promise<{ success: boolean; message: string }> {
-    const user = await this.userRepository.findOne({
-      where: { id, deletedAt: IsNull() },
-      relations: { role: true },
-    });
-
-    if (!user) {
-      throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
-    }
-
     // 1. Self Protection
     if (currentPrincipal.id === id) {
       throw new ForbiddenError('لا يمكنك أرشفة أو حذف حسابك الحالي', 'CANNOT_DELETE_OWN_ACCOUNT');
     }
 
-    // 2. Last SYSTEM_ADMIN Protection
-    if (user.role?.code === SystemRole.SYSTEM_ADMIN && user.isActive) {
-      const adminCount = await this.countActiveSystemAdmins();
-      if (adminCount <= 1) {
-        throw new BusinessRuleError(
-          'لا يمكن أرشفة أو حذف آخر مدير نظام فعال',
-          'CANNOT_DELETE_LAST_ADMIN'
-        );
-      }
-    }
-
-    // 3. Transaction Soft Delete + Revoke Sessions
+    // 2. Transaction Soft Delete + Revoke Sessions with Pessimistic Locking
     await AppDataSource.transaction(async (manager) => {
+      const userRepo = manager.getRepository(UserEntity);
+      const user = await userRepo.findOne({
+        where: { id, deletedAt: IsNull() },
+        relations: { role: true },
+      });
+
+      if (!user) {
+        throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
+      }
+
+      // Last SYSTEM_ADMIN Protection with Pessimistic Write Lock
+      if (user.role?.code === SystemRole.SYSTEM_ADMIN && user.isActive) {
+        const activeAdmins = await userRepo
+          .createQueryBuilder('u')
+          .setLock('pessimistic_write')
+          .innerJoin('u.role', 'role')
+          .where('role.code = :adminCode', { adminCode: SystemRole.SYSTEM_ADMIN })
+          .andWhere('u.isActive = :isActive', { isActive: true })
+          .andWhere('u.deletedAt IS NULL')
+          .select(['u.id'])
+          .getMany();
+
+        if (activeAdmins.length <= 1) {
+          throw new BusinessRuleError(
+            'لا يمكن أرشفة أو حذف آخر مدير نظام فعال',
+            'CANNOT_DELETE_LAST_ADMIN'
+          );
+        }
+      }
+
       await this.sessionService.revokeUserSessions(id, 'USER_DELETED', manager);
       user.isActive = false;
-      await manager.getRepository(UserEntity).save(user);
-      await manager.getRepository(UserEntity).softDelete(id);
+      await userRepo.save(user);
+      await userRepo.softDelete(id);
     });
 
     return {
       success: true,
       message: 'تم أرشفة المستخدم بنجاح',
     };
-  }
-
-  async countActiveSystemAdmins(manager?: EntityManager): Promise<number> {
-    const repo = manager ? manager.getRepository(UserEntity) : this.userRepository;
-    return repo
-      .createQueryBuilder('u')
-      .innerJoin('u.role', 'role')
-      .where('role.code = :adminCode', { adminCode: SystemRole.SYSTEM_ADMIN })
-      .andWhere('u.isActive = :isActive', { isActive: true })
-      .andWhere('u.deletedAt IS NULL')
-      .getCount();
   }
 }
 

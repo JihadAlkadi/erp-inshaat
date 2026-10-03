@@ -3,6 +3,51 @@
  * Handles Create, Update, Status Toggle, and Soft Delete via native fetch
  */
 
+// Helper to extract and format Arabic error messages from API response
+function extractApiErrorMessage(responseBody, fallback) {
+  if (!responseBody) return fallback || 'حدث خطأ غير متوقع';
+
+  var errorMessages = [];
+
+  if (responseBody.errors && typeof responseBody.errors === 'object' && !Array.isArray(responseBody.errors)) {
+    Object.keys(responseBody.errors).forEach(function(key) {
+      var val = responseBody.errors[key];
+      if (Array.isArray(val)) {
+        val.forEach(function(msg) {
+          if (typeof msg === 'string' && msg.trim() !== '') {
+            errorMessages.push(msg.trim());
+          }
+        });
+      } else if (typeof val === 'string' && val.trim() !== '') {
+        errorMessages.push(val.trim());
+      }
+    });
+  } else if (Array.isArray(responseBody.errors)) {
+    responseBody.errors.forEach(function(msg) {
+      if (typeof msg === 'string' && msg.trim() !== '') {
+        errorMessages.push(msg.trim());
+      }
+    });
+  }
+
+  if (errorMessages.length === 0 && responseBody.message && typeof responseBody.message === 'string') {
+    errorMessages.push(responseBody.message);
+  }
+
+  var uniqueMessages = [];
+  errorMessages.forEach(function(msg) {
+    if (uniqueMessages.indexOf(msg) === -1) {
+      uniqueMessages.push(msg);
+    }
+  });
+
+  if (uniqueMessages.length > 0) {
+    return uniqueMessages.join('، ');
+  }
+
+  return fallback || 'حدث خطأ أثناء معالجة الطلب';
+}
+
 // Helper to show form error alert
 function showFormError(message) {
   var alertEl = document.getElementById('formAlert');
@@ -54,8 +99,8 @@ function setButtonLoading(btn, isLoading, loadingText) {
   }
 }
 
-// Toggle User Active Status (PATCH)
-window.toggleUserStatus = function(userId, newStatus, userName) {
+// Internal Toggle User Active Status (PATCH)
+function handleStatusToggle(userId, newStatus, userName) {
   var actionTitle = newStatus ? 'تفعيل الحساب' : 'تعطيل الحساب';
   var actionText = newStatus
     ? 'هل أنت متأكد من تفعيل حساب المستخدم "' + (userName || '') + '"؟'
@@ -83,7 +128,7 @@ window.toggleUserStatus = function(userId, newStatus, userName) {
       performStatusToggle(userId, newStatus);
     }
   }
-};
+}
 
 function performStatusToggle(userId, newStatus) {
   fetch('/api/system/users/' + encodeURIComponent(userId), {
@@ -104,7 +149,7 @@ function performStatusToggle(userId, newStatus) {
         sessionStorage.setItem('pendingToast', newStatus ? 'تم تفعيل حساب المستخدم بنجاح' : 'تم تعطيل حساب المستخدم بنجاح');
         window.location.reload();
       } else {
-        var errorMsg = resObj.data.message || 'حدث خطأ أثناء تحديث حالة المستخدم';
+        var errorMsg = extractApiErrorMessage(resObj.data, 'حدث خطأ أثناء تحديث حالة المستخدم');
         if (typeof Swal !== 'undefined') {
           Swal.fire({
             icon: 'error',
@@ -133,8 +178,8 @@ function performStatusToggle(userId, newStatus) {
     });
 }
 
-// Confirm and Soft Delete User (DELETE)
-window.confirmDeleteUser = function(userId, userName) {
+// Internal Confirm and Soft Delete User (DELETE)
+function handleSoftDelete(userId, userName) {
   var title = 'أرشفة المستخدم';
   var text = 'هل أنت متأكد من رغبتك في أرشفة / حذف حساب "' + (userName || '') + '"؟ لن يتمكن المستخدم من الدخول للنظام وسيتم إيقاف جلساته.';
 
@@ -158,7 +203,7 @@ window.confirmDeleteUser = function(userId, userName) {
       performSoftDelete(userId);
     }
   }
-};
+}
 
 function performSoftDelete(userId) {
   fetch('/api/system/users/' + encodeURIComponent(userId), {
@@ -177,7 +222,7 @@ function performSoftDelete(userId) {
         sessionStorage.setItem('pendingToast', 'تم أرشفة المستخدم بنجاح');
         window.location.reload();
       } else {
-        var errorMsg = resObj.data.message || 'حدث خطأ أثناء أرشفة المستخدم';
+        var errorMsg = extractApiErrorMessage(resObj.data, 'حدث خطأ أثناء أرشفة المستخدم');
         if (typeof Swal !== 'undefined') {
           Swal.fire({
             icon: 'error',
@@ -206,8 +251,37 @@ function performSoftDelete(userId) {
     });
 }
 
-// DOM Event Handlers for Forms
+// DOM Event Handlers
 document.addEventListener('DOMContentLoaded', function() {
+  // Delegated click handler for user table actions
+  document.addEventListener('click', function(e) {
+    var target = e.target;
+    if (!(target instanceof Element)) return;
+
+    var toggleBtn = target.closest('[data-action="toggle-user-status"]');
+    if (toggleBtn) {
+      e.preventDefault();
+      var userId = toggleBtn.dataset.userId;
+      var userName = toggleBtn.dataset.userName;
+      var newStatus = toggleBtn.dataset.newStatus === 'true';
+      if (userId) {
+        handleStatusToggle(userId, newStatus, userName);
+      }
+      return;
+    }
+
+    var deleteBtn = target.closest('[data-action="delete-user"]');
+    if (deleteBtn) {
+      e.preventDefault();
+      var delUserId = deleteBtn.dataset.userId;
+      var delUserName = deleteBtn.dataset.userName;
+      if (delUserId) {
+        handleSoftDelete(delUserId, delUserName);
+      }
+      return;
+    }
+  });
+
   // 1. Create User Form Handling
   var createForm = document.getElementById('createUserForm');
   if (createForm) {
@@ -262,10 +336,7 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.href = '/system/users';
           } else {
             setButtonLoading(submitBtn, false);
-            var msg = resObj.data.message || 'فشل إنشاء المستخدم';
-            if (resObj.data.errors && Array.isArray(resObj.data.errors)) {
-              msg = resObj.data.errors.join('، ');
-            }
+            var msg = extractApiErrorMessage(resObj.data, 'فشل إنشاء المستخدم');
             showFormError(msg);
           }
         })
@@ -333,10 +404,7 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.href = '/system/users';
           } else {
             setButtonLoading(submitBtn, false);
-            var msg = resObj.data.message || 'فشل تحديث بيانات المستخدم';
-            if (resObj.data.errors && Array.isArray(resObj.data.errors)) {
-              msg = resObj.data.errors.join('، ');
-            }
+            var msg = extractApiErrorMessage(resObj.data, 'فشل تحديث بيانات المستخدم');
             showFormError(msg);
           }
         })

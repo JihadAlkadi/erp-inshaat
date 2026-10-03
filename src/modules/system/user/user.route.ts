@@ -9,6 +9,7 @@ import { validateUuidParam } from '../../../common/middleware/validate-uuid-para
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { ListUsersQueryDto } from './dto/list-users-query.dto.js';
+import { validateUserUpdatePayload } from './user.middleware.js';
 
 const userApiRouter: Router = Router();
 
@@ -46,6 +47,7 @@ userApiRouter.patch(
   requirePermission(SystemPermission.USER_UPDATE),
   validateUuidParam('id'),
   validateDto(UpdateUserDto),
+  validateUserUpdatePayload,
   userController.updateUser
 );
 

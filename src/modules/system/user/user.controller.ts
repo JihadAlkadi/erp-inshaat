@@ -14,7 +14,10 @@ export class UserController {
 
   listUsers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const query = req.query as unknown as ListUsersQueryDto;
+      if (!req.validatedQuery) {
+        throw new Error('Validated query parameters not found on request context');
+      }
+      const query = req.validatedQuery as ListUsersQueryDto;
       const result = await this.userService.listUsers(query);
       res.status(200).json(ApiResponse.success(result));
     } catch (error) {

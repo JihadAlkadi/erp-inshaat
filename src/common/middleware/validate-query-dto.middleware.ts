@@ -49,7 +49,7 @@ export function validateQueryDto<T extends object>(dtoClass: ClassConstructor<T>
         return;
       }
 
-      req.query = dtoInstance as unknown as Request['query'];
+      req.validatedQuery = dtoInstance;
       next();
     } catch (error) {
       next(error);
