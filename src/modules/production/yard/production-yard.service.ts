@@ -13,6 +13,7 @@ import {
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+import { ProductionYardEngineerEntity } from '../team/entities/production-yard-engineer.entity.js';
 
 export class ProductionYardService {
   private readonly yardRepository: Repository<ProductionYardEntity>;
@@ -187,6 +188,18 @@ export class ProductionYardService {
 
       // 2. If moving to another department, validate & lock target department
       if (dto.departmentId !== undefined && dto.departmentId !== yard.departmentId) {
+        const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
+        const assignedCount = await yardEngRepo.count({
+          where: { yardId: yard.id },
+        });
+
+        if (assignedCount > 0) {
+          throw new BusinessRuleError(
+            'لا يمكن نقل الساحة إلى قسم آخر لأنها مسندة لمهندسين حالياً',
+            'PRODUCTION_YARD_HAS_ENGINEERS'
+          );
+        }
+
         currentDepartment = await this.departmentService.findAssignableDepartmentForUpdate(
           dto.departmentId,
           manager
@@ -250,6 +263,7 @@ export class ProductionYardService {
   async softDeleteYard(id: string): Promise<void> {
     await AppDataSource.transaction(async (manager) => {
       const yardRepo = manager.getRepository(ProductionYardEntity);
+      const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
       const yard = await yardRepo
         .createQueryBuilder('yard')
@@ -260,6 +274,17 @@ export class ProductionYardService {
 
       if (!yard) {
         throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+      }
+
+      const assignedCount = await yardEngRepo.count({
+        where: { yardId: yard.id },
+      });
+
+      if (assignedCount > 0) {
+        throw new BusinessRuleError(
+          'لا يمكن أرشفة الساحة لأنها مسندة لمهندسين حالياً',
+          'PRODUCTION_YARD_HAS_ENGINEERS'
+        );
       }
 
       yard.deletedAt = new Date();

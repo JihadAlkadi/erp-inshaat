@@ -60,6 +60,23 @@
           </div>
 
           <div class="mb-3">
+            <label for="headUserId" class="form-label fw-bold">رئيس القسم <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-user-tie"></i></span>
+              <select class="form-select" id="headUserId" name="headUserId" required>
+                <option value="" disabled selected>-- اختر رئيس القسم المسؤول --</option>
+                <% if (typeof activeUsers !== 'undefined' && activeUsers && activeUsers.length > 0) { %>
+                  <% activeUsers.forEach(function(u) { %>
+                    <option value="<%= u.id %>"><%= u.fullName %> (<%= u.phone %>)</option>
+                  <% }); %>
+                <% } %>
+              </select>
+            </div>
+            <div class="form-text small text-muted">رئيس القسم يكون مسؤولاً تلقائياً عن جميع ساحات القسم الحالية والمستقبلية.</div>
+            <div class="invalid-feedback">يرجى اختيار رئيس القسم.</div>
+          </div>
+
+          <div class="mb-3">
             <label for="description" class="form-label fw-bold">الوصف</label>
             <textarea
               class="form-control"

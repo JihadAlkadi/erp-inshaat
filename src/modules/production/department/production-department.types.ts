@@ -4,6 +4,8 @@ export interface SafeProductionDepartmentOutput {
   code: string;
   description: string | null;
   isActive: boolean;
+  headUserId?: string | null;
+  headUserName?: string | null;
   yardCount?: number;
   activeYardCount?: number;
   createdAt: Date;

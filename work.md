@@ -2,16 +2,26 @@
 
 ## Current Project State
 
-تم تنفيذ مرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات الشاملة (Role Management Core & Global Permission Assignment) ومرحلة إدارة المستخدمين الأساسية (User Management Core) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات وقاعدة البيانات:
+تم تنفيذ مرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات الشاملة (Role Management Core & Global Permission Assignment) ومرحلة إدارة المستخدمين الأساسية (User Management Core) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات وقاعدة البيانات:
+- **فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core)** (`src/modules/production/team/`):
+  - **هيكل مسؤوليات تشغيلي مستقل**: يربط المستخدمين بالكيانات التشغيلية داخل تطبيق الإنتاج حصراً ومستقل تماماً عن HR.
+  - **رئيس القسم (`Department Head`)**: لكل قسم إنتاج رئيس قسم واحد (`head_user_id` في `production_department`)، ويكون مسؤولاً تلقائياً عن جميع ساحات القسم الحالية والمستقبلية دون الحاجة لصفوف إسناد ساحات منفصلة.
+  - **المهندسون وتوزيع الساحات (`Engineers & Yard Assignments`)**:
+    - المهندس ينتمي لقسم إنتاج واحد فقط (`userId` فريد في `production_department_engineer`).
+    - المهندس يُسند لساحة واحدة أو أكثر تتبع لنفس قسمه (`production_yard_engineer`).
+    - يمكن للساحة الواحدة أن تضم أكثر من مهندس مسؤول عنها.
+    - يُمنع إسناد مهندس لساحات تتبع قسماً آخر (`PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH`).
+    - يُمنع نقل أو أرشفة ساحة مسندة لمهندسين حالياً (`PRODUCTION_YARD_HAS_ENGINEERS`).
+    - لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، وعند إعادة تعيينه يُعاد تفعيل نفس السجل لمنع تكرار الـ ID.
 - **الهيكل التشغيلي للإنتاج - الأقسام والساحات (Production Departments & Yards Core)** (`src/modules/production/`):
   - **فصل تشغيلي تام عن الموارد البشرية**: بيانات الأقسام والساحات هنا هي بيانات تشغيلية تخص تطبيق الإنتاج (`Production Application`) حصراً ومستقلة تماماً عن الهيكل التنظيمي للموارد البشرية (`HR Structure`).
   - **بيانات أعمال ديناميكية**: بيانات الأقسام والساحات ديناميكية بالكامل وتُدار عبر الواجهة وقاعدة البيانات ولا تحتوي على أي Enums صلبة.
   - **خدمة أقسام الإنتاج `ProductionDepartmentService`** (`src/modules/production/department/production-department.service.ts`):
-    - `listDepartments`: استرجاع قائمة أقسام الإنتاج مع ترقيم الصفحات (Pagination) والبحث بالاسم أو الرمز، وحساب إجمالي الساحات (`yardCount`) والساحات النشطة (`activeYardCount`) في استعلام تجميعي واحد بدون N+1، واستبعاد المحذوفين ناعماً.
-    - `getDepartmentById`: استرجاع تفاصيل قسم إنتاج محدد مع حساب عدد الساحات ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد.
-    - `createDepartment`: إنشاء قسم إنتاج جديد، مع فحص مسبق لفرادة الرمز التقني (`code.trim().toUpperCase()`) متضمناً السجلات المحذوفة ناعماً (`withDeleted()`) والتقاط تضارب المفتاح الفريد وتحويله إلى `ConflictError` برمز `PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS` (409).
+    - `listDepartments`: استرجاع قائمة أقسام الإنتاج مع ترقيم الصفحات (Pagination) والبحث بالاسم أو الرمز، واسترجاع رئيس القسم، وحساب إجمالي الساحات (`yardCount`) والساحات النشطة (`activeYardCount`) في استعلام تجميعي واحد بدون N+1، واستبعاد المحذوفين ناعماً.
+    - `getDepartmentById`: استرجاع تفاصيل قسم إنتاج محدد مع رئيس القسم وحساب عدد الساحات ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد.
+    - `createDepartment`: إنشاء قسم إنتاج جديد مع تحديد رئيس القسم الإلزامي (`headUserId`)، والتحقق من نشاط المستخدم وصلاحيته، مع فحص مسبق لفرادة الرمز التقني (`code.trim().toUpperCase()`) متضمناً السجلات المحذوفة ناعماً (`withDeleted()`) والتقاط تضارب المفتاح الفريد وتحويله إلى `ConflictError` برمز `PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS` (409).
     - `updateDepartment`: تحديث بيانات القسم (الاسم، الوصف، حالة التفعيل) داخل Transaction مع قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل القسم (`Department row`)، مع ثبات الرمز التقني وعدم السماح بتعديله، وتطبيق قاعدة منع تعطيل القسم طالما يمتلك ساحات نشطة (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_YARDS`).
-    - `softDeleteDepartment`: أرشفة القسم (Soft Delete) وضبط `isActive = false` داخل Transaction مع قفل تشاؤمي على سجل القسم، وتطبيق قاعدة منع أرشفة القسم طالما يمتلك أي ساحات غير مؤرشفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`).
+    - `softDeleteDepartment`: أرشفة القسم (Soft Delete) وضبط `isActive = false` داخل Transaction مع قفل تشاؤمي على سجل القسم، وتطبيق قاعدة منع أرشفة القسم طالما يمتلك أي ساحات غير مؤرشفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`) وتطبيق قاعدة منع أرشفة القسم طالما يمتلك مهندسين نشطين (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_ENGINEERS`).
     - `findAssignableDepartmentForUpdate`: دالة مساعدة لقفل والتحقق من نشاط وصلاحية القسم قبل ربط الساحات به.
     - `listActiveDepartments`: استرجاع قائمة الأقسام النشطة للاختيار في نماذج إنشاء وتعديل الساحات.
   - **خدمة ساحات الإنتاج `ProductionYardService`** (`src/modules/production/yard/production-yard.service.ts`):
@@ -186,7 +196,8 @@ src/
 │   ├── migrations/
 │   │   ├── 1710000000000-CreateSystemCoreTables.ts
 │   │   ├── 1710000000001-CreateSystemSessionTable.ts
-│   │   └── 1710000000002-CreateProductionDepartmentsAndYards.ts
+│   │   ├── 1710000000002-CreateProductionDepartmentsAndYards.ts
+│   │   └── 1710000000003-CreateProductionTeamAssignments.ts
 │   ├── seeds/
 │   │   └── system-initial.seed.ts
 │   └── data-source.ts
@@ -204,6 +215,19 @@ src/
 │   │   │   ├── production-department.service.ts
 │   │   │   ├── production-department.types.ts
 │   │   │   └── production-department.web.controller.ts
+│   │   ├── team/
+│   │   │   ├── dto/
+│   │   │   │   ├── create-production-engineer-assignment.dto.ts
+│   │   │   │   ├── set-production-department-head.dto.ts
+│   │   │   │   └── update-production-engineer-yards.dto.ts
+│   │   │   ├── entities/
+│   │   │   │   ├── production-department-engineer.entity.ts
+│   │   │   │   └── production-yard-engineer.entity.ts
+│   │   │   ├── production-team.controller.ts
+│   │   │   ├── production-team.route.ts
+│   │   │   ├── production-team.service.ts
+│   │   │   ├── production-team.types.ts
+│   │   │   └── production-team.web.controller.ts
 │   │   └── yard/
 │   │       ├── dto/
 │   │       │   ├── create-production-yard.dto.ts
@@ -290,6 +314,7 @@ src/
 │       ├── app.js
 │       ├── login.js
 │       ├── production-departments.js
+│       ├── production-team.js
 │       ├── production-yards.js
 │       ├── roles.js
 │       ├── user-permissions.js
@@ -312,6 +337,10 @@ src/
 │   │   │   │   └── index.ejs
 │   │   │   ├── partials/
 │   │   │   │   └── sidebar.ejs
+│   │   │   ├── team/
+│   │   │   │   ├── create-engineer.ejs
+│   │   │   │   ├── edit-engineer.ejs
+│   │   │   │   └── index.ejs
 │   │   │   ├── yards/
 │   │   │   │   ├── create.ejs
 │   │   │   │   ├── edit.ejs
@@ -329,7 +358,7 @@ src/
 │   │   │   ├── users/
 │   │   │   │   ├── create.ejs
 │   │   │   │   ├── edit.ejs
-│   │   │   │   ├── index.ejs
+│   │   │   │   └── index.ejs
 │   │   │   │   └── permissions.ejs
 │   │   │   ├── index.ejs
 │   │   │   └── layout.ejs
@@ -373,6 +402,8 @@ src/
   - `PRODUCTION_YARD_CREATE = 'production.yard.create'` (إنشاء ساحة إنتاج)
   - `PRODUCTION_YARD_UPDATE = 'production.yard.update'` (تعديل بيانات ساحة الإنتاج)
   - `PRODUCTION_YARD_DELETE = 'production.yard.delete'` (أرشفة / حذف ساحة الإنتاج)
+  - `PRODUCTION_ASSIGNMENT_VIEW = 'production.assignment.view'` (عرض تعيينات فرق الإنتاج)
+  - `PRODUCTION_ASSIGNMENT_MANAGE = 'production.assignment.manage'` (إدارة رؤساء الأقسام والمهندسين وساحات مسؤوليتهم)
 
 ### `AuthConstants`
 - **File**: `src/modules/system/auth/auth.constants.ts`
@@ -384,26 +415,27 @@ src/
 
 ---
 
-## Production Infrastructure (Departments & Yards Core)
+## Production Infrastructure (Departments, Yards & Teams)
 
 ### `ProductionDepartmentService` (`src/modules/production/department/production-department.service.ts`)
-- **Purpose**: تنفيذ منطق الأعمال، والتحقق من فرادة الرمز التقني، وحماية الأقسام التي تمتلك ساحات، وإدارة دورة حياة أقسام الإنتاج التشغيلية مع قفل تشاؤمي موحد لمنع التزامن غير المتسق.
+- **Purpose**: تنفيذ منطق الأعمال، والتحقق من فرادة الرمز التقني، وتعيين رئيس القسم الإلزامي، وحماية الأقسام التي تمتلك ساحات أو مهندسين، وإدارة دورة حياة أقسام الإنتاج التشغيلية مع قفل تشاؤمي موحد لمنع التزامن غير المتسق.
 - **Methods**:
   - `listDepartments(query: ListProductionDepartmentsQueryDto): Promise<PaginatedProductionDepartmentsResult>`
     - **Input**: `query` (`page`, `limit`, `search`).
-    - **Action**: استعلام مقسم لصفحات مع البحث بالاسم أو الرمز، تجميع وحساب عدد الساحات الإجمالي (`yardCount`) والساحات النشطة (`activeYardCount`) لكل قسم بكفاءة بدون N+1، استبعاد الأقسام المحذوفة ناعماً، وترتيب النتائج تصاعدياً حسب تاريخ الإنشاء.
+    - **Action**: استعلام مقسم لصفحات مع البحث بالاسم أو الرمز، تجميع وحساب عدد الساحات الإجمالي (`yardCount`) والساحات النشطة (`activeYardCount`) واسترجاع اسم رئيس القسم (`headUserName`) لكل قسم بكفاءة بدون N+1، استبعاد الأقسام المحذوفة ناعماً، وترتيب النتائج تصاعدياً حسب تاريخ الإنشاء.
     - **Output**: `{ items: SafeProductionDepartmentOutput[], total, page, limit, totalPages }`.
   - `getDepartmentById(id: string): Promise<SafeProductionDepartmentOutput>`
     - **Input**: `id` (UUID).
-    - **Action**: استرجاع قسم الإنتاج غير المحذوف ناعماً مع حسابه لـ `yardCount` و `activeYardCount` ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد.
+    - **Action**: استرجاع قسم الإنتاج غير المحذوف ناعماً مع حسابه لـ `yardCount` و `activeYardCount` ورئيس القسم، ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد.
     - **Output**: `SafeProductionDepartmentOutput`.
   - `createDepartment(dto: CreateProductionDepartmentDto): Promise<SafeProductionDepartmentOutput>`
-    - **Input**: `CreateProductionDepartmentDto` (`name`, `code`, `description`, `isActive`).
+    - **Input**: `CreateProductionDepartmentDto` (`name`, `code`, `headUserId`, `description`, `isActive`).
     - **Action**:
       1. تنظيف الرمز التقني وتحويله إلى أحرف إنجليزية كبيرة (`code.trim().toUpperCase()`).
       2. معالجة الوصف (`string` يقص ويتحول الفارغ إلى `null`).
       3. التحقق المسبق من عدم وجود الرمز (مع المحذوفين ناعماً) ورمي `ConflictError` (`PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS`).
-      4. حفظ الكيان مع التقاط أخطاء الـ Race Condition في قاعدة البيانات وتحويلها إلى 409 `PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS`.
+      4. التحقق من وجود ونشاط مستخدم رئيس القسم (`headUserId`) وعدم حذفه ناعماً ورمي `BusinessRuleError` (`PRODUCTION_DEPARTMENT_HEAD_USER_NOT_AVAILABLE`) في حال عدم توفره.
+      5. حفظ الكيان مع التقاط أخطاء الـ Race Condition في قاعدة البيانات وتحويلها إلى 409 `PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS`.
     - **Output**: `SafeProductionDepartmentOutput`.
   - `updateDepartment(id: string, dto: UpdateProductionDepartmentDto): Promise<SafeProductionDepartmentOutput>`
     - **Input**: `id`, `UpdateProductionDepartmentDto` (`name`, `description`, `isActive`).
@@ -419,17 +451,18 @@ src/
     - **Action**:
       1. بدء Transaction وإعادة تحميل القسم المستهدف مع قفل تشاؤمي (`pessimistic_write`).
       2. التحقق من عدم امتلاك القسم لأي ساحات غير محذوفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`).
-      3. ضبط `isActive = false` وتنفيذ `softDelete`.
+      3. التحقق من عدم امتلاك القسم لأي مهندسين نشطين مسندين للقسم (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_ENGINEERS`).
+      4. ضبط `isActive = false` وتنفيذ `softDelete`.
     - **Output**: `{ success: true, message: 'تم أرشفة قسم الإنتاج بنجاح' }`.
   - `findAssignableDepartmentForUpdate(departmentId: string, manager: EntityManager): Promise<ProductionDepartmentEntity | null>`:
     - **Input**: `departmentId`, `manager`.
-    - **Action**: البحث عن قسم نشط وغير محذوف ناعماً مع فرض قفل تشاؤمي للكتابة (`setLock('pessimistic_write')`) لنقطة تسلسل موحدة أثناء إنشاء/نقل/تفعيل الساحات.
+    - **Action**: البحث عن قسم نشط وغير محذوف ناعماً مع فرض قفل تشاؤمي للكتابة (`setLock('pessimistic_write')`) لنقطة تسلسل موحدة أثناء إنشاء/نقل/تفعيل الساحات أو تعيين المهندسين.
     - **Output**: `ProductionDepartmentEntity | null`.
   - `listActiveDepartments(): Promise<Array<{ id: string; name: string; code: string }>>`:
     - **Action**: استرجاع قائمة الأقسام النشطة غير المحذوفة للاختيار في الواجهات.
 
 ### `ProductionYardService` (`src/modules/production/yard/production-yard.service.ts`)
-- **Purpose**: إدارة ساحات الإنتاج التشغيلية، وسعاتها الاستيعابية، وربطها بأقسام الإنتاج، مع فرض قواعد التسلسل والتزامن.
+- **Purpose**: إدارة ساحات الإنتاج التشغيلية، وسعاتها الاستيعابية، وربطها بأقسام الإنتاج، ومنع نقل أو أرشفة الساحات المسندة لمهندسين مع فرض قواعد التسلسل والتزامن.
 - **Methods**:
   - `listYards(query: ListProductionYardsQueryDto): Promise<PaginatedProductionYardsResult>`
     - **Input**: `query` (`page`, `limit`, `search`, `departmentId`).
@@ -454,7 +487,9 @@ src/
     - **Action**:
       1. فتح Transaction وإعادة تحميل الساحة مع قفل تشاؤمي (`pessimistic_write`).
       2. منع تعديل الرمز التقني نهائياً (`code` is immutable).
-      3. إذا تم تغيير القسم التابع: قفل والتحقق من نشاط القسم الجديد عبر `findAssignableDepartmentForUpdate`.
+      3. إذا تم تغيير القسم التابع:
+         - التحقق من عدم ارتباط الساحة بأي مهندسين حالياً في `production_yard_engineer` ورمي `BusinessRuleError` (`PRODUCTION_YARD_HAS_ENGINEERS`).
+         - قفل والتحقق من نشاط القسم الجديد عبر `findAssignableDepartmentForUpdate`.
       4. إذا كانت الساحة ستصبح نشطة (`isActive = true`): قفل والتحقق من نشاط القسم الحالي/الجديد لمنع وجود ساحة نشطة تتبع لقسم معطل.
       5. حفظ التعديلات وإرجاع الكائن المحدث مع بيانات القسم.
     - **Output**: `SafeProductionYardOutput`.
@@ -462,20 +497,57 @@ src/
     - **Input**: `id`.
     - **Action**:
       1. فتح Transaction وإعادة تحميل الساحة مع قفل تشاؤمي (`pessimistic_write`).
-      2. ضبط `isActive = false` وتنفيذ `softDelete`.
+      2. التحقق من عدم ارتباط الساحة بأي مهندسين حالياً في `production_yard_engineer` ورمي `BusinessRuleError` (`PRODUCTION_YARD_HAS_ENGINEERS`).
+      3. ضبط `isActive = false` وتنفيذ `softDelete`.
     - **Output**: `{ success: true, message: 'تم أرشفة ساحة الإنتاج بنجاح' }`.
 
+### `ProductionTeamService` (`src/modules/production/team/production-team.service.ts`)
+- **Purpose**: إدارة فريق عمل ومسؤوليات قسم الإنتاج، بما فيها تعيين رئيس القسم وتوزيع المهندسين وساحات مسؤوليتهم.
+- **Methods**:
+  - `getDepartmentTeam(departmentId: string): Promise<DepartmentTeamOutput>`
+    - **Input**: `departmentId`.
+    - **Action**: استرجاع بيانات القسم ورئيس القسم وقائمة المهندسين النشطين مع ساحاتهم المسندة داخل استعلام محكم بدون N+1.
+    - **Output**: `{ department, head, engineers }`.
+  - `setDepartmentHead(departmentId: string, userId: string): Promise<{ success: boolean; message: string; head: SafeHeadUserOutput }>`
+    - **Input**: `departmentId`, `userId`.
+    - **Action**: فتح Transaction، قفل القسم والمستخدم بـ `pessimistic_write`، التحقق من نشاط المستخدم وصلاحيته، تحديث `headUserId` وحفظ القسم.
+    - **Output**: `{ success: true, message, head }`.
+  - `addEngineerToDepartment(departmentId: string, dto: CreateProductionEngineerAssignmentDto): Promise<SafeEngineerAssignmentOutput>`
+    - **Input**: `departmentId`, `dto` (`userId`, `yardIds`).
+    - **Action**:
+      1. فتح Transaction، قفل سجل القسم وسجل المستخدم بـ `pessimistic_write`.
+      2. التحقق من نشاط وصلاحية المستخدم ونشاط القسم.
+      3. التحقق من عدم إسناد المستخدم لأي قسم إنتاج آخر (حظر التعدد عبر الأقسام `PRODUCTION_ENGINEER_ASSIGNED_TO_OTHER_DEPARTMENT`).
+      4. قفل والتحقق من أن جميع الساحات المحددة تتبع لنفس القسم ونشطة (`PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH`).
+      5. إنشاء التعيين أو إعادة تفعيل سجل سابق مع تحديث ارتباطات الساحات في `production_yard_engineer`.
+    - **Output**: `SafeEngineerAssignmentOutput`.
+  - `updateEngineerYards(departmentId: string, assignmentId: string, dto: UpdateProductionEngineerYardsDto): Promise<SafeEngineerAssignmentOutput>`
+    - **Input**: `departmentId`, `assignmentId`, `dto` (`yardIds`).
+    - **Action**: فتح Transaction، قفل سجل المهندس والساحات المستهدفة، التحقق من تبعيتها لنفس القسم، واستبدال ارتباطات الساحات ذرياً داخل `production_yard_engineer`.
+    - **Output**: `SafeEngineerAssignmentOutput`.
+  - `removeEngineerFromDepartment(departmentId: string, assignmentId: string): Promise<{ success: boolean; message: string }>`
+    - **Input**: `departmentId`, `assignmentId`.
+    - **Action**: فتح Transaction، قفل سجل المهندس، حذف كافة ارتباطات الساحات من `production_yard_engineer`، وضبط `isActive = false` دون حذف السجل صلبياً.
+    - **Output**: `{ success: true, message: 'تمت إزالة المهندس من قسم الإنتاج بنجاح' }`.
+  - `listActiveUsersForAssignment(): Promise<ActiveUserSelectOption[]>`: استرجاع قائمة المستخدمين النشطين غير المحذوفين لخيارات الإسناد.
+  - `listDepartmentActiveYards(departmentId: string)`: استرجاع الساحات النشطة التابعة للقسم.
+
 ### `Production DTOs`
-- `CreateProductionDepartmentDto`: التحقق من الاسم (2-100 مع Trim)، الرمز التقني (`^[A-Z][A-Z0-9_]*$` بطول 2-50 مع تحويل تلقائي للأحرف الكبيرة والتنظيف)، الوصف الاختياري، وحالة التفعيل.
+- `CreateProductionDepartmentDto`: التحقق من الاسم (2-100 مع Trim)، الرمز التقني (`^[A-Z][A-Z0-9_]*$` بطول 2-50 مع تحويل تلقائي للأحرف الكبيرة والتنظيف)، معرف رئيس القسم (`headUserId` UUID v4 إلزامي)، الوصف الاختياري، وحالة التفعيل.
 - `UpdateProductionDepartmentDto`: يدعم التحديث الجزئي (PATCH) للاسم، الوصف، وحالة التفعيل، مع قفل تام لتعديل الرمز التقني.
 - `ListProductionDepartmentsQueryDto`: التحقق من معاملات الاستعلام (`page`, `limit`, `search`).
+- `SetProductionDepartmentHeadDto`: التحقق من معرف المستخدم (`userId` UUID v4).
+- `CreateProductionEngineerAssignmentDto`: التحقق من معرف المهندس (`userId` UUID v4) ومصفوفة معرفات الساحات (`yardIds` UUID v4 مع ساحة واحدة على الأقل).
+- `UpdateProductionEngineerYardsDto`: التحقق من مصفوفة معرفات الساحات (`yardIds` UUID v4 مع ساحة واحدة على الأقل).
 - `CreateProductionYardDto`: التحقق من معرف القسم (`departmentId` UUID v4)، الاسم، الرمز التقني، السعة (`capacity >= 1` كعدد صحيح موجب)، الوصف، وحالة التفعيل.
 - `UpdateProductionYardDto`: يدعم التحديث الجزئي للقسم، الاسم، السعة، الوصف، وحالة التفعيل، مع قفل تام لتعديل الرمز.
 - `ListProductionYardsQueryDto`: التحقق من معاملات الاستعلام مع فلتر اختياري لمعرف القسم (`departmentId`).
 
 ### `Production Controllers & Web Controllers`
 - `ProductionDepartmentController` & `ProductionYardController`: معالجة طلبات الـ JSON API لمسارات `/api/production/departments` و `/api/production/yards`.
+- `ProductionTeamController`: معالجة طلبات الـ JSON API لمسارات فريق العمل `/api/production/departments/:departmentId/team/...`.
 - `ProductionDepartmentWebController` & `ProductionYardWebController`: معالجة وعرض صفحات الـ EJS لمسارات `/production/departments` و `/production/yards`.
+- `ProductionTeamWebController`: معالجة وعرض صفحات الـ EJS لمسارات إدارة فريق العمل `/production/departments/:departmentId/team/...`.
 
 ---
 
@@ -859,22 +931,27 @@ src/
 
 ### `production_department`
 - **Entity**: `ProductionDepartmentEntity` (`src/modules/production/department/production-department.entity.ts`)
-- **Purpose**: تمثيل الهيكل التنظيمي التشغيلي لأقسام تطبيق الإنتاج (مثل الصب، الإكساء، الجودة، النقل) كبيانات أعمال ديناميكية منفصلة تماماً عن HR.
+- **Purpose**: تمثيل الهيكل التنظيمي التشغيلي لأقسام تطبيق الإنتاج (مثل الصب، الإكساء، الجودة، النقل) كبيانات أعمال ديناميكية منفصلة تماماً عن HR، مع ارتباط كل قسم برئيس قسم واحد.
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
   - `name`: varchar(100), NOT NULL
   - `code`: varchar(50), NOT NULL, UNIQUE (`UQ_production_department_code`), Immutable
+  - `head_user_id`: varchar(36) UUID, NULL, FK $\rightarrow$ `system_user.id` (Department Head)
   - `description`: text, NULL
   - `is_active`: tinyint(1), NOT NULL, default: 1
   - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
   - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
   - `deleted_at`: datetime(6), NULL (Soft Delete)
 - **Relations**:
+  - `headUser`: ManyToOne $\rightarrow$ `UserEntity` (`head_user_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, `eager: false`, `cascade: false`)
   - `yards`: OneToMany $\rightarrow$ `ProductionYardEntity` (`eager: false`, `cascade: false`)
+  - `engineers`: OneToMany $\rightarrow$ `ProductionDepartmentEngineerEntity` (`eager: false`, `cascade: false`)
 - **Constraints / Indexes**:
   - `UQ_production_department_code`: UNIQUE(`code`)
+  - `IDX_production_department_head_user_id`: INDEX(`head_user_id`)
   - `IDX_production_department_is_active`: INDEX(`is_active`)
   - `IDX_production_department_deleted_at`: INDEX(`deleted_at`)
+  - `FK_production_department_head_user_id`: FOREIGN KEY (`head_user_id`) REFERENCES `system_user`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 
 ---
 
@@ -894,6 +971,7 @@ src/
   - `deleted_at`: datetime(6), NULL (Soft Delete)
 - **Relations**:
   - `department`: ManyToOne $\rightarrow$ `ProductionDepartmentEntity` (`department_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, `eager: false`, `cascade: false`)
+  - `engineerMappings`: OneToMany $\rightarrow$ `ProductionYardEngineerEntity` (`eager: false`, `cascade: false`)
 - **Constraints / Indexes**:
   - `UQ_production_yard_code`: UNIQUE(`code`)
   - `IDX_production_yard_department_id`: INDEX(`department_id`)
@@ -901,6 +979,50 @@ src/
   - `IDX_production_yard_deleted_at`: INDEX(`deleted_at`)
   - `CHK_production_yard_capacity`: CHECK `(capacity >= 1)`
   - `FK_production_yard_department_id`: FOREIGN KEY (`department_id`) REFERENCES `production_department`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+
+---
+
+### `production_department_engineer`
+- **Entity**: `ProductionDepartmentEngineerEntity` (`src/modules/production/team/entities/production-department-engineer.entity.ts`)
+- **Purpose**: تمثيل إسناد المهندس لقسم إنتاج تشغيلي محدد، مع حظر انتماء المهندس لأكثر من قسم في نفس الوقت (`user_id` فريد).
+- **Fields**:
+  - `id`: varchar(36) UUID, Primary Key
+  - `department_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `production_department.id`
+  - `user_id`: varchar(36) UUID, NOT NULL, UNIQUE (`UQ_production_department_engineer_user_id`), FK $\rightarrow$ `system_user.id`
+  - `is_active`: tinyint(1), NOT NULL, default: 1
+  - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
+  - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+- **Relations**:
+  - `department`: ManyToOne $\rightarrow$ `ProductionDepartmentEntity` (`department_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, `eager: false`)
+  - `user`: ManyToOne $\rightarrow$ `UserEntity` (`user_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, `eager: false`)
+  - `yardMappings`: OneToMany $\rightarrow$ `ProductionYardEngineerEntity` (`eager: false`, `cascade: false`)
+- **Constraints / Indexes**:
+  - `UQ_production_department_engineer_user_id`: UNIQUE(`user_id`)
+  - `IDX_production_dept_engineer_department_id`: INDEX(`department_id`)
+  - `IDX_production_dept_engineer_user_id`: INDEX(`user_id`)
+  - `IDX_production_dept_engineer_is_active`: INDEX(`is_active`)
+  - `FK_production_dept_engineer_department_id`: FOREIGN KEY (`department_id`) REFERENCES `production_department`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+  - `FK_production_dept_engineer_user_id`: FOREIGN KEY (`user_id`) REFERENCES `system_user`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+
+---
+
+### `production_yard_engineer`
+- **Entity**: `ProductionYardEngineerEntity` (`src/modules/production/team/entities/production-yard-engineer.entity.ts`)
+- **Purpose**: جدول ربط الوسيط بين إسناد المهندس في القسم وساحات الإنتاج التابعة لنفس القسم المسندة لمسؤوليته.
+- **Fields**:
+  - `id`: varchar(36) UUID, Primary Key
+  - `department_engineer_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `production_department_engineer.id`
+  - `yard_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `production_yard.id`
+  - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
+- **Relations**:
+  - `departmentEngineer`: ManyToOne $\rightarrow$ `ProductionDepartmentEngineerEntity` (`department_engineer_id`, `onDelete: CASCADE`, `onUpdate: CASCADE`, `eager: false`)
+  - `yard`: ManyToOne $\rightarrow$ `ProductionYardEntity` (`yard_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, `eager: false`)
+- **Constraints / Indexes**:
+  - `UQ_production_yard_engineer_assignment`: UNIQUE(`department_engineer_id`, `yard_id`)
+  - `IDX_production_yard_engineer_dept_eng_id`: INDEX(`department_engineer_id`)
+  - `IDX_production_yard_engineer_yard_id`: INDEX(`yard_id`)
+  - `FK_production_yard_engineer_dept_eng_id`: FOREIGN KEY (`department_engineer_id`) REFERENCES `production_department_engineer`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
+  - `FK_production_yard_engineer_yard_id`: FOREIGN KEY (`yard_id`) REFERENCES `production_yard`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 
 ---
 

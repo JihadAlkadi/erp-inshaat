@@ -4,6 +4,7 @@ import { ListProductionDepartmentsQueryDto } from './dto/list-production-departm
 import { authorizationService } from '../../system/authorization/authorization.service.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { AuthPrincipal } from '../../system/auth/auth.types.js';
+import { productionTeamService } from '../team/production-team.service.js';
 
 export class ProductionDepartmentWebController {
   private readonly departmentService: ProductionDepartmentService;
@@ -27,6 +28,8 @@ export class ProductionDepartmentWebController {
       const canCreate = userPermissions.includes(SystemPermission.PRODUCTION_DEPARTMENT_CREATE);
       const canUpdate = userPermissions.includes(SystemPermission.PRODUCTION_DEPARTMENT_UPDATE);
       const canDelete = userPermissions.includes(SystemPermission.PRODUCTION_DEPARTMENT_DELETE);
+      const canViewTeam = userPermissions.includes(SystemPermission.PRODUCTION_ASSIGNMENT_VIEW);
+      const canManageTeam = userPermissions.includes(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE);
 
       res.render('dashboard/production/departments/index', {
         layout: 'dashboard/production/layout',
@@ -47,6 +50,8 @@ export class ProductionDepartmentWebController {
         canCreate,
         canUpdate,
         canDelete,
+        canViewTeam,
+        canManageTeam,
       });
     } catch (error) {
       next(error);
@@ -55,6 +60,8 @@ export class ProductionDepartmentWebController {
 
   renderCreateDepartmentForm = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const activeUsers = await productionTeamService.listActiveUsersForAssignment();
+
       res.render('dashboard/production/departments/create', {
         layout: 'dashboard/production/layout',
         title: 'إنشاء قسم إنتاج جديد',
@@ -63,6 +70,7 @@ export class ProductionDepartmentWebController {
         hasSidebar: true,
         sidebarPath: 'production/partials/sidebar',
         activeTab: 'departments',
+        activeUsers,
       });
     } catch (error) {
       next(error);

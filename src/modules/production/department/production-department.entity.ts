@@ -6,9 +6,13 @@ import {
   UpdateDateColumn,
   DeleteDateColumn,
   OneToMany,
+  ManyToOne,
+  JoinColumn,
   Index,
 } from 'typeorm';
 import { ProductionYardEntity } from '../yard/production-yard.entity.js';
+import { UserEntity } from '../../system/user/user.entity.js';
+import { ProductionDepartmentEngineerEntity } from '../team/entities/production-department-engineer.entity.js';
 
 @Entity('production_department')
 export class ProductionDepartmentEntity {
@@ -21,6 +25,10 @@ export class ProductionDepartmentEntity {
   @Index('UQ_production_department_code', { unique: true })
   @Column({ type: 'varchar', length: 50 })
   code!: string;
+
+  @Index('IDX_production_department_head_user_id')
+  @Column({ name: 'head_user_id', type: 'varchar', length: 36, nullable: true })
+  headUserId!: string | null;
 
   @Column({ type: 'text', nullable: true })
   description!: string | null;
@@ -39,9 +47,25 @@ export class ProductionDepartmentEntity {
   @DeleteDateColumn({ name: 'deleted_at', nullable: true })
   deletedAt!: Date | null;
 
+  @ManyToOne(() => UserEntity, {
+    eager: false,
+    cascade: false,
+    nullable: true,
+    onDelete: 'RESTRICT',
+    onUpdate: 'CASCADE',
+  })
+  @JoinColumn({ name: 'head_user_id' })
+  headUser?: UserEntity | null;
+
   @OneToMany(() => ProductionYardEntity, (yard) => yard.department, {
     eager: false,
     cascade: false,
   })
   yards!: ProductionYardEntity[];
+
+  @OneToMany(() => ProductionDepartmentEngineerEntity, (eng) => eng.department, {
+    eager: false,
+    cascade: false,
+  })
+  engineers!: ProductionDepartmentEngineerEntity[];
 }

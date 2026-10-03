@@ -80,6 +80,14 @@ const SYSTEM_USER_PERMISSIONS: PermissionDefinition[] = [
     name: SystemPermission.PRODUCTION_YARD_DELETE,
     description: 'أرشفة ساحة إنتاج',
   },
+  {
+    name: SystemPermission.PRODUCTION_ASSIGNMENT_VIEW,
+    description: 'عرض تعيينات فرق الإنتاج',
+  },
+  {
+    name: SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE,
+    description: 'إدارة رؤساء الأقسام والمهندسين وساحات مسؤوليتهم',
+  },
 ];
 
 export async function seedSystemUserPermissions(

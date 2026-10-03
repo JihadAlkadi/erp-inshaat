@@ -339,12 +339,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
       var nameInput = document.getElementById('name');
       var codeInput = document.getElementById('code');
+      var headUserIdInput = document.getElementById('headUserId');
       var descriptionInput = document.getElementById('description');
       var isActiveCheck = document.getElementById('isActive');
 
       var payload = {
         name: nameInput ? nameInput.value.trim() : '',
         code: codeInput ? codeInput.value.trim().toUpperCase() : '',
+        headUserId: headUserIdInput ? headUserIdInput.value.trim() : '',
         description: descriptionInput && descriptionInput.value.trim() !== '' ? descriptionInput.value.trim() : undefined,
         isActive: isActiveCheck ? isActiveCheck.checked : true,
       };

@@ -17,5 +17,7 @@ export enum SystemPermission {
   PRODUCTION_YARD_CREATE = 'production.yard.create',
   PRODUCTION_YARD_UPDATE = 'production.yard.update',
   PRODUCTION_YARD_DELETE = 'production.yard.delete',
+  PRODUCTION_ASSIGNMENT_VIEW = 'production.assignment.view',
+  PRODUCTION_ASSIGNMENT_MANAGE = 'production.assignment.manage',
 }
 

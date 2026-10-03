@@ -1,0 +1,258 @@
+<div class="container-fluid">
+  <!-- Header & Breadcrumb -->
+  <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+    <div>
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <a href="/production/departments" class="text-muted text-decoration-none small">
+          <i class="fa-solid fa-building-user me-1"></i> أقسام الإنتاج
+        </a>
+        <span class="text-muted small">/</span>
+        <span class="text-dark small fw-bold"><%= department.name %></span>
+        <span class="text-muted small">/</span>
+        <span class="text-primary small fw-bold">فريق العمل والمسؤوليات</span>
+      </div>
+      <h3 class="fw-bold mb-1" style="color: #1F2937;">
+        فريق عمل قسم: <%= department.name %>
+        <code class="fs-6 text-muted ms-2 bg-light px-2 py-1 rounded border"><%= department.code %></code>
+      </h3>
+      <p class="text-muted mb-0 small">
+        إدارة رئيس القسم والمهندسين المسؤولين وتوزيع ساحات الإنتاج التابعة للقسم
+      </p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="/production/departments" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2">
+        <i class="fa-solid fa-arrow-right"></i>
+        <span>العودة للأقسام</span>
+      </a>
+      <% if (canManage) { %>
+        <a href="/production/departments/<%= department.id %>/team/engineers/create" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background-color: #0984E3; border-color: #0984E3;">
+          <i class="fa-solid fa-user-plus"></i>
+          <span>إسناد مهندس للقسم</span>
+        </a>
+      <% } %>
+    </div>
+  </div>
+
+  <!-- Department Head Section Card -->
+  <div class="card border-0 shadow-sm mb-4" style="border-radius: 12px; background: linear-gradient(135deg, #F8FAFC 0%, #EFF6FF 100%);">
+    <div class="card-body p-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div class="d-flex align-items-center gap-3">
+          <div class="rounded-circle d-flex justify-content-center align-items-center bg-primary text-white shadow-sm" style="width: 54px; height: 54px; font-size: 1.5rem;">
+            <i class="fa-solid fa-user-tie"></i>
+          </div>
+          <div>
+            <div class="text-uppercase text-primary fw-bold" style="font-size: 0.75rem; letter-spacing: 0.5px;">
+              رئيس قسم الإنتاج (Department Head)
+            </div>
+            <h4 class="fw-bold text-dark mb-1">
+              <% if (head) { %>
+                <%= head.fullName %>
+              <% } else { %>
+                <span class="text-danger">لم يتم تعيين رئيس للقسم بعد</span>
+              <% } %>
+            </h4>
+            <div class="d-flex flex-wrap align-items-center gap-3 text-muted small">
+              <% if (head && head.phone) { %>
+                <span><i class="fa-solid fa-phone me-1"></i> <%= head.phone %></span>
+              <% } %>
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle">
+                <i class="fa-solid fa-shield-halved me-1"></i> مسؤول تلقائياً عن جميع ساحات القسم
+              </span>
+              <% if (head && head.isActive) { %>
+                <span class="badge bg-success-subtle text-success">
+                  <i class="fa-solid fa-circle-check me-1"></i> حساب نشط
+                </span>
+              <% } else if (head) { %>
+                <span class="badge bg-danger-subtle text-danger">
+                  <i class="fa-solid fa-circle-xmark me-1"></i> حساب معطل
+                </span>
+              <% } %>
+            </div>
+          </div>
+        </div>
+
+        <% if (canManage) { %>
+          <div>
+            <button
+              type="button"
+              class="btn btn-outline-primary bg-white d-inline-flex align-items-center gap-2 shadow-sm"
+              data-bs-toggle="modal"
+              data-bs-target="#changeHeadModal"
+            >
+              <i class="fa-solid fa-user-pen"></i>
+              <span>تغيير رئيس القسم</span>
+            </button>
+          </div>
+        <% } %>
+      </div>
+    </div>
+  </div>
+
+  <!-- Engineers List Card -->
+  <div class="card border-0 shadow-sm" style="border-radius: 12px; overflow: hidden;">
+    <div class="card-header bg-white border-0 py-3 px-4 d-flex justify-content-between align-items-center">
+      <h5 class="fw-bold mb-0 text-dark">
+        مهندسو القسم وتوزيع الساحات
+        <span class="badge bg-secondary-subtle text-secondary rounded-pill ms-2"><%= engineers ? engineers.length : 0 %></span>
+      </h5>
+      <% if (canManage) { %>
+        <a href="/production/departments/<%= department.id %>/team/engineers/create" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1">
+          <i class="fa-solid fa-plus"></i>
+          <span>إضافة مهندس</span>
+        </a>
+      <% } %>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="bg-light text-muted" style="font-size: 0.85rem;">
+          <tr>
+            <th class="ps-4 py-3">المهندس</th>
+            <th class="py-3">رقم الهاتف</th>
+            <th class="py-3">الساحات المسندة في هذا القسم</th>
+            <th class="py-3 text-center">حالة الحساب</th>
+            <th class="py-3">تاريخ الإسناد</th>
+            <% if (canManage) { %>
+              <th class="py-3 text-center px-4">الإجراءات</th>
+            <% } %>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (engineers && engineers.length > 0) { %>
+            <% engineers.forEach(function(eng) { %>
+              <tr>
+                <td class="ps-4">
+                  <div class="d-flex align-items-center gap-3">
+                    <div class="rounded-circle d-flex justify-content-center align-items-center text-white fw-bold" style="width: 38px; height: 38px; background-color: #2ED573; font-size: 0.95rem;">
+                      <%= eng.fullName ? eng.fullName.charAt(0) : 'E' %>
+                    </div>
+                    <div>
+                      <div class="fw-bold text-dark"><%= eng.fullName %></div>
+                    </div>
+                  </div>
+                </td>
+                <td class="text-muted">
+                  <%= eng.phone || '—' %>
+                </td>
+                <td>
+                  <% if (eng.yards && eng.yards.length > 0) { %>
+                    <div class="d-flex flex-wrap gap-1">
+                      <% eng.yards.forEach(function(yard) { %>
+                        <span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1 py-1 px-2">
+                          <i class="fa-solid fa-warehouse text-muted small"></i>
+                          <span><%= yard.name %></span>
+                          <code class="text-muted small ms-1">(<%= yard.code %>)</code>
+                        </span>
+                      <% }); %>
+                    </div>
+                  <% } else { %>
+                    <span class="badge bg-warning-subtle text-warning">لا توجد ساحات مسندة</span>
+                  <% } %>
+                </td>
+                <td class="text-center">
+                  <% if (eng.userIsActive) { %>
+                    <span class="badge bg-success-subtle text-success px-3 py-1 rounded-pill">
+                      <i class="fa-solid fa-circle-check me-1"></i> نشط
+                    </span>
+                  <% } else { %>
+                    <span class="badge bg-danger-subtle text-danger px-3 py-1 rounded-pill">
+                      <i class="fa-solid fa-circle-xmark me-1"></i> معطل
+                    </span>
+                  <% } %>
+                </td>
+                <td class="text-muted small">
+                  <%= new Date(eng.createdAt).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' }) %>
+                </td>
+                <% if (canManage) { %>
+                  <td class="py-3 text-center px-4">
+                    <div class="d-inline-flex gap-1">
+                      <a
+                        href="/production/departments/<%= department.id %>/team/engineers/<%= eng.assignmentId %>/edit"
+                        class="btn btn-sm btn-outline-primary"
+                        title="تعديل الساحات المسندة"
+                      >
+                        <i class="fa-solid fa-pen-to-square"></i>
+                      </a>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        title="إزالة المهندس من القسم"
+                        data-action="remove-engineer"
+                        data-department-id="<%= department.id %>"
+                        data-assignment-id="<%= eng.assignmentId %>"
+                        data-engineer-name="<%= eng.fullName %>"
+                      >
+                        <i class="fa-solid fa-user-minus"></i>
+                      </button>
+                    </div>
+                  </td>
+                <% } %>
+              </tr>
+            <% }); %>
+          <% } else { %>
+            <tr>
+              <td colspan="<%= canManage ? 6 : 5 %>" class="text-center py-5 text-muted">
+                <i class="fa-solid fa-users-slash fs-1 text-secondary mb-3 d-block"></i>
+                <p class="mb-0 fw-bold">لا يوجد مهندسون مسندون لهذا القسم حالياً</p>
+                <small class="text-muted">يمكنك إسناد مهندسين وتوزيع الساحات عليهم عبر زر "إسناد مهندس للقسم"</small>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Change Head Modal -->
+<% if (canManage) { %>
+  <div class="modal fade" id="changeHeadModal" tabindex="-1" aria-labelledby="changeHeadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header bg-light">
+          <h5 class="modal-title fw-bold" id="changeHeadModalLabel">
+            <i class="fa-solid fa-user-tie text-primary me-2"></i>
+            تعيين / تغيير رئيس قسم الإنتاج
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="changeHeadForm">
+          <div class="modal-body p-4">
+            <div id="headModalAlert" class="alert alert-danger d-none mb-3" role="alert"></div>
+
+            <div class="mb-3">
+              <label for="headSelectUserId" class="form-label fw-bold">اختر رئيس القسم الجديد <span class="text-danger">*</span></label>
+              <select class="form-select" id="headSelectUserId" name="userId" required>
+                <option value="" disabled selected>-- اختر من المستخدمين النشطين --</option>
+                <% if (activeUsers && activeUsers.length > 0) { %>
+                  <% activeUsers.forEach(function(u) { %>
+                    <option value="<%= u.id %>" <%= head && head.id === u.id ? 'selected' : '' %>>
+                      <%= u.fullName %> (<%= u.phone %>)
+                    </option>
+                  <% }); %>
+                <% } %>
+              </select>
+            </div>
+            <div class="form-text text-muted small">
+              رئيس القسم يكون مسؤولاً تلقائياً عن جميع ساحات القسم الحالية والمستقبلية دون الحاجة لإسناده لساحات فردية.
+            </div>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">إلغاء</button>
+            <button type="submit" id="saveHeadBtn" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background-color: #0984E3; border-color: #0984E3;">
+              <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+              <i class="fa-solid fa-floppy-disk"></i>
+              <span>حفظ رئيس القسم</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+<% } %>
+
+<script>
+  window.currentDepartmentId = '<%= department.id %>';
+</script>
+<script src="/js/production-team.js"></script>

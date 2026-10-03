@@ -2,6 +2,8 @@ import { EntityManager, IsNull, Repository } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionDepartmentEntity } from './production-department.entity.js';
 import { ProductionYardEntity } from '../yard/production-yard.entity.js';
+import { UserEntity } from '../../system/user/user.entity.js';
+import { ProductionDepartmentEngineerEntity } from '../team/entities/production-department-engineer.entity.js';
 import { CreateProductionDepartmentDto } from './dto/create-production-department.dto.js';
 import { UpdateProductionDepartmentDto } from './dto/update-production-department.dto.js';
 import { ListProductionDepartmentsQueryDto } from './dto/list-production-departments-query.dto.js';
@@ -34,6 +36,7 @@ export class ProductionDepartmentService {
 
     const qb = this.departmentRepository
       .createQueryBuilder('dept')
+      .leftJoinAndSelect('dept.headUser', 'headUser')
       .where('dept.deletedAt IS NULL');
 
     if (query.search && query.search.trim() !== '') {
@@ -90,6 +93,8 @@ export class ProductionDepartmentService {
         code: dept.code,
         description: dept.description,
         isActive: dept.isActive,
+        headUserId: dept.headUserId,
+        headUserName: dept.headUser?.fullName || null,
         yardCount: counts.total,
         activeYardCount: counts.active,
         createdAt: dept.createdAt,
@@ -109,6 +114,7 @@ export class ProductionDepartmentService {
   async getDepartmentById(id: string): Promise<SafeProductionDepartmentOutput> {
     const dept = await this.departmentRepository.findOne({
       where: { id, deletedAt: IsNull() },
+      relations: { headUser: true },
     });
 
     if (!dept) {
@@ -133,6 +139,8 @@ export class ProductionDepartmentService {
       code: dept.code,
       description: dept.description,
       isActive: dept.isActive,
+      headUserId: dept.headUserId,
+      headUserName: dept.headUser?.fullName || null,
       yardCount: Number(yardCounts?.totalCount) || 0,
       activeYardCount: Number(yardCounts?.activeCount) || 0,
       createdAt: dept.createdAt,
@@ -157,12 +165,26 @@ export class ProductionDepartmentService {
       );
     }
 
+    // 2. Validate Head User exists, active and non-deleted
+    const userRepo = AppDataSource.getRepository(UserEntity);
+    const headUser = await userRepo.findOne({
+      where: { id: dto.headUserId, deletedAt: IsNull() },
+    });
+
+    if (!headUser || !headUser.isActive) {
+      throw new BusinessRuleError(
+        'المستخدم المحدد غير موجود أو غير متاح لتعيينه رئيساً للقسم',
+        'PRODUCTION_DEPARTMENT_HEAD_USER_NOT_AVAILABLE'
+      );
+    }
+
     try {
       const department = this.departmentRepository.create({
         name: dto.name.trim(),
         code: normalizedCode,
         description: dto.description ?? null,
         isActive: dto.isActive ?? true,
+        headUserId: headUser.id,
       });
 
       const saved = await this.departmentRepository.save(department);
@@ -173,6 +195,8 @@ export class ProductionDepartmentService {
         code: saved.code,
         description: saved.description,
         isActive: saved.isActive,
+        headUserId: saved.headUserId,
+        headUserName: headUser.fullName,
         yardCount: 0,
         activeYardCount: 0,
         createdAt: saved.createdAt,
@@ -302,6 +326,22 @@ export class ProductionDepartmentService {
         throw new BusinessRuleError(
           'لا يمكن أرشفة القسم قبل أرشفة جميع ساحاته',
           'PRODUCTION_DEPARTMENT_HAS_YARDS'
+        );
+      }
+
+      // Check active engineers rule: Cannot delete department if it has active engineers
+      const engRepo = manager.getRepository(ProductionDepartmentEngineerEntity);
+      const activeEngineersCount = await engRepo.count({
+        where: {
+          departmentId: department.id,
+          isActive: true,
+        },
+      });
+
+      if (activeEngineersCount > 0) {
+        throw new BusinessRuleError(
+          'لا يمكن أرشفة القسم قبل إزالة تعيينات المهندسين منه',
+          'PRODUCTION_DEPARTMENT_HAS_ENGINEERS'
         );
       }
 

@@ -4,6 +4,7 @@ import { userApiRouter } from '../modules/system/user/user.route.js';
 import { roleApiRouter } from '../modules/system/role/role.route.js';
 import { departmentApiRouter } from '../modules/production/department/production-department.route.js';
 import { yardApiRouter } from '../modules/production/yard/production-yard.route.js';
+import { productionTeamApiRouter } from '../modules/production/team/production-team.route.js';
 
 const apiRouter: Router = Router();
 
@@ -26,6 +27,7 @@ apiRouter.use('/system/roles', roleApiRouter);
 
 // Production Departments Routes (/api/production/departments)
 apiRouter.use('/production/departments', departmentApiRouter);
+apiRouter.use('/production/departments', productionTeamApiRouter);
 
 // Production Yards Routes (/api/production/yards)
 apiRouter.use('/production/yards', yardApiRouter);
