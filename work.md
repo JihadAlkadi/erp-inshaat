@@ -79,7 +79,6 @@ src/
 │   │   ├── app.css
 │   │   └── auth.css
 │   └── js/
-│       ├── api.js
 │       ├── app.js
 │       └── login.js
 ├── routes/
@@ -348,9 +347,9 @@ storage/
    - المشروع لا يعتمد ولا يستخدم مكتبة HTMX.
 
 7. **Graceful Shutdown**:
-   - عند استقبال إشارات الإيقاف (`SIGINT`, `SIGTERM`)، يتم انتظار إغلاق خادم HTTP (`server.close()`) وتوقف استقبال الطلبات قبل إغلاق اتصال قاعدة البيانات (`AppDataSource.destroy()`).
+   - عند استقبال إشارات الإيقاف (`SIGINT`, `SIGTERM`)، يتم انتظار إغلاق خادم HTTP (`server.close()`) وتوقف استقبال الطلبات، ثم محاولة إغلاق اتصال قاعدة البيانات (`AppDataSource.destroy()`) بشكل مستقل حتى في حال فشل إغلاق خادم HTTP.
    - وجود حماية تمنع تنفيذ الإيقاف أكثر من مرة بالتوازي (`isShuttingDown` guard).
-   - استخدام `process.exitCode` بدلاً من الخروج القسري المباشر.
+   - ضبط `process.exitCode` (0 عند النجاح، 1 عند وجود خطأ في أي مرحلة) بدلاً من الخروج القسري المباشر.
 
 8. **Backend Validation Flow**:
    - `Route` $\rightarrow$ `validateDto(Dto)` $\rightarrow$ `Controller` $\rightarrow$ `Service`.
@@ -375,7 +374,6 @@ storage/
 - Standardized `ValidationError` representation (`src/common/errors/validation.error.ts`).
 - Centralized Error Handling (`AppError`, `errorHandlerMiddleware`).
 - Standardized typed `ApiResponse` for API endpoints.
-- Standardized native fetch API Client (`src/public/js/api.js`).
 - EJS + `express-ejs-layouts` server-rendered views.
 - Static assets serving (`src/public`).
 - TypeORM MySQL connection and robust graceful shutdown.

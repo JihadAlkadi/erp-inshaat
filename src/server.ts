@@ -48,19 +48,26 @@ async function handleShutdown(signal: string): Promise<void> {
 
   console.log(`\nReceived ${signal}. Shutting down gracefully...`);
 
+  let shutdownFailed = false;
+
   try {
     await closeHttpServer();
+  } catch (error) {
+    shutdownFailed = true;
+    console.error('Error closing HTTP server:', error);
+  }
 
+  try {
     if (AppDataSource.isInitialized) {
       await AppDataSource.destroy();
       console.log('Database connection closed.');
     }
-
-    process.exitCode = 0;
   } catch (error) {
-    console.error('Error during graceful shutdown:', error);
-    process.exitCode = 1;
+    shutdownFailed = true;
+    console.error('Error closing database connection:', error);
   }
+
+  process.exitCode = shutdownFailed ? 1 : 0;
 }
 
 process.on('SIGINT', () => void handleShutdown('SIGINT'));
