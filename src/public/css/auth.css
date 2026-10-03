@@ -1,0 +1,147 @@
+/**
+ * Authentication Stylesheet (Login Page)
+ * Precast Concrete Rooms ERP System
+ */
+
+.erp-guest-body {
+  background: linear-gradient(135deg, #F9FAFB 0%, #F4EFF3 100%);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.erp-guest-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1rem;
+}
+
+.auth-container {
+  width: 100%;
+  max-width: 420px;
+  margin: auto;
+}
+
+.auth-card {
+  background-color: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 16px;
+  padding: 2.25rem 2rem;
+  box-shadow: 0 10px 25px rgba(113, 75, 103, 0.08);
+}
+
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 1.75rem 1.25rem;
+    border-radius: 12px;
+  }
+}
+
+.auth-brand-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background-color: var(--app-primary);
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  margin: 0 auto 1rem;
+  box-shadow: 0 4px 12px rgba(113, 75, 103, 0.25);
+}
+
+.auth-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #1F2937;
+  text-align: center;
+  margin-bottom: 0.25rem;
+}
+
+.auth-subtitle {
+  font-size: 0.88rem;
+  color: #6B7280;
+  text-align: center;
+  margin-bottom: 1.75rem;
+}
+
+.form-label {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: #374151;
+  margin-bottom: 0.4rem;
+}
+
+.auth-input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.auth-input-group .form-control {
+  padding: 0.75rem 1rem;
+  padding-left: 2.75rem;
+  font-size: 0.95rem;
+  border-radius: 8px;
+  border: 1px solid #D1D5DB;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.auth-input-group .form-control:focus {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 3px rgba(113, 75, 103, 0.15);
+}
+
+.auth-input-icon {
+  position: absolute;
+  left: 1rem;
+  color: #9CA3AF;
+  pointer-events: none;
+}
+
+.auth-password-toggle {
+  position: absolute;
+  left: 0.75rem;
+  background: none;
+  border: none;
+  color: #9CA3AF;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+}
+
+.auth-password-toggle:hover {
+  color: #4B5563;
+}
+
+.btn-auth-submit {
+  background-color: var(--app-primary);
+  color: #FFFFFF;
+  font-weight: 700;
+  font-size: 0.98rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  width: 100%;
+  margin-top: 1.25rem;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.btn-auth-submit:hover {
+  background-color: var(--app-primary-hover);
+  color: #FFFFFF;
+}
+
+.btn-auth-submit:active {
+  transform: translateY(1px);
+}
+
+.auth-alert-placeholder {
+  display: none;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}

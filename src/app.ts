@@ -1,0 +1,35 @@
+import path from 'path';
+import express, { Express } from 'express';
+import { appRouter } from './routes/index.js';
+import { notFoundMiddleware } from './common/middleware/not-found.middleware.js';
+import { errorHandlerMiddleware } from './common/middleware/error-handler.middleware.js';
+
+import expressLayouts from 'express-ejs-layouts';
+
+const app: Express = express();
+
+// View Engine & Layouts setup
+app.set('view engine', 'ejs');
+app.set('views', path.resolve(process.cwd(), 'src/views'));
+app.use(expressLayouts);
+app.set('layout', 'dashboard/layout');
+app.set('layout extractScripts', true);
+app.set('layout extractStyles', true);
+
+// Static files
+app.use(express.static(path.resolve(process.cwd(), 'src/public')));
+
+// Body parsers
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Application Routes
+app.use(appRouter);
+
+// Not Found Handler (MUST be after all routes)
+app.use(notFoundMiddleware);
+
+// Global Error Handler (MUST be last middleware)
+app.use(errorHandlerMiddleware);
+
+export { app };

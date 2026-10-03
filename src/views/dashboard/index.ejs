@@ -1,0 +1,115 @@
+<style>
+  /* تصميم الأيقونات المربعة لتطبيقات النظام (مثل أودو) */
+  .app-card {
+    display: block;
+    text-align: center;
+    text-decoration: none;
+    color: #4B5563;
+    padding: 15px 10px;
+    border-radius: 12px;
+    transition: all 0.2s ease;
+  }
+  .app-card:hover {
+    background-color: rgba(0,0,0,0.03);
+    color: #111827;
+  }
+  .app-icon-wrapper {
+    width: 85px;
+    height: 85px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    font-size: 38px;
+    color: white;
+    margin: 0 auto 12px auto; 
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    transition: transform 0.2s;
+  }
+  .app-card:hover .app-icon-wrapper {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 15px rgba(0,0,0,0.15);
+  }
+  .app-title {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 0;
+  }
+</style>
+
+<div class="container mt-5 pt-3">
+  <!-- شبكة التطبيقات (Grid) -->
+  <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-6 g-2 justify-content-center">
+    
+    <!-- تطبيق إدارة النظام -->
+    <div class="col">
+      <a href="/system" class="app-card">
+        <div class="app-icon-wrapper" style="background: linear-gradient(135deg, #714B67 0%, #4a2f42 100%);">
+          <i class="fa-solid fa-shield-halved"></i>
+        </div>
+        <p class="app-title">إدارة النظام</p>
+      </a>
+    </div>
+
+    <!-- تطبيق الموارد البشرية -->
+    <div class="col">
+      <a href="#" class="app-card">
+        <div class="app-icon-wrapper" style="background: linear-gradient(135deg, #5A4A78 0%, #3e3253 100%);">
+          <i class="fa-solid fa-users"></i>
+        </div>
+        <p class="app-title">الموارد البشرية</p>
+      </a>
+    </div>
+
+    <!-- تطبيق المستودعات -->
+    <div class="col">
+      <a href="#" class="app-card">
+        <div class="app-icon-wrapper" style="background: linear-gradient(135deg, #1DD1A1 0%, #10AC84 100%);">
+          <i class="fa-solid fa-boxes-stacked"></i>
+        </div>
+        <p class="app-title">المستودعات</p>
+      </a>
+    </div>
+
+    <!-- تطبيق المبيعات -->
+    <div class="col">
+      <a href="#" class="app-card">
+        <div class="app-icon-wrapper" style="background: linear-gradient(135deg, #54A0FF 0%, #2E86DE 100%);">
+          <i class="fa-solid fa-file-invoice-dollar"></i>
+        </div>
+        <p class="app-title">المبيعات</p>
+      </a>
+    </div>
+
+    <!-- تطبيق الحسابات -->
+    <div class="col">
+      <a href="#" class="app-card">
+        <div class="app-icon-wrapper" style="background: linear-gradient(135deg, #FECA57 0%, #FF9F43 100%);">
+          <i class="fa-solid fa-calculator"></i>
+        </div>
+        <p class="app-title">الحسابات</p>
+      </a>
+    </div>
+
+    <!-- تطبيق نقاط البيع -->
+    <div class="col">
+      <a href="#" class="app-card">
+        <div class="app-icon-wrapper" style="background: linear-gradient(135deg, #FF9FF3 0%, #F368E0 100%);">
+          <i class="fa-solid fa-shop"></i>
+        </div>
+        <p class="app-title">نقاط البيع</p>
+      </a>
+    </div>
+
+    <!-- تطبيق الإعدادات -->
+    <div class="col">
+      <a href="#" class="app-card">
+        <div class="app-icon-wrapper" style="background: linear-gradient(135deg, #C8D6E5 0%, #8395A7 100%);">
+          <i class="fa-solid fa-gear"></i>
+        </div>
+        <p class="app-title">الإعدادات</p>
+      </a>
+    </div>
+
+  </div>
+</div>

@@ -1,0 +1,30 @@
+<!-- Top Navbar -->
+<nav class="navbar navbar-expand-lg odoo-navbar px-3 py-2 shadow-sm sticky-top">
+  <div class="container-fluid flex-nowrap">
+    <div class="d-flex align-items-center">
+      <!-- Sidebar Toggle (For Mobile) -->
+      <% if (locals.hasSidebar) { %>
+        <button class="btn text-white me-2 d-md-none border-0 p-1" type="button" data-bs-toggle="offcanvas" data-bs-target="#appSidebar">
+          <i class="fa-solid fa-bars fs-4"></i>
+        </button>
+      <% } %>
+      <a href="/" class="text-white text-decoration-none me-3 app-icon d-none d-sm-block"><i class="fa-solid fa-th"></i></a>
+      <a class="navbar-brand fw-bold mb-0 ms-1 text-truncate" href="/"><%= locals.appName || 'نظام ERP' %></a>
+    </div>
+    
+    <div class="d-flex align-items-center gap-3">
+      <!-- User Identity -->
+      <div class="dropdown">
+        <a href="#" class="d-flex align-items-center text-white text-decoration-none dropdown-toggle" data-bs-toggle="dropdown">
+          <img src="https://ui-avatars.com/api/?name=<%= locals.user ? locals.user.fullName : 'Admin' %>&background=ffffff&color=714B67" width="32" height="32" class="rounded-circle me-1 shadow-sm" alt="User Avatar">
+          <span class="d-none d-md-inline ms-1"><%= locals.user ? locals.user.fullName : 'مدير النظام' %></span>
+        </a>
+        <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2 position-absolute">
+          <li><a class="dropdown-item text-end" href="#"><i class="fa-solid fa-user me-2"></i> حسابي</a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item text-end text-danger fw-bold" href="/login"><i class="fa-solid fa-right-from-bracket me-2"></i> تسجيل الخروج</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</nav>

@@ -1,0 +1,667 @@
+/**
+ * ERP Core Application Stylesheet
+ * Precast Concrete Rooms ERP System
+ * RTL, Cairo Font, Bootstrap 5 Compatible, Clean Modern Enterprise UI
+ */
+
+:root {
+  --app-primary: #714B67;
+  --app-primary-hover: #5A3B52;
+  --app-primary-light: #F4EFF3;
+  --app-primary-subtle: rgba(113, 75, 103, 0.1);
+  --app-bg: #F8F9FB;
+  --app-card-bg: #FFFFFF;
+  --app-text: #1F2937;
+  --app-muted: #6B7280;
+  --app-border: #E5E7EB;
+  --app-sidebar-width: 260px;
+  --app-topbar-height: 60px;
+  --app-footer-height: 48px;
+  --app-radius-sm: 6px;
+  --app-radius-md: 10px;
+  --app-radius-lg: 14px;
+  --app-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --app-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --app-shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.08);
+}
+
+/* ==========================================================================
+   Base & Typography
+   ========================================================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  font-family: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--app-bg);
+  color: var(--app-text);
+  margin: 0;
+  padding: 0;
+  direction: rtl;
+  text-align: right;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+.smaller {
+  font-size: 0.78rem;
+}
+
+.text-brand {
+  color: var(--app-primary) !important;
+}
+
+.bg-brand {
+  background-color: var(--app-primary) !important;
+  color: #ffffff !important;
+}
+
+/* ==========================================================================
+   Loading Progress Bar (HTMX)
+   ========================================================================== */
+.global-loading-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: transparent;
+  z-index: 9999;
+  display: none;
+}
+
+.global-loading-bar.htmx-request,
+.global-loading-bar.active {
+  display: block;
+}
+
+.loading-progress-bar {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--app-primary), #9A6B8D, var(--app-primary));
+  background-size: 200% 100%;
+  animation: loadingAnimation 1.2s infinite ease-in-out;
+}
+
+@keyframes loadingAnimation {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* ==========================================================================
+   Navbar / Topbar
+   ========================================================================== */
+.erp-topbar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--app-topbar-height);
+  background-color: var(--app-card-bg);
+  border-bottom: 1px solid var(--app-border);
+  display: flex;
+  align-items: center;
+  z-index: 1020;
+  box-shadow: var(--app-shadow-sm);
+}
+
+.btn-apps-launcher {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--app-radius-sm);
+  color: var(--app-primary);
+  background-color: var(--app-primary-light);
+  transition: all 0.2s ease;
+}
+
+.btn-apps-launcher:hover {
+  background-color: var(--app-primary);
+  color: #ffffff;
+}
+
+.erp-brand-title {
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--app-text);
+  letter-spacing: -0.3px;
+}
+
+.app-current-badge {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--app-primary);
+  background-color: var(--app-primary-light);
+  padding: 2px 10px;
+  border-radius: 20px;
+}
+
+.erp-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background-color: var(--app-primary);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.95rem;
+  box-shadow: 0 2px 6px rgba(113, 75, 103, 0.3);
+}
+
+.user-name {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--app-text);
+  line-height: 1.2;
+}
+
+.user-role {
+  font-size: 0.72rem;
+  color: var(--app-muted);
+  line-height: 1.2;
+}
+
+.no-caret::after {
+  display: none !important;
+}
+
+/* ==========================================================================
+   Shell & Layout Structure
+   ========================================================================== */
+.erp-shell {
+  padding-top: var(--app-topbar-height);
+  min-height: calc(100vh - var(--app-footer-height));
+  display: flex;
+  flex-direction: column;
+}
+
+/* Main Content Area */
+.erp-main-content {
+  flex: 1;
+  padding: 1.5rem 1rem;
+  transition: all 0.2s ease;
+}
+
+@media (min-width: 992px) {
+  .erp-main-content {
+    padding: 2rem;
+  }
+
+  .erp-shell.has-sidebar .erp-main-content {
+    margin-right: var(--app-sidebar-width);
+  }
+
+  .erp-shell.no-sidebar .erp-main-content {
+    margin-right: 0;
+  }
+}
+
+/* ==========================================================================
+   Sidebar (Desktop & Mobile Offcanvas)
+   ========================================================================== */
+.erp-sidebar {
+  position: fixed;
+  top: var(--app-topbar-height);
+  right: 0;
+  bottom: 0;
+  width: var(--app-sidebar-width);
+  background-color: var(--app-card-bg);
+  border-left: 1px solid var(--app-border);
+  overflow-y: auto;
+  z-index: 1010;
+}
+
+.erp-sidebar-offcanvas {
+  width: 280px !important;
+  background-color: var(--app-card-bg);
+  border-left: 1px solid var(--app-border) !important;
+}
+
+.sidebar-nav-wrapper {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.sidebar-app-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--app-radius-sm);
+  background-color: var(--app-primary-light);
+  color: var(--app-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+}
+
+.sidebar-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--app-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0.5rem 0.75rem 0.25rem;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--app-radius-sm);
+  color: #4B5563;
+  font-weight: 600;
+  font-size: 0.88rem;
+  transition: all 0.15s ease;
+}
+
+.sidebar-link .sidebar-icon {
+  width: 18px;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--app-muted);
+  transition: color 0.15s ease;
+}
+
+.sidebar-link:hover:not(.disabled) {
+  background-color: var(--app-primary-light);
+  color: var(--app-primary);
+}
+
+.sidebar-link:hover:not(.disabled) .sidebar-icon {
+  color: var(--app-primary);
+}
+
+.sidebar-link.active {
+  background-color: var(--app-primary);
+  color: #ffffff;
+}
+
+.sidebar-link.active .sidebar-icon {
+  color: #ffffff;
+}
+
+.sidebar-link.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   Applications Grid Launcher (Home Page - Odoo Style)
+   ========================================================================== */
+.home-launcher-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.home-header {
+  margin-bottom: 2rem;
+}
+
+.home-title {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--app-text);
+  margin-bottom: 0.35rem;
+}
+
+.home-subtitle {
+  font-size: 0.95rem;
+  color: var(--app-muted);
+}
+
+.apps-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: 576px) {
+  .apps-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .apps-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .apps-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+.app-card {
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  padding: 1.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  text-decoration: none;
+  color: var(--app-text);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--app-shadow-sm);
+  min-height: 160px;
+  justify-content: center;
+}
+
+.app-card:hover:not(.disabled) {
+  transform: translateY(-4px);
+  box-shadow: var(--app-shadow-md);
+  border-color: var(--app-card-theme, var(--app-primary));
+}
+
+.app-card.disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background-color: #FAFAFA;
+}
+
+.app-card-icon-wrapper {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--app-radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  margin-bottom: 0.85rem;
+  color: #ffffff;
+  background-color: var(--app-card-theme, var(--app-primary));
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s ease;
+}
+
+.app-card:hover:not(.disabled) .app-card-icon-wrapper {
+  transform: scale(1.06);
+}
+
+.app-card-title {
+  font-weight: 700;
+  font-size: 0.98rem;
+  color: var(--app-text);
+  margin-bottom: 0.2rem;
+}
+
+.app-card-desc {
+  font-size: 0.75rem;
+  color: var(--app-muted);
+}
+
+.app-card-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 12px;
+}
+
+/* ==========================================================================
+   System Dashboard
+   ========================================================================== */
+.dashboard-header {
+  margin-bottom: 1.5rem;
+}
+
+.dashboard-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--app-text);
+  margin-bottom: 0.25rem;
+}
+
+.dashboard-subtitle {
+  font-size: 0.88rem;
+  color: var(--app-muted);
+}
+
+.dashboard-badge-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 20px;
+  background-color: #ECFDF5;
+  color: #065F46;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dashboard-badge-status .status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #10B981;
+}
+
+/* Stats Cards Grid */
+.stat-card {
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  padding: 1.25rem;
+  box-shadow: var(--app-shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  height: 100%;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--app-shadow-md);
+}
+
+.stat-card-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-card-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--app-muted);
+  margin-bottom: 0.35rem;
+}
+
+.stat-card-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--app-text);
+  line-height: 1;
+}
+
+.stat-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--app-radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+/* Stat Accents */
+.stat-card.accent-purple .stat-card-icon {
+  background-color: rgba(113, 75, 103, 0.12);
+  color: #714B67;
+}
+
+.stat-card.accent-blue .stat-card-icon {
+  background-color: rgba(37, 99, 235, 0.12);
+  color: #2563EB;
+}
+
+.stat-card.accent-amber .stat-card-icon {
+  background-color: rgba(217, 119, 6, 0.12);
+  color: #D97706;
+}
+
+.stat-card.accent-emerald .stat-card-icon {
+  background-color: rgba(5, 150, 105, 0.12);
+  color: #059669;
+}
+
+/* Dashboard Content Cards */
+.erp-card {
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  box-shadow: var(--app-shadow-sm);
+  overflow: hidden;
+  height: 100%;
+}
+
+.erp-card-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--app-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.erp-card-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--app-text);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.erp-card-body {
+  padding: 1.25rem;
+}
+
+/* Empty State */
+.empty-state {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: var(--app-muted);
+}
+
+.empty-state-icon {
+  font-size: 2.2rem;
+  color: #D1D5DB;
+  margin-bottom: 0.75rem;
+}
+
+.empty-state-text {
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+/* Status Item in Dashboard */
+.status-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.status-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.status-item-label {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--app-text);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ==========================================================================
+   Footer
+   ========================================================================== */
+.erp-footer {
+  height: var(--app-footer-height);
+  background-color: var(--app-card-bg);
+  border-top: 1px solid var(--app-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: auto;
+  z-index: 10;
+}
+
+@media (min-width: 992px) {
+  .erp-shell.has-sidebar ~ .erp-footer,
+  .erp-shell.has-sidebar .erp-footer {
+    margin-right: var(--app-sidebar-width);
+  }
+}
+
+/* ==========================================================================
+   Error Pages UI
+   ========================================================================== */
+.error-page-wrapper {
+  min-height: 80vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.error-card {
+  max-width: 480px;
+  width: 100%;
+  background: var(--app-card-bg);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  box-shadow: var(--app-shadow-md);
+}
+
+.error-code {
+  font-size: 4rem;
+  font-weight: 900;
+  color: var(--app-primary);
+  line-height: 1;
+  margin-bottom: 0.5rem;
+}
+
+.error-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--app-text);
+  margin-bottom: 0.5rem;
+}
+
+.error-message {
+  font-size: 0.9rem;
+  color: var(--app-muted);
+  margin-bottom: 1.5rem;
+}

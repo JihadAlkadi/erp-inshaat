@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<%- include('./partials/head') %>
+<body>
+
+  <!-- Top Navbar -->
+  <%- include('./partials/navbar') %>
+
+  <!-- Master Wrapper -->
+  <div class="master-wrapper">
+    <!-- Include Dynamic Sidebar if provided via controller or layout -->
+    <% if (locals.sidebarPath) { %>
+       <%- include(sidebarPath) %>
+    <% } %>
+
+    <div class="main-content-area d-flex flex-column">
+      <!-- Page Content -->
+      <div class="flex-grow-1 p-3 p-md-4 p-lg-5">
+        <%- body %>
+      </div>
+      
+      <!-- Modern Floating Footer -->
+      <%- include('./partials/footer') %>
+    </div>
+  </div>
+
+  <!-- Core Scripts -->
+  <%- include('./partials/scripts') %>
+</body>
+</html>
