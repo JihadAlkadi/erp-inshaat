@@ -3,8 +3,8 @@ import { UserEntity } from '../user.entity.js';
 import { RoleEntity } from '../../role/role.entity.js';
 import { SystemRole } from '../../role/constants/system-role.enum.js';
 import { hashPassword } from '../../../../common/security/password.util.js';
-import { seedSystemAdminPermissionGrants } from './system-admin-permission-grants.seed.js';
-import { seedSystemAdminAccessRules } from './system-admin-access-rules.seed.js';
+import { seedSystemAdminPermissionGrants } from '../../permission-grant/seeds/system-admin-permission-grants.seed.js';
+import { seedSystemAdminAccessRules } from '../../access-rule/seeds/system-admin-access-rules.seed.js';
 
 export async function seedSystemAdminUser(manager: EntityManager): Promise<UserEntity> {
   const roleRepository = manager.getRepository(RoleEntity);
@@ -24,7 +24,13 @@ export async function seedSystemAdminUser(manager: EntityManager): Promise<UserE
   });
 
   if (!adminUser) {
-    const rawPassword = process.env.SEED_SYSTEM_ADMIN_PASSWORD || '123123';
+    const rawPassword = process.env.SEED_SYSTEM_ADMIN_PASSWORD;
+    if (!rawPassword || rawPassword.trim() === '') {
+      throw new Error(
+        'SEED_SYSTEM_ADMIN_PASSWORD is required when creating the initial system admin user.',
+      );
+    }
+
     const passwordHash = await hashPassword(rawPassword);
 
     adminUser = userRepository.create({

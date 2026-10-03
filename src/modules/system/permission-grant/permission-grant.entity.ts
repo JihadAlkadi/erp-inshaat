@@ -9,10 +9,10 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { PermissionEntity } from './permission.entity.js';
+import { PermissionEntity } from '../permission/permission.entity.js';
 import { UserEntity } from '../user/user.entity.js';
 import { RoleEntity } from '../role/role.entity.js';
-import { AccessRuleEntity } from './access-rule.entity.js';
+import { AccessRuleEntity } from '../access-rule/access-rule.entity.js';
 
 @Entity('system_permission_grant')
 export class PermissionGrantEntity {

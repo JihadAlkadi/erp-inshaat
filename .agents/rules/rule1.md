@@ -603,11 +603,11 @@ INVALID_STAGE_STATE
 
 # 49. Frontend Communication
 
-- HTMX is used for Web navigation and HTML partial loading.
+- Server-rendered EJS pages are used for views and web navigation.
+- HTMX is not part of the project architecture.
 - fetch is used for JSON API communication.
 - Web routes return HTML.
 - API routes return JSON.
-- HTMX is not used for CRUD form submission by default.
 - fetch must use the standard ApiResponse structure.
 - Do not implement a custom SPA router.
 - Direct page URLs must remain refreshable/bookmarkable.

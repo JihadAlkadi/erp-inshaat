@@ -11,7 +11,7 @@ import {
   Index,
 } from 'typeorm';
 import { RoleEntity } from '../role/role.entity.js';
-import { PermissionGrantEntity } from '../permission/permission-grant.entity.js';
+import { PermissionGrantEntity } from '../permission-grant/permission-grant.entity.js';
 import { SessionEntity } from '../session/session.entity.js';
 
 @Entity('system_user')

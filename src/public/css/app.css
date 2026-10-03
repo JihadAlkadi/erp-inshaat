@@ -63,7 +63,7 @@ a {
 }
 
 /* ==========================================================================
-   Loading Progress Bar (HTMX)
+   Loading Progress Bar
    ========================================================================== */
 .global-loading-bar {
   position: fixed;
@@ -76,7 +76,6 @@ a {
   display: none;
 }
 
-.global-loading-bar.htmx-request,
 .global-loading-bar.active {
   display: block;
 }

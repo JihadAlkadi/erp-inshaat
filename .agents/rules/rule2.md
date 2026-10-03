@@ -236,10 +236,14 @@ Enums فقط للقيم الثابتة فعلًا.
 ---
 
 # 44. Seeders
+ 
+نظم Seeders حسب Module / Application.
 
-نظم Seeders حسب Application.
-
-يجب أن تكون Idempotent ولا تحتوي Production Credentials.
+- يجب أن تكون Idempotent وتعتمد على المفاتيح الطبيعية.
+- يُمنع تخزين كلمات المرور كنص صريح أو وجود كلمات مرور افتراضية (No default password fallback) في الكود المصدري.
+- دور `SYSTEM_ADMIN` يحصل تلقائيًا على جميع الصلاحيات النشطة عند تشغيل الـ Seed.
+- تتبع ملفات الـ Seeds للموديول المالك للكيان (مثل `permission-grant` و `access-rule`).
+- عند إيقاف الخادم (Shutdown)، يجب انتظار إغلاق خادم HTTP قبل إغلاق اتصال قاعدة البيانات.
 
 ---
 

@@ -1,8 +1,8 @@
 import { EntityManager } from 'typeorm';
-import { PermissionGrantEntity } from '../../permission/permission-grant.entity.js';
+import { PermissionGrantEntity } from '../permission-grant.entity.js';
 import { PermissionEntity } from '../../permission/permission.entity.js';
 import { RoleEntity } from '../../role/role.entity.js';
-import { UserEntity } from '../user.entity.js';
+import { UserEntity } from '../../user/user.entity.js';
 
 export async function seedSystemAdminPermissionGrants(
   manager: EntityManager,
@@ -13,6 +13,7 @@ export async function seedSystemAdminPermissionGrants(
   const grantRepository = manager.getRepository(PermissionGrantEntity);
   const permissionRepository = manager.getRepository(PermissionEntity);
 
+  // SYSTEM_ADMIN automatically receives all active permissions
   const targetPermissions =
     permissions ?? (await permissionRepository.find({ where: { isActive: true } }));
 

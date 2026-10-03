@@ -1,6 +1,6 @@
 import { EntityManager } from 'typeorm';
-import { AccessRuleEntity } from '../../permission/access-rule.entity.js';
-import { PermissionGrantEntity } from '../../permission/permission-grant.entity.js';
+import { AccessRuleEntity } from '../access-rule.entity.js';
+import { PermissionGrantEntity } from '../../permission-grant/permission-grant.entity.js';
 
 export async function seedSystemAdminAccessRules(
   manager: EntityManager,

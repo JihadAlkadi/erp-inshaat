@@ -2,16 +2,13 @@
 
 ## Current Project State
 
-تم إنشاء وتجهيز نموذج بيانات الجلسات (Session Data Model) ضمن موديول النظام (`system`) لتوفير إدارة دائمة وموثوقة لجلسات تسجيل الدخول وتعدد الأجهزة:
-- كيان وجدول الجلسات `system_session` (`SessionEntity`) مع دعم تتبع الأجهزة، وقت الانتهاء، الإلغاء، وتحديث آخر استخدام.
-- قيد فريد على `token_hash` لضمان عدم تكرار الجلسات وتأمين الـ Tokens.
-- ترحيل TypeORM Migration (`CreateSystemSessionTable1710000000001`) لإنشاء جدول الجلسات والمؤشرات والربط مع `system_user`.
-- ثوابت الأدوار `SystemRole` enum (`SYSTEM_ADMIN`).
-- ثوابت الصلاحيات الأساسية `SystemPermission` enum (`USER_VIEW`, `USER_CREATE`, `USER_UPDATE`, `USER_DELETE`).
-- تهيئة دور مدير النظام `SYSTEM_ADMIN` داخل موديول الأدوار (`src/modules/system/role/seeds/`).
-- تهيئة صلاحيات إدارة المستخدمين الأساسية داخل موديول الصلاحيات (`src/modules/system/permission/seeds/`).
-- تهيئة مستخدم مدير النظام الأول، ومنح الصلاحيات، وقواعد الوصول الشاملة `ALLOW` / `ALL` داخل موديول المستخدمين (`src/modules/system/user/seeds/`).
-- مشغل الـ Seed المركزي (`src/database/seeds/system-initial.seed.ts`) ينسق تنفيذ الـ Seeds داخل Transaction واحدة عبر الأمر `npm run seed`.
+تم تنفيذ تنظيم شامل وفصل لموديولات النظام الأساسية، وتأمين كلمات المرور الأولية، وتحسين عملية إيقاف الخادم (Graceful Shutdown):
+- موديول منح الصلاحيات المستقل `permission-grant` (`src/modules/system/permission-grant/`) يحتوي على `PermissionGrantEntity` والـ Seed الخاص به.
+- موديول قواعد نطاق الوصول المستقل `access-rule` (`src/modules/system/access-rule/`) يحتوي على `AccessRuleEntity` والـ Seed الخاص به.
+- دور مدير النظام `SYSTEM_ADMIN` يحصل تلقائياً على جميع الصلاحيات النشطة (`isActive: true`) عند تنفيذ الـ Seed.
+- تأمين كلمة مرور المدير الأولي بحيث تكون `SEED_SYSTEM_ADMIN_PASSWORD` إلزامية فقط عند إنشاء المدير لأول مرة، دون وجود أي كلمة مرور افتراضية (No fallback) في الكود المصدري، مع حماية كلمة مرور المستخدم الحالي من التغيير عند إعادة التشغيل.
+- تحسين عملية الإيقاف الآمن (Graceful Shutdown) في `src/server.ts` بانتظار إغلاق خادم HTTP فعلياً قبل إغلاق اتصال قاعدة البيانات، مع منع الاستدعاء المتزامن المزدوج وإزالة الخروج الإجباري.
+- إزالة أي تبعية أو كود أو توثيق متعلق بـ HTMX والاعتماد على صفحات EJS المخدمة من الخادم و Native Fetch لطلبات الـ JSON API.
 - جداول وكيانات النظام الأساسية: `system_role`, `system_user`, `system_permission`, `system_permission_grant`, `system_access_rule`, `system_session`.
 
 ---
@@ -51,14 +48,20 @@ src/
 │   └── data-source.ts
 ├── modules/
 │   └── system/
+│       ├── access-rule/
+│       │   ├── seeds/
+│       │   │   └── system-admin-access-rules.seed.ts
+│       │   └── access-rule.entity.ts
 │       ├── permission/
 │       │   ├── constants/
 │       │   │   └── system-permission.enum.ts
 │       │   ├── seeds/
 │       │   │   └── system-user-permissions.seed.ts
-│       │   ├── access-rule.entity.ts
-│       │   ├── permission-grant.entity.ts
 │       │   └── permission.entity.ts
+│       ├── permission-grant/
+│       │   ├── seeds/
+│       │   │   └── system-admin-permission-grants.seed.ts
+│       │   └── permission-grant.entity.ts
 │       ├── role/
 │       │   ├── constants/
 │       │   │   └── system-role.enum.ts
@@ -69,8 +72,6 @@ src/
 │       │   └── session.entity.ts
 │       └── user/
 │           ├── seeds/
-│           │   ├── system-admin-access-rules.seed.ts
-│           │   ├── system-admin-permission-grants.seed.ts
 │           │   └── system-admin-user.seed.ts
 │           └── user.entity.ts
 ├── public/
@@ -133,22 +134,29 @@ storage/
 
 ## Seed Infrastructure
 
-### Seed Execution Order
+### Seed Execution Order & Module Ownership
 1. **System Admin Role Seed** (`src/modules/system/role/seeds/system-admin-role.seed.ts`) $\rightarrow$ ينشئ أو يسترجع دور `SystemRole.SYSTEM_ADMIN`.
-2. **System User Permissions Seed** (`src/modules/system/permission/seeds/system-user-permissions.seed.ts`) $\rightarrow$ ينشئ أو يسترجع الصلاحيات الـ 4 المعرفة في `SystemPermission`.
-3. **System Admin User Seed** (`src/modules/system/user/seeds/system-admin-user.seed.ts`) $\rightarrow$ يقوم تلقائياً باسترجاع دور `SYSTEM_ADMIN`، وإنشاء مستخدم مدير النظام `0912312312`، وإنشاء وتطبيق منح الصلاحيات وقواعد الوصول `ALLOW` / `ALL`.
+2. **System User Permissions Seed** (`src/modules/system/permission/seeds/system-user-permissions.seed.ts`) $\rightarrow$ ينشئ أو يسترجع الصلاحيات المعرفة في `SystemPermission`.
+3. **System Admin User Seed** (`src/modules/system/user/seeds/system-admin-user.seed.ts`) $\rightarrow$ ينشئ مستخدم مدير النظام `0912312312` ويستدعي منح الصلاحيات وقواعد الوصول.
+4. **SYSTEM_ADMIN Permission Grants Seed** (`src/modules/system/permission-grant/seeds/system-admin-permission-grants.seed.ts`) $\rightarrow$ يمنح دور `SYSTEM_ADMIN` تلقائياً جميع الصلاحيات النشطة (`isActive: true`) مع `can_delegate: true` و `granted_by: adminUser.id`.
+5. **SYSTEM_ADMIN Access Rules Seed** (`src/modules/system/access-rule/seeds/system-admin-access-rules.seed.ts`) $\rightarrow$ ينشئ قواعد `ALLOW` / `ALL` لكل منحة صلاحية خاصة بمدير النظام.
 
 ### Seed Idempotency & Security Rules
 - **Idempotency**: يعتمد التحقق على المفاتيح الطبيعية (`Role.code`, `Permission.name`, `User.phone`, `Grant(roleId + permissionId)`, `Rule(grantId + effect + scopeType)`).
-- **Password Protection**: تشفير كلمات المرور باستخدام `bcrypt` قبل التخزين، وعدم إعادة تعيين أو تغيير `password_hash` لأي مستخدم موجود مسبقاً عند تكرار تشغيل `npm run seed`.
-- **Decoupled Module Seeds**: كود الـ Seed الخاص بكل نطاق عمل يوضع داخل مجلد `seeds` في نفس الـ Module، ويقتصر دور `src/database/seeds/system-initial.seed.ts` على التنسيق والتشغيل داخل Transaction واحدة.
+- **Password Security**:
+  - متغير البيئة `SEED_SYSTEM_ADMIN_PASSWORD` إلزامي فقط عند إنشاء مستخدم المدير لأول مرة.
+  - لا توجد أي كلمة مرور افتراضية (No fallback) في الكود المصدري.
+  - تشفير كلمة المرور بـ `bcrypt` قبل التخزين.
+  - حماية كلمات مرور المستخدمين المنشئين مسبقاً من إعادة التعيين أو التغيير عند تكرار تشغيل `npm run seed`.
+- **SYSTEM_ADMIN Auto-Grants**: عند إضافة أي صلاحيات جديدة نشطة في النظام وإعادة تشغيل الـ Seed، يحصل دور `SYSTEM_ADMIN` عليها تلقائياً.
+- **Decoupled Module Seeds**: كل Seeder يتبع للموديول المالك للكيان، ومشغل الـ Seed (`src/database/seeds/system-initial.seed.ts`) ينسق التنفيذ داخل Transaction موحدة.
 
 ---
 
 ## Database Structure
 
 ### `system_role`
-- **Entity**: `RoleEntity`
+- **Entity**: `RoleEntity` (`src/modules/system/role/role.entity.ts`)
 - **Purpose**: تعريف الأدوار الأساسية للمستخدمين في النظام.
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
@@ -168,7 +176,7 @@ storage/
 ---
 
 ### `system_user`
-- **Entity**: `UserEntity`
+- **Entity**: `UserEntity` (`src/modules/system/user/user.entity.ts`)
 - **Purpose**: تمثيل حسابات المستخدمين في النظام مع ارتباط كل مستخدم بدور أساسي واحد.
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
@@ -193,7 +201,7 @@ storage/
 ---
 
 ### `system_permission`
-- **Entity**: `PermissionEntity`
+- **Entity**: `PermissionEntity` (`src/modules/system/permission/permission.entity.ts`)
 - **Purpose**: تعريف الصلاحيات المتاحة في النظام بنمط `<application>.<resource>.<action>`.
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
@@ -211,7 +219,7 @@ storage/
 ---
 
 ### `system_permission_grant`
-- **Entity**: `PermissionGrantEntity`
+- **Entity**: `PermissionGrantEntity` (`src/modules/system/permission-grant/permission-grant.entity.ts`)
 - **Purpose**: تمثيل منح صلاحية محددة إما لمستخدم مباشرة أو لدور معين (Exactly one target).
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
@@ -244,7 +252,7 @@ storage/
 ---
 
 ### `system_access_rule`
-- **Entity**: `AccessRuleEntity`
+- **Entity**: `AccessRuleEntity` (`src/modules/system/access-rule/access-rule.entity.ts`)
 - **Purpose**: تحديد نطاق البيانات (Row/Scope Filter) المسموح أو الممنوع لمنحة صلاحية معينة.
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
@@ -268,8 +276,7 @@ storage/
 ---
 
 ### `system_session`
-- **Entity**: `SessionEntity`
-- **File**: `src/modules/system/session/session.entity.ts`
+- **Entity**: `SessionEntity` (`src/modules/system/session/session.entity.ts`)
 - **Purpose**: تخزين جلسات تسجيل دخول المستخدمين بشكل دائم، مع دعم تعدد الأجهزة، انتهاء الجلسة، الإلغاء، وتتبع آخر استخدام.
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
@@ -327,14 +334,25 @@ storage/
    - جميع تعديلات المخطط (Schema) تتم حصراً عبر الـ Migrations مع بقاء `synchronize: false`.
 
 5. **Seed Architecture & Rules**:
-   - كل Seeder ينتمي حصراً إلى الـ Module المالك للبيانات.
+   - كل Seeder ينتمي حصراً إلى الـ Module المالك للبيانات (`permission-grant` للـ Grants، و `access-rule` للـ Rules).
    - الـ Seed Runner مسؤول فقط عن تهيئة الاتصال وتنظيم تسلسل التنفيذ داخل Transaction.
    - الـ Seed Idempotent بالكامل ويعتمد على المفاتيح الطبيعية لمنع التكرار.
-   - منع تخزين كلمات المرور كنص صريح (Plain Text) نهائياً واستخدام التشفير المناسب (`bcrypt`).
+   - منع وجود أي كلمات مرور افتراضية (Fallback) في الكود، وإلزامية متغير البيئة عند إنشاء مدير النظام لأول مرة.
    - حماية كلمات مرور المستخدمين المنشئين مسبقاً من إعادة التعيين أثناء إعادة تشغيل الـ Seed.
    - استخدام ثوابت الصلاحيات من `SystemPermission` enum وثوابت الأدوار من `SystemRole` enum بدلاً من تكرار النصوص.
+   - دور `SYSTEM_ADMIN` يحصل تلقائياً على جميع الصلاحيات النشطة عند تشغيل الـ Seed.
 
-6. **Backend Validation Flow**:
+6. **Client Interaction & Views**:
+   - صفحات الواجهة تعتمد على العرض من طرف الخادم (Server-rendered EJS pages).
+   - التفاعل مع الواجهات البرمجية يتم باستخدام `native fetch` للعمليات التي تعتمد على JSON API.
+   - المشروع لا يعتمد ولا يستخدم مكتبة HTMX.
+
+7. **Graceful Shutdown**:
+   - عند استقبال إشارات الإيقاف (`SIGINT`, `SIGTERM`)، يتم انتظار إغلاق خادم HTTP (`server.close()`) وتوقف استقبال الطلبات قبل إغلاق اتصال قاعدة البيانات (`AppDataSource.destroy()`).
+   - وجود حماية تمنع تنفيذ الإيقاف أكثر من مرة بالتوازي (`isShuttingDown` guard).
+   - استخدام `process.exitCode` بدلاً من الخروج القسري المباشر.
+
+8. **Backend Validation Flow**:
    - `Route` $\rightarrow$ `validateDto(Dto)` $\rightarrow$ `Controller` $\rightarrow$ `Service`.
    - استخدام `class-validator` و `class-transformer`.
    - عدم تكرار التحقق من الـ DTO داخل الـ Controllers.
@@ -346,10 +364,10 @@ storage/
 
 ## Implemented Infrastructure
 
+- System Modules Organization (`permission`, `permission-grant`, `access-rule`, `role`, `session`, `user`).
 - System Session Data Model & Migration (`SessionEntity`, `system_session`).
 - Initial System Seed Data & Runner (`npm run seed`).
 - Password Hashing & Comparison Utilities (`src/common/security/password.util.ts`).
-- System Core Data Model & Entities (`RoleEntity`, `UserEntity`, `PermissionEntity`, `PermissionGrantEntity`, `AccessRuleEntity`, `SessionEntity`).
 - Migrations:
   - `1710000000000-CreateSystemCoreTables.ts` (executed).
   - `1710000000001-CreateSystemSessionTable.ts` (executed).
@@ -357,8 +375,7 @@ storage/
 - Standardized `ValidationError` representation (`src/common/errors/validation.error.ts`).
 - Centralized Error Handling (`AppError`, `errorHandlerMiddleware`).
 - Standardized typed `ApiResponse` for API endpoints.
-- HTMX Global Integration with `#app-content` target & `#global-loading` indicator.
 - Standardized native fetch API Client (`src/public/js/api.js`).
-- EJS + `express-ejs-layouts` with partial rendering support for HTMX.
+- EJS + `express-ejs-layouts` server-rendered views.
 - Static assets serving (`src/public`).
-- TypeORM MySQL connection and graceful shutdown.
+- TypeORM MySQL connection and robust graceful shutdown.

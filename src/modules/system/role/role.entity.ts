@@ -9,7 +9,7 @@ import {
   Index,
 } from 'typeorm';
 import { UserEntity } from '../user/user.entity.js';
-import { PermissionGrantEntity } from '../permission/permission-grant.entity.js';
+import { PermissionGrantEntity } from '../permission-grant/permission-grant.entity.js';
 
 @Entity('system_role')
 export class RoleEntity {

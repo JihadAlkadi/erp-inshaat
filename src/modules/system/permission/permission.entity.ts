@@ -8,7 +8,7 @@ import {
   OneToMany,
   Index,
 } from 'typeorm';
-import { PermissionGrantEntity } from './permission-grant.entity.js';
+import { PermissionGrantEntity } from '../permission-grant/permission-grant.entity.js';
 
 @Entity('system_permission')
 export class PermissionEntity {

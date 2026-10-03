@@ -8,7 +8,7 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { PermissionGrantEntity } from './permission-grant.entity.js';
+import { PermissionGrantEntity } from '../permission-grant/permission-grant.entity.js';
 
 export type AccessRuleEffect = 'ALLOW' | 'DENY';
 

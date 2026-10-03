@@ -6,6 +6,7 @@ import { AppDataSource } from './database/data-source.js';
 import { app } from './app.js';
 
 let server: Server | null = null;
+let isShuttingDown = false;
 
 async function bootstrap(): Promise<void> {
   try {
@@ -20,21 +21,46 @@ async function bootstrap(): Promise<void> {
   }
 }
 
+function closeHttpServer(): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (!server) {
+      resolve();
+      return;
+    }
+
+    server.close((err) => {
+      if (err) {
+        reject(err);
+      } else {
+        server = null;
+        console.log('HTTP server closed.');
+        resolve();
+      }
+    });
+  });
+}
+
 async function handleShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    return;
+  }
+  isShuttingDown = true;
+
   console.log(`\nReceived ${signal}. Shutting down gracefully...`);
 
-  if (server) {
-    server.close(() => {
-      console.log('HTTP server closed.');
-    });
-  }
+  try {
+    await closeHttpServer();
 
-  if (AppDataSource.isInitialized) {
-    await AppDataSource.destroy();
-    console.log('Database connection closed.');
-  }
+    if (AppDataSource.isInitialized) {
+      await AppDataSource.destroy();
+      console.log('Database connection closed.');
+    }
 
-  process.exit(0);
+    process.exitCode = 0;
+  } catch (error) {
+    console.error('Error during graceful shutdown:', error);
+    process.exitCode = 1;
+  }
 }
 
 process.on('SIGINT', () => void handleShutdown('SIGINT'));
