@@ -36,10 +36,10 @@
     - `DELETE /api/production/yards/:id` (محمي بـ `PRODUCTION_YARD_DELETE` و UUID).
   - **واجهات الويب المعروضة من الخادم (Server-rendered EJS)**:
     - `GET /production`: لوحة تحكم تطبيق الإنتاج مع بطاقات التنقل للأقسام والساحات.
-    - `GET /production/departments`: جدول أقسام الإنتاج مع إجمالي والساحات النشطة وشارات الحالة.
+    - `GET /production/departments`: جدول أقسام الإنتاج مع إجمالي والساحات النشطة وشارات الحالة، مع أزرار إجراءات مباشرة مدمجة (`d-inline-flex gap-1`) متسقة مع جداول النظام لتجنب Scrollbars داخل `table-responsive`.
     - `GET /production/departments/create`: نموذج إنشاء قسم إنتاج جديد مع التحقق بواسطة المتصفح وبواسطة Bootstrap.
     - `GET /production/departments/:id/edit`: نموذج تعديل بيانات القسم مع قفل الرمز التقني كـ Read-only.
-    - `GET /production/yards`: جدول ساحات الإنتاج مع فلتر الأقسام والسعة الاستيعابية وشارات الحالة.
+    - `GET /production/yards`: جدول ساحات الإنتاج مع فلتر الأقسام والسعة الاستيعابية وشارات الحالة، مع أزرار إجراءات مباشرة مدمجة (`d-inline-flex gap-1`).
     - `GET /production/yards/create`: نموذج إنشاء ساحة إنتاج جديدة مع قائمة اختيار الأقسام النشطة.
     - `GET /production/yards/:id/edit`: نموذج تعديل ساحة الإنتاج مع قفل الرمز التقني.
   - **تفاعل العميل (Client Scripts)**:
@@ -886,7 +886,7 @@ src/
   - `department_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `production_department.id`
   - `name`: varchar(100), NOT NULL
   - `code`: varchar(50), NOT NULL, UNIQUE (`UQ_production_yard_code`), Immutable
-  - `capacity`: int, NOT NULL (`CHK_production_yard_capacity_positive`: capacity >= 1)
+  - `capacity`: int, NOT NULL (`CHK_production_yard_capacity`: capacity >= 1)
   - `description`: text, NULL
   - `is_active`: tinyint(1), NOT NULL, default: 1
   - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
@@ -899,7 +899,7 @@ src/
   - `IDX_production_yard_department_id`: INDEX(`department_id`)
   - `IDX_production_yard_is_active`: INDEX(`is_active`)
   - `IDX_production_yard_deleted_at`: INDEX(`deleted_at`)
-  - `CHK_production_yard_capacity_positive`: CHECK `(capacity >= 1)`
+  - `CHK_production_yard_capacity`: CHECK `(capacity >= 1)`
   - `FK_production_yard_department_id`: FOREIGN KEY (`department_id`) REFERENCES `production_department`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 
 ---

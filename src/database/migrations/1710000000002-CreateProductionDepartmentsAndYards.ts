@@ -26,7 +26,6 @@ export class CreateProductionDepartmentsAndYards1710000000002 implements Migrati
             type: 'varchar',
             length: '50',
             isNullable: false,
-            isUnique: true,
           },
           {
             name: 'description',
@@ -109,7 +108,6 @@ export class CreateProductionDepartmentsAndYards1710000000002 implements Migrati
             type: 'varchar',
             length: '50',
             isNullable: false,
-            isUnique: true,
           },
           {
             name: 'capacity',
@@ -186,11 +184,9 @@ export class CreateProductionDepartmentsAndYards1710000000002 implements Migrati
     );
 
     // Add CHECK constraint for positive capacity
-    try {
-      await queryRunner.query('ALTER TABLE `production_yard` ADD CONSTRAINT `CHK_production_yard_capacity` CHECK (`capacity` > 0)');
-    } catch {
-      // MySQL older than 8.0.16 might ignore or fail on check constraint
-    }
+    await queryRunner.query(
+      'ALTER TABLE `production_yard` ADD CONSTRAINT `CHK_production_yard_capacity` CHECK (`capacity` >= 1)',
+    );
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

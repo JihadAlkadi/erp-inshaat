@@ -66,7 +66,7 @@
             <th class="py-3 text-center">السعة الاستيعابية</th>
             <th class="py-3 text-center">الحالة</th>
             <th class="py-3">تاريخ الإنشاء</th>
-            <th class="pe-4 py-3 text-end">الإجراءات</th>
+            <th class="py-3 text-center px-4">الإجراءات</th>
           </tr>
         </thead>
         <tbody>
@@ -113,52 +113,55 @@
                 <td class="text-muted small">
                   <%= new Date(yard.createdAt).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' }) %>
                 </td>
-                <td class="pe-4 text-end">
-                  <div class="dropdown">
-                    <button class="btn btn-sm btn-light border-0" type="button" data-bs-toggle="dropdown">
-                      <i class="fa-solid fa-ellipsis-vertical"></i>
-                    </button>
-                    <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0">
-                      <% if (canUpdate) { %>
-                        <li>
-                          <a class="dropdown-item d-flex align-items-center gap-2" href="/production/yards/<%= yard.id %>/edit">
-                            <i class="fa-solid fa-pen-to-square text-primary"></i>
-                            <span>تعديل البيانات</span>
-                          </a>
-                        </li>
-                        <li>
-                          <button
-                            class="dropdown-item d-flex align-items-center gap-2"
-                            data-action="toggle-yard-status"
-                            data-yard-id="<%= yard.id %>"
-                            data-yard-name="<%= yard.name %>"
-                            data-new-status="<%= yard.isActive ? 'false' : 'true' %>"
-                          >
-                            <% if (yard.isActive) { %>
-                              <i class="fa-solid fa-toggle-off text-warning"></i>
-                              <span>تعطيل الساحة</span>
-                            <% } else { %>
-                              <i class="fa-solid fa-toggle-on text-success"></i>
-                              <span>تفعيل الساحة</span>
-                            <% } %>
-                          </button>
-                        </li>
+                <td class="py-3 text-center px-4">
+                  <div class="d-inline-flex gap-1">
+                    <% if (canUpdate) { %>
+                      <a
+                        href="/production/yards/<%= yard.id %>/edit"
+                        class="btn btn-sm btn-outline-primary"
+                        title="تعديل"
+                      >
+                        <i class="fa-solid fa-pen-to-square"></i>
+                      </a>
+                      <% if (yard.isActive) { %>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-warning"
+                          title="تعطيل الساحة"
+                          data-action="toggle-yard-status"
+                          data-yard-id="<%= yard.id %>"
+                          data-yard-name="<%= yard.name %>"
+                          data-new-status="false"
+                        >
+                          <i class="fa-solid fa-ban"></i>
+                        </button>
+                      <% } else { %>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-success"
+                          title="تفعيل الساحة"
+                          data-action="toggle-yard-status"
+                          data-yard-id="<%= yard.id %>"
+                          data-yard-name="<%= yard.name %>"
+                          data-new-status="true"
+                        >
+                          <i class="fa-solid fa-check"></i>
+                        </button>
                       <% } %>
-                      <% if (canDelete) { %>
-                        <li><hr class="dropdown-divider"></li>
-                        <li>
-                          <button
-                            class="dropdown-item d-flex align-items-center gap-2 text-danger"
-                            data-action="delete-yard"
-                            data-yard-id="<%= yard.id %>"
-                            data-yard-name="<%= yard.name %>"
-                          >
-                            <i class="fa-solid fa-box-archive"></i>
-                            <span>أرشفة الساحة</span>
-                          </button>
-                        </li>
-                      <% } %>
-                    </ul>
+                    <% } %>
+
+                    <% if (canDelete) { %>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        title="أرشفة الساحة"
+                        data-action="delete-yard"
+                        data-yard-id="<%= yard.id %>"
+                        data-yard-name="<%= yard.name %>"
+                      >
+                        <i class="fa-solid fa-trash-can"></i>
+                      </button>
+                    <% } %>
                   </div>
                 </td>
               </tr>

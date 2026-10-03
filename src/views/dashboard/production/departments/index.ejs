@@ -52,7 +52,7 @@
             <th class="py-3 text-center">الساحات النشطة</th>
             <th class="py-3 text-center">الحالة</th>
             <th class="py-3">تاريخ الإنشاء</th>
-            <th class="pe-4 py-3 text-end">الإجراءات</th>
+            <th class="py-3 text-center px-4">الإجراءات</th>
           </tr>
         </thead>
         <tbody>
@@ -99,54 +99,58 @@
                 <td class="text-muted small">
                   <%= new Date(dept.createdAt).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' }) %>
                 </td>
-                <td class="pe-4 text-end">
-                  <div class="dropdown">
-                    <button class="btn btn-sm btn-light border-0" type="button" data-bs-toggle="dropdown">
-                      <i class="fa-solid fa-ellipsis-vertical"></i>
-                    </button>
-                    <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0">
-                      <% if (canUpdate) { %>
-                        <li>
-                          <a class="dropdown-item d-flex align-items-center gap-2" href="/production/departments/<%= dept.id %>/edit">
-                            <i class="fa-solid fa-pen-to-square text-primary"></i>
-                            <span>تعديل البيانات</span>
-                          </a>
-                        </li>
-                        <li>
-                          <button
-                            class="dropdown-item d-flex align-items-center gap-2"
-                            data-action="toggle-department-status"
-                            data-department-id="<%= dept.id %>"
-                            data-department-name="<%= dept.name %>"
-                            data-new-status="<%= dept.isActive ? 'false' : 'true' %>"
-                            data-active-yards="<%= dept.activeYardCount || 0 %>"
-                          >
-                            <% if (dept.isActive) { %>
-                              <i class="fa-solid fa-toggle-off text-warning"></i>
-                              <span>تعطيل القسم</span>
-                            <% } else { %>
-                              <i class="fa-solid fa-toggle-on text-success"></i>
-                              <span>تفعيل القسم</span>
-                            <% } %>
-                          </button>
-                        </li>
+                <td class="py-3 text-center px-4">
+                  <div class="d-inline-flex gap-1">
+                    <% if (canUpdate) { %>
+                      <a
+                        href="/production/departments/<%= dept.id %>/edit"
+                        class="btn btn-sm btn-outline-primary"
+                        title="تعديل"
+                      >
+                        <i class="fa-solid fa-pen-to-square"></i>
+                      </a>
+                      <% if (dept.isActive) { %>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-warning"
+                          title="تعطيل القسم"
+                          data-action="toggle-department-status"
+                          data-department-id="<%= dept.id %>"
+                          data-department-name="<%= dept.name %>"
+                          data-new-status="false"
+                          data-active-yards="<%= dept.activeYardCount || 0 %>"
+                        >
+                          <i class="fa-solid fa-ban"></i>
+                        </button>
+                      <% } else { %>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-success"
+                          title="تفعيل القسم"
+                          data-action="toggle-department-status"
+                          data-department-id="<%= dept.id %>"
+                          data-department-name="<%= dept.name %>"
+                          data-new-status="true"
+                          data-active-yards="<%= dept.activeYardCount || 0 %>"
+                        >
+                          <i class="fa-solid fa-check"></i>
+                        </button>
                       <% } %>
-                      <% if (canDelete) { %>
-                        <li><hr class="dropdown-divider"></li>
-                        <li>
-                          <button
-                            class="dropdown-item d-flex align-items-center gap-2 text-danger"
-                            data-action="delete-department"
-                            data-department-id="<%= dept.id %>"
-                            data-department-name="<%= dept.name %>"
-                            data-yard-count="<%= dept.yardCount || 0 %>"
-                          >
-                            <i class="fa-solid fa-box-archive"></i>
-                            <span>أرشفة القسم</span>
-                          </button>
-                        </li>
-                      <% } %>
-                    </ul>
+                    <% } %>
+
+                    <% if (canDelete) { %>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        title="أرشفة القسم"
+                        data-action="delete-department"
+                        data-department-id="<%= dept.id %>"
+                        data-department-name="<%= dept.name %>"
+                        data-yard-count="<%= dept.yardCount || 0 %>"
+                      >
+                        <i class="fa-solid fa-trash-can"></i>
+                      </button>
+                    <% } %>
                   </div>
                 </td>
               </tr>

@@ -13,7 +13,7 @@ import {
 import { ProductionDepartmentEntity } from '../department/production-department.entity.js';
 
 @Entity('production_yard')
-@Check('CHK_production_yard_capacity', '`capacity` > 0')
+@Check('CHK_production_yard_capacity', '`capacity` >= 1')
 export class ProductionYardEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -26,7 +26,7 @@ export class ProductionYardEntity {
   name!: string;
 
   @Index('UQ_production_yard_code', { unique: true })
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50 })
   code!: string;
 
   @Column({ type: 'int' })

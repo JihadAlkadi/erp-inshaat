@@ -19,7 +19,7 @@ export class ProductionDepartmentEntity {
   name!: string;
 
   @Index('UQ_production_department_code', { unique: true })
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50 })
   code!: string;
 
   @Column({ type: 'text', nullable: true })
