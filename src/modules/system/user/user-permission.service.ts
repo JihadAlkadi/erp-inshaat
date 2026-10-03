@@ -1,116 +1,152 @@
 import { IsNull, Repository } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
-import { RoleEntity } from './role.entity.js';
+import { UserEntity } from './user.entity.js';
 import { PermissionGrantEntity } from '../permission-grant/permission-grant.entity.js';
 import { AccessRuleEntity } from '../access-rule/access-rule.entity.js';
 import { PermissionService, permissionService } from '../permission/permission.service.js';
-import { RoleService, roleService } from './role.service.js';
-import { SystemRole } from './constants/system-role.enum.js';
+import { UserService, userService } from './user.service.js';
 import { AuthPrincipal } from '../auth/auth.types.js';
-import { RoleGlobalPermissionsResponse, RolePermissionState } from './role.types.js';
+import { UserGlobalPermissionsResponse, UserPermissionState } from './user.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
-import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+import { ForbiddenError } from '../../../common/errors/forbidden.error.js';
 
-export class RolePermissionService {
-  private readonly roleRepository: Repository<RoleEntity>;
+export class UserPermissionService {
+  private readonly userRepository: Repository<UserEntity>;
   private readonly grantRepository: Repository<PermissionGrantEntity>;
-  private readonly roleService: RoleService;
+  private readonly userService: UserService;
   private readonly permissionService: PermissionService;
 
   constructor(
-    roleRepo: Repository<RoleEntity> = AppDataSource.getRepository(RoleEntity),
+    userRepo: Repository<UserEntity> = AppDataSource.getRepository(UserEntity),
     grantRepo: Repository<PermissionGrantEntity> = AppDataSource.getRepository(PermissionGrantEntity),
-    rService: RoleService = roleService,
+    uService: UserService = userService,
     pService: PermissionService = permissionService
   ) {
-    this.roleRepository = roleRepo;
+    this.userRepository = userRepo;
     this.grantRepository = grantRepo;
-    this.roleService = rService;
+    this.userService = uService;
     this.permissionService = pService;
   }
 
-  async getRoleGlobalPermissionStates(roleId: string): Promise<RoleGlobalPermissionsResponse> {
-    const role = await this.roleService.getRoleById(roleId);
-    const isSystemAdmin = role.code === SystemRole.SYSTEM_ADMIN;
+  async getUserGlobalPermissionStates(userId: string): Promise<UserGlobalPermissionsResponse> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId, deletedAt: IsNull() },
+      relations: { role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
+    }
 
     const allPermissions = await this.permissionService.listActivePermissions();
     const now = new Date();
 
-    const activeValidGrants = await this.grantRepository
+    const grantsQuery = this.grantRepository
       .createQueryBuilder('grant')
       .leftJoinAndSelect('grant.accessRules', 'rule')
-      .where('grant.roleId = :roleId', { roleId })
-      .andWhere('grant.userId IS NULL')
-      .andWhere('grant.isActive = :isActive', { isActive: true })
-      .andWhere('(grant.expiresAt IS NULL OR grant.expiresAt > :now)', { now })
-      .getMany();
+      .where('grant.isActive = :isActive', { isActive: true })
+      .andWhere('(grant.expiresAt IS NULL OR grant.expiresAt > :now)', { now });
 
-    const states: RolePermissionState[] = allPermissions.map((perm) => {
-      const matchingGrants = activeValidGrants.filter((g) => g.permissionId === perm.id);
+    if (user.roleId) {
+      grantsQuery.andWhere(
+        '((grant.userId = :userId AND grant.roleId IS NULL) OR (grant.roleId = :roleId AND grant.userId IS NULL))',
+        { userId: user.id, roleId: user.roleId }
+      );
+    } else {
+      grantsQuery.andWhere('grant.userId = :userId AND grant.roleId IS NULL', { userId: user.id });
+    }
 
-      let hasAllowAll = false;
-      let hasDenyAll = false;
+    const applicableGrants = await grantsQuery.getMany();
 
-      for (const grant of matchingGrants) {
+    const states: UserPermissionState[] = allPermissions.map((perm) => {
+      let hasDirectAllowAll = false;
+      let hasDirectDenyAll = false;
+      let hasRoleAllowAll = false;
+      let hasRoleDenyAll = false;
+
+      for (const grant of applicableGrants) {
+        if (grant.permissionId !== perm.id) continue;
+
+        const isDirect = grant.userId === user.id && !grant.roleId;
+        const isRole = Boolean(user.roleId && grant.roleId === user.roleId && !grant.userId);
+
         if (grant.accessRules) {
           for (const rule of grant.accessRules) {
             if (rule.isActive && rule.scopeType === 'ALL') {
-              if (rule.effect === 'ALLOW') {
-                hasAllowAll = true;
-              } else if (rule.effect === 'DENY') {
-                hasDenyAll = true;
+              if (isDirect) {
+                if (rule.effect === 'ALLOW') hasDirectAllowAll = true;
+                if (rule.effect === 'DENY') hasDirectDenyAll = true;
+              } else if (isRole) {
+                if (rule.effect === 'ALLOW') hasRoleAllowAll = true;
+                if (rule.effect === 'DENY') hasRoleDenyAll = true;
               }
             }
           }
         }
       }
 
+      const hasAnyAllow = hasDirectAllowAll || hasRoleAllowAll;
+      const hasAnyDeny = hasDirectDenyAll || hasRoleDenyAll;
+      const effectiveGlobalAccess = hasAnyAllow && !hasAnyDeny;
+
       return {
         permissionId: perm.id,
         name: perm.name,
         description: perm.description,
-        hasAllowAll,
-        hasDenyAll,
-        effectiveGlobalAccess: hasAllowAll && !hasDenyAll,
+        hasDirectAllowAll,
+        hasDirectDenyAll,
+        hasRoleAllowAll,
+        hasRoleDenyAll,
+        effectiveGlobalAccess,
       };
     });
 
     return {
-      role,
+      user: {
+        id: user.id,
+        fullName: user.fullName,
+        phone: user.phone,
+        roleId: user.roleId,
+        roleName: user.role?.name,
+        isActive: user.isActive,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
       permissions: states,
-      isSystemAdmin,
     };
   }
 
-  async setRoleGlobalPermissions(
-    roleId: string,
+  async setUserGlobalPermissions(
+    userId: string,
     desiredPermissionIds: string[],
     actor: AuthPrincipal
   ): Promise<{ success: boolean; message: string }> {
+    // 1. Self Protection Check
+    if (actor.id === userId) {
+      throw new ForbiddenError(
+        'لا يمكنك تعديل صلاحيات حسابك المباشرة بنفسك',
+        'CANNOT_MANAGE_OWN_PERMISSIONS'
+      );
+    }
+
     return await AppDataSource.transaction(async (manager) => {
-      const roleRepo = manager.getRepository(RoleEntity);
+      const userRepo = manager.getRepository(UserEntity);
       const grantRepo = manager.getRepository(PermissionGrantEntity);
       const ruleRepo = manager.getRepository(AccessRuleEntity);
 
-      // 1. Lock Target Role row with pessimistic_write
-      const role = await roleRepo
-        .createQueryBuilder('role')
+      // 2. Lock Target User row with pessimistic_write
+      const targetUser = await userRepo
+        .createQueryBuilder('user')
         .setLock('pessimistic_write')
-        .where('role.id = :roleId', { roleId })
-        .andWhere('role.deletedAt IS NULL')
+        .where('user.id = :userId', { userId })
+        .andWhere('user.deletedAt IS NULL')
         .getOne();
 
-      if (!role) {
-        throw new NotFoundError('الدور غير موجود', 'ROLE_NOT_FOUND');
+      if (!targetUser) {
+        throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
       }
 
-      if (role.code === SystemRole.SYSTEM_ADMIN) {
-        throw new BusinessRuleError(
-          'صلاحيات مدير النظام الأساسية تُدار تلقائيًا بواسطة النظام',
-          'SYSTEM_ADMIN_PERMISSIONS_MANAGED_BY_SYSTEM'
-        );
-      }
-
+      // 3. Validate desired permissions exist and are active
       const allPermissions = await this.permissionService.listActivePermissions(manager);
       const activePermMap = new Map(allPermissions.map((p) => [p.id, p]));
 
@@ -121,9 +157,11 @@ export class RolePermissionService {
       }
 
       const desiredSet = new Set(desiredPermissionIds);
+      const now = new Date();
 
+      // 4. Load all Direct Grants for this user
       const existingGrants = await grantRepo.find({
-        where: { roleId, userId: IsNull() },
+        where: { userId: targetUser.id, roleId: IsNull() },
         relations: { accessRules: true },
       });
 
@@ -132,24 +170,28 @@ export class RolePermissionService {
         const permGrants = existingGrants.filter((g) => g.permissionId === perm.id);
 
         if (isDesired) {
-          // 1. Enable Global ALLOW ALL
-          let targetGrant = permGrants.find((g) => g.isActive && (g.expiresAt === null || g.expiresAt > new Date()));
+          // Enable Direct ALLOW ALL
+          let targetGrant = permGrants.find(
+            (g) => g.isActive && (g.expiresAt === null || g.expiresAt > now)
+          );
 
           if (!targetGrant) {
-            targetGrant = permGrants.find((g) => !g.isActive || (g.expiresAt !== null && g.expiresAt <= new Date()));
+            targetGrant = permGrants.find(
+              (g) => !g.isActive || (g.expiresAt !== null && g.expiresAt <= now)
+            );
           }
 
           if (!targetGrant) {
             targetGrant = grantRepo.create({
-              roleId,
+              userId: targetUser.id,
+              roleId: null,
               permissionId: perm.id,
-              userId: null,
               isActive: true,
               expiresAt: null,
               canDelegate: false,
               grantedBy: actor.id,
-              grantedAt: new Date(),
-              reason: 'إسناد صلاحية شاملة للدور',
+              grantedAt: now,
+              reason: 'إسناد صلاحية مباشرة شاملة للمستخدم',
             });
             targetGrant = await grantRepo.save(targetGrant);
           } else {
@@ -190,7 +232,7 @@ export class RolePermissionService {
             await ruleRepo.save(newRule);
           }
         } else {
-          // 2. Disable Global ALLOW ALL (on all matching grants)
+          // Disable Direct ALLOW ALL on ALL matching direct grants for this user & permission
           for (const grant of permGrants) {
             const rules = grant.accessRules ?? [];
             for (const rule of rules) {
@@ -205,10 +247,10 @@ export class RolePermissionService {
 
       return {
         success: true,
-        message: 'تم حفظ صلاحيات الدور بنجاح',
+        message: 'تم حفظ الصلاحيات المباشرة للمستخدم بنجاح',
       };
     });
   }
 }
 
-export const rolePermissionService = new RolePermissionService();
+export const userPermissionService = new UserPermissionService();

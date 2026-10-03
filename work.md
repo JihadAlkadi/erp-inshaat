@@ -3,6 +3,25 @@
 ## Current Project State
 
 تم تنفيذ مرحلة إدارة الأدوار والصلاحيات الشاملة (Role Management Core & Global Permission Assignment) ومرحلة إدارة المستخدمين الأساسية (User Management Core) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات وقاعدة البيانات:
+- **إدارة الصلاحيات المباشرة للمستخدمين (Direct User Permission Management)** (`src/modules/system/user/`):
+  - خدمة الصلاحيات المباشرة للمستخدم `UserPermissionService` (`src/modules/system/user/user-permission.service.ts`):
+    - `getUserGlobalPermissionStates`: استرجاع قائمة كافة الصلاحيات النشطة في النظام مع حالة الوصول المباشر والموروث من الدور لكل مستخدم (`hasDirectAllowAll`, `hasDirectDenyAll`, `hasRoleAllowAll`, `hasRoleDenyAll`) وحساب حالة الوصول الفعلي الشامل (`effectiveGlobalAccess = (hasDirectAllowAll || hasRoleAllowAll) && !(hasDirectDenyAll || hasRoleDenyAll)`) عبر استعلام تجميعي موحد بدون N+1، مع استبعاد المنح غير النشطة أو المنتهية زمنياً.
+    - `setUserGlobalPermissions`: إسناد مجموعة الصلاحيات المباشرة الشاملة للمستخدم داخل TypeORM Transaction:
+      - تطبيق حماية الصلاحيات الذاتية (`Self Permission Protection`): منع المستخدم من تعديل صلاحياته المباشرة بنفسه ورمي `ForbiddenError` برمز `CANNOT_MANAGE_OWN_PERMISSIONS` (HTTP 403).
+      - فرض قفل تشاؤمي للكتابة (`setLock('pessimistic_write')`) على سجل المستخدم المستهدف (`User row`) داخل الـ Transaction لضمان التسلسل التام مع عمليات دورة حياة المستخدم.
+      - التحقق من وجود ونشاط كافة الصلاحيات المطلوبة ورفض العملية في حال وجود أي صلاحية غير صالحة (`PERMISSION_NOT_FOUND`).
+      - تفعيل وإسناد قواعد `ALLOW ALL` على المنح المباشرة للمستخدم (`userId = targetUser.id`, `roleId IS NULL`, `isActive = true`, `expiresAt = null`, `canDelegate = false`).
+      - تعطيل قواعد `ALLOW ALL` النشطة على الصلاحيات غير المحددة (`isActive = false`) مع دعم تعدد المنح القديمة وتعطيل القواعد عبر كافة منح المستخدم المباشرة المطابقة.
+      - الحفاظ التام والآمن على منح الأدوار (`Role Grants`)، وقواعد الحظر (`DENY`)، وقواعد النطاقات المخصصة غير الشاملة (مثل `ALLOW YARD`) دون حذفها أو تعطيلها.
+  - واجهات برمجة التطبيقات (API Endpoints):
+    - `GET /api/system/users/:id/global-permissions` (محمي بـ `USER_VIEW` و UUID).
+    - `PUT /api/system/users/:id/global-permissions` (محمي بـ `USER_PERMISSION_MANAGE` و UUID و `SetUserGlobalPermissionsDto`).
+  - واجهات الويب المعروضة من الخادم (Server-rendered EJS):
+    - `GET /system/users/:id/permissions`: واجهة إسناد الصلاحيات المباشرة الشاملة للمستخدم مجمعة حسب التطبيق والمورد، مع شارات توضيح الصلاحيات الموروثة من الدور، والصلاحيات المباشرة، وقواعد الـ DENY، وقفل الشاشة كـ Read-only في حال كان المستخدم الحالي يستعرض صلاحيات حسابه الشخصي.
+  - تفاعل العميل (Client Scripts):
+    - `src/public/js/user-permissions.js`: استخدام Native Fetch لعملية حفظ الصلاحيات المباشرة، واستخدام Event Delegation، ومعالجة رسائل الأخطاء وعرضها، وحظر استخدام HTMX.
+- **تصحيح تزامن صلاحيات الأدوار (Role Permission Concurrency Correction)**:
+  - تم تصحيح `RolePermissionService.setRoleGlobalPermissions` بحيث يتم قفل سجل الدور المستهدف بـ `pessimistic_write` داخل Transaction قبل قراءة بيانات الدور أو التحقق من مدير النظام أو تعديل المنح والقواعد، مما يسلسل عمليات تعديل صلاحيات الدور مع عمليات أرشفته وتعطيله وإسناده للمستخدمين.
 - **إدارة الأدوار والصلاحيات الشاملة (Role Management Core & Global Permissions)** (`src/modules/system/role/` & `src/modules/system/permission/`):
   - خدمة الأدوار المركزية `RoleService` (`src/modules/system/role/role.service.ts`):
     - `listRoles`: استرجاع قائمة الأدوار مع Pagination، والبحث بالاسم أو الرمز التقني، وحساب عدد المستخدمين غير المحذوفين المرتبطين بكل دور (`userCount`) بكفاءة دون N+1، واستبعاد السجلات المحذوفة ناعماً.
@@ -43,8 +62,8 @@
     - `listUsers`: استرجاع قائمة المستخدمين مع Pagination، والبحث بالاسم أو رقم الهاتف، وضم الدور (Role) بكفاءة بدون N+1، واستبعاد المحذوفين ناعماً.
     - `getUserById`: استرجاع تفاصيل مستخدم محدد مع دوره واستبعاد `passwordHash`.
     - `createUser`: إنشاء مستخدم جديد داخل Transaction متزامنة مع قفل تشاؤمي (`pessimistic_write`) على سجل الدور المستهدف عبر `findAssignableRoleForUpdate` (وتشفير كلمة المرور مسبقاً قبل فتح الـ Transaction)، والتحقق المسبق من فرادية رقم الهاتف (حتى مع المحذوفين ناعماً)، والتقاط أخطاء الـ Race Condition في قاعدة البيانات (`ER_DUP_ENTRY` / 1062) وتحويلها إلى `ConflictError` برمز `USER_PHONE_ALREADY_EXISTS`، وإرجاع كائن مستخدم آمن.
-    - `updateUser`: تحديث جزئي (PATCH) لبيانات المستخدم داخل Transaction مع تطبيق حماية الذات، وحماية آخر مدير نظام فعال بالقفل التشاؤمي، وقفل تشاؤمي (`pessimistic_write`) على الدور الجديد المستهدف عند تغيير الدور، والتحقق من فرادية الهاتف مع التقاط خطأ 409، وإلغاء الجلسات النشطة تلقائياً عند التعطيل.
-    - `softDeleteUser`: أرشفة المستخدم (Soft Delete) عبر `deletedAt` وتعطيله مع إلغاء كافة جلساته النشطة داخل Transaction مع تطبيق حظر حذف الذات وحظر حذف آخر مدير نظام فعال بالقفل التشاؤمي. منع الحذف الصلب (Hard Delete) نهائياً.
+    - `updateUser`: تحديث جزئي (PATCH) لبيانات المستخدم داخل Transaction مع فرض قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل المستخدم المستهدف (`User row`)، وتطبيق حماية الذات، وحماية آخر مدير نظام فعال بالقفل التشاؤمي، وقفل تشاؤمي (`pessimistic_write`) على الدور الجديد المستهدف عند تغيير الدور، والتحقق من فرادية الهاتف مع التقاط خطأ 409، وإلغاء الجلسات النشطة تلقائياً عند التعطيل.
+    - `softDeleteUser`: أرشفة المستخدم (Soft Delete) عبر `deletedAt` وتعطيله مع إلغاء كافة جلساته النشطة داخل Transaction مع فرض قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل المستخدم المستهدف (`User row`) وتطبيق حظر حذف الذات وحظر حذف آخر مدير نظام فعال بالقفل التشاؤمي. منع الحذف الصلب (Hard Delete) نهائياً.
   - واجهات برمجة التطبيقات (API Endpoints) المحمية بالصلاحيات:
     - `GET /api/system/users` (محمي بـ `USER_VIEW` والتحقق من الـ Query DTO وتخزين النتيجة في `req.validatedQuery` دون تعديل `req.query`).
     - `GET /api/system/users/:id` (محمي بـ `USER_VIEW` والتحقق من UUID).
@@ -52,7 +71,7 @@
     - `PATCH /api/system/users/:id` (محمي بـ `USER_UPDATE` و UUID و `UpdateUserDto` مع وسيط `validateUserUpdatePayload` لرفض الـ PATCH الفارغ).
     - `DELETE /api/system/users/:id` (محمي بـ `USER_DELETE` و UUID).
   - واجهات الويب المعروضة من الخادم (Server-rendered EJS):
-    - `GET /system/users`: قائمة المستخدمين مع جدول متجاوب، بحث، ترقيم صفحات، وشارات الحالة وإجراءات سريعة باستخدام `data-*` attributes دون أي inline JavaScript string interpolation لمنع Stored XSS.
+    - `GET /system/users`: قائمة المستخدمين مع جدول متجاوب، بحث، ترقيم صفحات، زر الصلاحيات، وشارات الحالة وإجراءات سريعة باستخدام `data-*` attributes دون أي inline JavaScript string interpolation لمنع Stored XSS.
     - `GET /system/users/create`: نموذج إنشاء مستخدم مع التحقق بالمتصفح وبواسطة Bootstrap.
     - `GET /system/users/:id/edit`: نموذج تعديل المستخدم مع قفل الحقول الحساسة عند تعديل الحساب الشخصي.
   - تفاعل العميل (Client Scripts):
@@ -405,6 +424,12 @@ src/
 
 ---
 
+### `User Controllers & Web Controllers`
+- `UserController` (`src/modules/system/user/user.controller.ts`): معالجة طلبات الـ JSON API لمسارات `/api/system/users` بما فيها `getGlobalPermissions` و `setGlobalPermissions`.
+- `UserWebController` (`src/modules/system/user/user.web.controller.ts`): معالجة وعرض صفحات الـ EJS لمسارات `/system/users` بما فيها واجهة إسناد الصلاحيات المباشرة `renderUserPermissionsForm`.
+
+---
+
 ## Authentication & Core Services
 
 ### `AuthService` (`src/modules/system/auth/auth.service.ts`)
@@ -661,7 +686,7 @@ src/
    - إخفاء العناصر والأزرار في واجهة المستخدم (`UI Visibility`) ليس بديلاً عن الصلاحيات الأمنية؛ يجب على الـ APIs التحقق الصارم من الصلاحيات.
    - فرادية رقم الهاتف (`Unique Phone`): يُمنع تكرار رقم الهاتف مع أي حساب موجود في النظام بما في ذلك الحسابات المحذوفة ناعماً.
 
-2. **System Permission & Access Control Architecture (Implemented Phase 1)**:
+2. **System Permission & Access Control Architecture (Implemented Phase 1 & Direct Permissions)**:
    - **المفاهيم الأساسية**:
      - **Authentication**: من هو المستخدم؟ (`Identity`)
      - **Authorization**: ماذا يستطيع المستخدم فعله؟ (`Permissions & Access`)

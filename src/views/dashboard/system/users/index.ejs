@@ -103,6 +103,10 @@
                     <% } %>
                   <% } %>
 
+                  <a href="/system/users/<%= u.id %>/permissions" class="btn btn-sm btn-outline-secondary" title="الصلاحيات">
+                    <i class="fa-solid fa-key"></i>
+                  </a>
+
                   <% if (typeof canDelete !== 'undefined' && canDelete && u.id !== currentUserId) { %>
                     <button type="button" class="btn btn-sm btn-outline-danger" title="أرشفة / حذف" data-action="delete-user" data-user-id="<%= u.id %>" data-user-name="<%= u.fullName %>">
                       <i class="fa-solid fa-trash-can"></i>

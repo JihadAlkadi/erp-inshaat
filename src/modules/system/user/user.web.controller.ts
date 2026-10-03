@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserService, userService } from './user.service.js';
+import { UserPermissionService, userPermissionService } from './user-permission.service.js';
 import { RoleService, roleService } from '../role/role.service.js';
 import {
   AuthorizationService,
@@ -9,15 +10,18 @@ import { SystemPermission } from '../permission/constants/system-permission.enum
 
 export class UserWebController {
   private readonly userService: UserService;
+  private readonly userPermissionService: UserPermissionService;
   private readonly roleService: RoleService;
   private readonly authorizationService: AuthorizationService;
 
   constructor(
     uService: UserService = userService,
+    upService: UserPermissionService = userPermissionService,
     rService: RoleService = roleService,
     authzService: AuthorizationService = authorizationService
   ) {
     this.userService = uService;
+    this.userPermissionService = upService;
     this.roleService = rService;
     this.authorizationService = authzService;
   }
@@ -50,6 +54,7 @@ export class UserWebController {
         canCreate: effectivePerms.includes(SystemPermission.USER_CREATE),
         canUpdate: effectivePerms.includes(SystemPermission.USER_UPDATE),
         canDelete: effectivePerms.includes(SystemPermission.USER_DELETE),
+        canManagePermissions: effectivePerms.includes(SystemPermission.USER_PERMISSION_MANAGE),
         currentUserId: req.user!.id,
       });
     } catch (error) {
@@ -93,6 +98,33 @@ export class UserWebController {
         targetUser: user,
         roles,
         isSelf: req.user!.id === id,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  renderUserPermissionsForm = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const permStates = await this.userPermissionService.getUserGlobalPermissionStates(id as string);
+      const effectivePerms = await this.authorizationService.getEffectivePermissions(req.user!);
+
+      const isSelf = req.user!.id === id;
+      const canManagePermissions = !isSelf && effectivePerms.includes(SystemPermission.USER_PERMISSION_MANAGE);
+
+      res.render('dashboard/system/users/permissions', {
+        layout: 'dashboard/system/layout',
+        title: `صلاحيات المستخدم: ${permStates.user.fullName} | إدارة النظام`,
+        appName: 'إدارة النظام',
+        themeColor: '#714B67',
+        hasSidebar: true,
+        sidebarPath: 'system/partials/sidebar',
+        activeTab: 'users',
+        targetUser: permStates.user,
+        permissions: permStates.permissions,
+        isSelf,
+        canManagePermissions,
       });
     } catch (error) {
       next(error);

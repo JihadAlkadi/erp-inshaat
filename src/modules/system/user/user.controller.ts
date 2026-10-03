@@ -1,15 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserService, userService } from './user.service.js';
+import { UserPermissionService, userPermissionService } from './user-permission.service.js';
 import { ApiResponse } from '../../../common/responses/api-response.js';
 import { ListUsersQueryDto } from './dto/list-users-query.dto.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
+import { SetUserGlobalPermissionsDto } from './dto/set-user-global-permissions.dto.js';
 
 export class UserController {
   private readonly userService: UserService;
+  private readonly userPermissionService: UserPermissionService;
 
-  constructor(uService: UserService = userService) {
+  constructor(
+    uService: UserService = userService,
+    upService: UserPermissionService = userPermissionService
+  ) {
     this.userService = uService;
+    this.userPermissionService = upService;
   }
 
   listUsers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -65,6 +72,32 @@ export class UserController {
       next(error);
     }
   };
+
+  getGlobalPermissions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const result = await this.userPermissionService.getUserGlobalPermissionStates(id as string);
+      res.status(200).json(ApiResponse.success(result));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  setGlobalPermissions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const dto = req.body as SetUserGlobalPermissionsDto;
+      const result = await this.userPermissionService.setUserGlobalPermissions(
+        id as string,
+        dto.permissionIds,
+        req.user!
+      );
+      res.status(200).json(ApiResponse.success(result, result.message));
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const userController = new UserController();
+

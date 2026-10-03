@@ -65,6 +65,15 @@ webRouter.get(
   userWebController.renderEditUserForm
 );
 
+// GET /system/users/:id/permissions - User Permissions Page (Protected)
+webRouter.get(
+  '/system/users/:id/permissions',
+  requireWebAuth,
+  requirePermission(SystemPermission.USER_VIEW),
+  validateUuidParam('id'),
+  userWebController.renderUserPermissionsForm
+);
+
 // GET /system/roles - System Roles List (Protected)
 webRouter.get(
   '/system/roles',

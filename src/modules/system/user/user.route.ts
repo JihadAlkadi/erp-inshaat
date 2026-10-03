@@ -9,6 +9,7 @@ import { validateUuidParam } from '../../../common/middleware/validate-uuid-para
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { ListUsersQueryDto } from './dto/list-users-query.dto.js';
+import { SetUserGlobalPermissionsDto } from './dto/set-user-global-permissions.dto.js';
 import { validateUserUpdatePayload } from './user.middleware.js';
 
 const userApiRouter: Router = Router();
@@ -20,6 +21,25 @@ userApiRouter.get(
   requirePermission(SystemPermission.USER_VIEW),
   validateQueryDto(ListUsersQueryDto),
   userController.listUsers
+);
+
+// GET /api/system/users/:id/global-permissions - Get direct user global permission states
+userApiRouter.get(
+  '/:id/global-permissions',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_VIEW),
+  validateUuidParam('id'),
+  userController.getGlobalPermissions
+);
+
+// PUT /api/system/users/:id/global-permissions - Set direct user global permissions
+userApiRouter.put(
+  '/:id/global-permissions',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_PERMISSION_MANAGE),
+  validateUuidParam('id'),
+  validateDto(SetUserGlobalPermissionsDto),
+  userController.setGlobalPermissions
 );
 
 // GET /api/system/users/:id - Get specific user

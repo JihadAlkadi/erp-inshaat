@@ -1,4 +1,4 @@
-import { EntityManager, IsNull, QueryFailedError, Repository } from 'typeorm';
+import { IsNull, QueryFailedError, Repository } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { UserEntity } from './user.entity.js';
 import { RoleService, roleService } from '../role/role.service.js';
@@ -164,11 +164,14 @@ export class UserService {
       return await AppDataSource.transaction(async (manager) => {
         const userRepo = manager.getRepository(UserEntity);
 
-        // Reload target user inside transaction
-        const user = await userRepo.findOne({
-          where: { id, deletedAt: IsNull() },
-          relations: { role: true },
-        });
+        // Reload target user inside transaction with pessimistic lock
+        const user = await userRepo
+          .createQueryBuilder('user')
+          .setLock('pessimistic_write')
+          .leftJoinAndSelect('user.role', 'role')
+          .where('user.id = :id', { id })
+          .andWhere('user.deletedAt IS NULL')
+          .getOne();
 
         if (!user) {
           throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
@@ -288,11 +291,14 @@ export class UserService {
     return await AppDataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(UserEntity);
 
-      // Reload target user inside transaction
-      const user = await userRepo.findOne({
-        where: { id, deletedAt: IsNull() },
-        relations: { role: true },
-      });
+      // Reload target user inside transaction with pessimistic lock
+      const user = await userRepo
+        .createQueryBuilder('user')
+        .setLock('pessimistic_write')
+        .leftJoinAndSelect('user.role', 'role')
+        .where('user.id = :id', { id })
+        .andWhere('user.deletedAt IS NULL')
+        .getOne();
 
       if (!user) {
         throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
@@ -331,17 +337,6 @@ export class UserService {
         message: 'تم أرشفة المستخدم بنجاح',
       };
     });
-  }
-
-  async countActiveSystemAdmins(manager?: EntityManager): Promise<number> {
-    const repo = manager ? manager.getRepository(UserEntity) : this.userRepository;
-    return repo
-      .createQueryBuilder('u')
-      .innerJoin('u.role', 'role')
-      .where('role.code = :adminCode', { adminCode: SystemRole.SYSTEM_ADMIN })
-      .andWhere('u.isActive = :isActive', { isActive: true })
-      .andWhere('u.deletedAt IS NULL')
-      .getCount();
   }
 }
 

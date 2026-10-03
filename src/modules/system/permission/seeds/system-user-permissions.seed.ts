@@ -25,6 +25,10 @@ const SYSTEM_USER_PERMISSIONS: PermissionDefinition[] = [
     description: 'حذف المستخدم',
   },
   {
+    name: SystemPermission.USER_PERMISSION_MANAGE,
+    description: 'إدارة الصلاحيات المباشرة للمستخدمين',
+  },
+  {
     name: SystemPermission.ROLE_VIEW,
     description: 'عرض الأدوار والصلاحيات',
   },

@@ -16,3 +16,20 @@ export interface PaginatedUsersResult {
   limit: number;
   totalPages: number;
 }
+
+export interface UserPermissionState {
+  permissionId: string;
+  name: string;
+  description: string | null;
+  hasDirectAllowAll: boolean;
+  hasDirectDenyAll: boolean;
+  hasRoleAllowAll: boolean;
+  hasRoleDenyAll: boolean;
+  effectiveGlobalAccess: boolean;
+}
+
+export interface UserGlobalPermissionsResponse {
+  user: SafeUserOutput;
+  permissions: UserPermissionState[];
+}
+
