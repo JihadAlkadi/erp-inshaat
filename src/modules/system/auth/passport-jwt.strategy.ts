@@ -22,6 +22,7 @@ export function createJwtStrategy(): JwtStrategy {
   const options: StrategyOptionsWithRequest = {
     jwtFromRequest: cookieExtractor,
     secretOrKey: envConfig.auth.jwtSecret,
+    algorithms: ['HS256'],
     issuer: AUTH_JWT_ISSUER,
     audience: AUTH_JWT_AUDIENCE,
     passReqToCallback: true,
@@ -55,8 +56,8 @@ export function createJwtStrategy(): JwtStrategy {
         return done(null, false);
       }
 
-      // Throttled touch for session last_used_at
-      void sessionService.touchSession(session.id, session.lastUsedAt);
+      // Await throttled touch for session last_used_at to safely handle any DB error in try/catch
+      await sessionService.touchSession(session.id, session.lastUsedAt);
 
       const principal: AuthPrincipal = {
         id: user.id,

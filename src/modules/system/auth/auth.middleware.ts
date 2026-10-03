@@ -18,7 +18,10 @@ export function requireApiAuth(req: Request, res: Response, next: NextFunction):
 
 export function requireWebAuth(req: Request, res: Response, next: NextFunction): void {
   passport.authenticate('jwt', { session: false }, (err: unknown, user?: AuthPrincipal | false) => {
-    if (err || !user) {
+    if (err) {
+      return next(err);
+    }
+    if (!user) {
       return res.redirect('/login');
     }
     req.user = user;
@@ -29,7 +32,10 @@ export function requireWebAuth(req: Request, res: Response, next: NextFunction):
 }
 
 export function redirectIfAuthenticated(req: Request, res: Response, next: NextFunction): void {
-  passport.authenticate('jwt', { session: false }, (_err: unknown, user?: AuthPrincipal | false) => {
+  passport.authenticate('jwt', { session: false }, (err: unknown, user?: AuthPrincipal | false) => {
+    if (err) {
+      return next(err);
+    }
     if (user) {
       return res.redirect('/');
     }
