@@ -1,4 +1,4 @@
-import { Repository } from 'typeorm';
+import { Repository, EntityManager } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { SessionEntity } from './session.entity.js';
 import { hashToken } from '../../../common/security/token-hash.util.js';
@@ -19,8 +19,9 @@ export class SessionService {
     this.sessionRepository = sessionRepository;
   }
 
-  async createSession(params: CreateSessionParams): Promise<SessionEntity> {
-    const session = this.sessionRepository.create({
+  async createSession(params: CreateSessionParams, manager?: EntityManager): Promise<SessionEntity> {
+    const repo = manager ? manager.getRepository(SessionEntity) : this.sessionRepository;
+    const session = repo.create({
       id: params.id,
       userId: params.userId,
       tokenHash: params.tokenHash,
@@ -33,7 +34,7 @@ export class SessionService {
       revokedReason: null,
     });
 
-    return this.sessionRepository.save(session);
+    return repo.save(session);
   }
 
   async validateSession(
@@ -78,9 +79,26 @@ export class SessionService {
     }
   }
 
-  async revokeSession(sessionId: string, reason: string = 'LOGOUT'): Promise<void> {
-    await this.sessionRepository.update(
+  async revokeSession(sessionId: string, reason: string = 'LOGOUT', manager?: EntityManager): Promise<void> {
+    const repo = manager ? manager.getRepository(SessionEntity) : this.sessionRepository;
+    await repo.update(
       { id: sessionId, isActive: true },
+      {
+        isActive: false,
+        revokedAt: new Date(),
+        revokedReason: reason,
+      }
+    );
+  }
+
+  async revokeUserSessions(
+    userId: string,
+    reason: string = 'USER_DEACTIVATED',
+    manager?: EntityManager
+  ): Promise<void> {
+    const repo = manager ? manager.getRepository(SessionEntity) : this.sessionRepository;
+    await repo.update(
+      { userId, isActive: true },
       {
         isActive: false,
         revokedAt: new Date(),

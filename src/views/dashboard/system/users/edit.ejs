@@ -1,0 +1,94 @@
+<div class="row justify-content-center">
+  <div class="col-lg-8 col-xl-7">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div>
+        <h3 class="fw-bold mb-1" style="color: #1F2937;">تعديل بيانات المستخدم <i class="fa-solid fa-user-pen text-muted fs-5 ms-2"></i></h3>
+        <p class="text-muted mb-0 small">تحديث معلومات الحساب، الدور الوظيفي، أو حالة النشاط</p>
+      </div>
+      <a href="/system/users" class="btn btn-outline-secondary">
+        <i class="fa-solid fa-arrow-left ms-1"></i> العودة للقائمة
+      </a>
+    </div>
+
+    <div class="card border-0 shadow-sm" style="border-radius: 12px;">
+      <div class="card-body p-4 p-md-5">
+        <div id="formAlert" class="alert alert-danger d-none mb-4" role="alert"></div>
+
+        <% if (typeof isSelf !== 'undefined' && isSelf) { %>
+          <div class="alert alert-info d-flex align-items-center mb-4" role="alert">
+            <i class="fa-solid fa-circle-info fs-5 me-2 ms-2"></i>
+            <div>أنت تقوم بتعديل حسابك الحالي. لأسباب أمنية، لا يمكنك تعطيل حسابك أو تغيير دورك من هنا.</div>
+          </div>
+        <% } %>
+
+        <form id="editUserForm" data-user-id="<%= targetUser.id %>" class="needs-validation" novalidate>
+          <!-- Full Name -->
+          <div class="mb-4">
+            <label for="fullName" class="form-label fw-bold text-dark">الاسم الكامل <span class="text-danger">*</span></label>
+            <div class="input-group has-validation">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-user"></i></span>
+              <input type="text" class="form-control" id="fullName" name="fullName" value="<%= targetUser.fullName %>" minlength="2" maxlength="150" required>
+              <div class="invalid-feedback">يرجى إدخال الاسم الكامل (بين 2 و 150 محرفاً)</div>
+            </div>
+          </div>
+
+          <!-- Phone Number -->
+          <div class="mb-4">
+            <label for="phone" class="form-label fw-bold text-dark">رقم الهاتف <span class="text-danger">*</span></label>
+            <div class="input-group has-validation">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-phone"></i></span>
+              <input type="tel" class="form-control" id="phone" name="phone" value="<%= targetUser.phone %>" pattern="^09[0-9]{8}$" required dir="ltr" style="text-align: right;">
+              <div class="invalid-feedback">يجب أن يتكون رقم الهاتف من 10 أرقام ويبدأ بـ 09</div>
+            </div>
+          </div>
+
+          <!-- Role -->
+          <div class="mb-4">
+            <label for="roleId" class="form-label fw-bold text-dark">الدور الوظيفي <span class="text-danger">*</span></label>
+            <div class="input-group has-validation">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-shield-halved"></i></span>
+              <select class="form-select" id="roleId" name="roleId" required <%= isSelf ? 'disabled' : '' %>>
+                <% if (typeof roles !== 'undefined' && roles.length > 0) { %>
+                  <% roles.forEach(function(r) { %>
+                    <option value="<%= r.id %>" <%= r.id === targetUser.roleId ? 'selected' : '' %>>
+                      <%= r.name %> (<%= r.code %>)
+                    </option>
+                  <% }); %>
+                <% } %>
+              </select>
+              <div class="invalid-feedback">يرجى اختيار الدور المناسب للمستخدم</div>
+            </div>
+            <% if (isSelf) { %>
+              <div class="form-text text-muted">لا يمكنك تعديل دورك الشخصي.</div>
+            <% } %>
+          </div>
+
+          <!-- Active Status -->
+          <div class="mb-4">
+            <div class="form-check form-switch fs-6">
+              <input class="form-check-input" type="checkbox" role="switch" id="isActive" name="isActive" <%= targetUser.isActive ? 'checked' : '' %> <%= isSelf ? 'disabled' : '' %>>
+              <label class="form-check-label fw-bold text-dark" for="isActive">حساب نشط (يمكنه تسجيل الدخول)</label>
+            </div>
+            <% if (isSelf) { %>
+              <div class="form-text text-muted">لا يمكنك تعطيل حسابك الشخصي.</div>
+            <% } %>
+          </div>
+
+          <hr class="my-4 text-muted">
+
+          <!-- Submit Button -->
+          <div class="d-flex justify-content-end gap-2">
+            <a href="/system/users" class="btn btn-light px-4">إلغاء</a>
+            <button type="submit" id="submitBtn" class="btn btn-primary px-5 d-inline-flex align-items-center gap-2" style="background-color: #714B67; border-color: #714B67;">
+              <span class="spinner-border spinner-border-sm d-none" id="btnSpinner" role="status" aria-hidden="true"></span>
+              <i class="fa-solid fa-check" id="btnIcon"></i>
+              <span id="btnText">حفظ التعديلات</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/users.js"></script>

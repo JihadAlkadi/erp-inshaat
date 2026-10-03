@@ -28,6 +28,19 @@ export async function seedSystemAdminAccessRules(
         description: 'السماح لمدير النظام بالوصول إلى جميع بيانات هذا المورد',
       });
       rule = await accessRuleRepository.save(rule);
+    } else {
+      let needsUpdate = false;
+      if (!rule.isActive) {
+        rule.isActive = true;
+        needsUpdate = true;
+      }
+      if (rule.scope !== null) {
+        rule.scope = null;
+        needsUpdate = true;
+      }
+      if (needsUpdate) {
+        rule = await accessRuleRepository.save(rule);
+      }
     }
 
     accessRules.push(rule);

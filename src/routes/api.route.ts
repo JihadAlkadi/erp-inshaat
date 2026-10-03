@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authRouter } from '../modules/system/auth/auth.route.js';
+import { userApiRouter } from '../modules/system/user/user.route.js';
 
 const apiRouter: Router = Router();
 
@@ -14,4 +15,8 @@ apiRouter.get('/health', (_req: Request, res: Response) => {
 // Authentication Routes (/api/auth)
 apiRouter.use('/auth', authRouter);
 
+// System Users Routes (/api/system/users)
+apiRouter.use('/system/users', userApiRouter);
+
 export { apiRouter };
+

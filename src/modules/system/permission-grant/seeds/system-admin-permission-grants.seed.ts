@@ -39,6 +39,27 @@ export async function seedSystemAdminPermissionGrants(
         expiresAt: null,
       });
       grant = await grantRepository.save(grant);
+    } else {
+      let needsUpdate = false;
+      if (!grant.isActive) {
+        grant.isActive = true;
+        needsUpdate = true;
+      }
+      if (grant.expiresAt !== null) {
+        grant.expiresAt = null;
+        needsUpdate = true;
+      }
+      if (!grant.canDelegate) {
+        grant.canDelegate = true;
+        needsUpdate = true;
+      }
+      if (grant.userId !== null) {
+        grant.userId = null;
+        needsUpdate = true;
+      }
+      if (needsUpdate) {
+        grant = await grantRepository.save(grant);
+      }
     }
 
     grants.push(grant);
