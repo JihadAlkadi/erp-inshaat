@@ -4,7 +4,6 @@ import { UserEntity } from './user.entity.js';
 import { PermissionGrantEntity } from '../permission-grant/permission-grant.entity.js';
 import { AccessRuleEntity } from '../access-rule/access-rule.entity.js';
 import { PermissionService, permissionService } from '../permission/permission.service.js';
-import { UserService, userService } from './user.service.js';
 import { AuthPrincipal } from '../auth/auth.types.js';
 import { UserGlobalPermissionsResponse, UserPermissionState } from './user.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
@@ -13,18 +12,15 @@ import { ForbiddenError } from '../../../common/errors/forbidden.error.js';
 export class UserPermissionService {
   private readonly userRepository: Repository<UserEntity>;
   private readonly grantRepository: Repository<PermissionGrantEntity>;
-  private readonly userService: UserService;
   private readonly permissionService: PermissionService;
 
   constructor(
     userRepo: Repository<UserEntity> = AppDataSource.getRepository(UserEntity),
     grantRepo: Repository<PermissionGrantEntity> = AppDataSource.getRepository(PermissionGrantEntity),
-    uService: UserService = userService,
     pService: PermissionService = permissionService
   ) {
     this.userRepository = userRepo;
     this.grantRepository = grantRepo;
-    this.userService = uService;
     this.permissionService = pService;
   }
 

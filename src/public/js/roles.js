@@ -439,11 +439,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
       var checkedBoxes = permissionsForm.querySelectorAll('input[type="checkbox"][name="permissionIds"]:checked');
       var permissionIds = [];
+      var uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      var hasInvalidId = false;
+
       checkedBoxes.forEach(function(box) {
-        if (box.value) {
-          permissionIds.push(box.value);
+        var val = typeof box.value === 'string' ? box.value.trim() : '';
+        if (val) {
+          if (!uuidV4Regex.test(val)) {
+            hasInvalidId = true;
+          } else {
+            permissionIds.push(val);
+          }
         }
       });
+
+      if (hasInvalidId) {
+        setButtonLoading(submitBtn, false);
+        showFormError('تعذر حفظ الصلاحيات بسبب معرف صلاحية غير صالح');
+        return;
+      }
 
       var payload = {
         permissionIds: permissionIds,
@@ -465,7 +479,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(function(resObj) {
           if (resObj.ok && resObj.data.success) {
             sessionStorage.setItem('pendingToast', 'تم حفظ صلاحيات الدور بنجاح');
-            window.location.href = '/system/roles';
+            window.location.reload();
           } else {
             setButtonLoading(submitBtn, false);
             var msg = extractApiErrorMessage(resObj.data, 'فشل حفظ الصلاحيات');
