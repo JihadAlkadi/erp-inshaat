@@ -1,14 +1,14 @@
 import { EntityManager, IsNull, QueryFailedError, Repository } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { UserEntity } from './user.entity.js';
+import { RoleService, roleService } from '../role/role.service.js';
+import { SessionService, sessionService } from '../session/session.service.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { ListUsersQueryDto } from './dto/list-users-query.dto.js';
 import { SafeUserOutput, PaginatedUsersResult } from './user.types.js';
-import { RoleService, roleService } from '../role/role.service.js';
-import { SessionService, sessionService } from '../session/session.service.js';
-import { SystemRole } from '../role/constants/system-role.enum.js';
 import { AuthPrincipal } from '../auth/auth.types.js';
+import { SystemRole } from '../role/constants/system-role.enum.js';
 import { hashPassword } from '../../../common/security/password.util.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
@@ -82,7 +82,7 @@ export class UserService {
     const totalPages = Math.ceil(total / limit) || 1;
 
     return {
-      items: users.map((user) => this.toSafeUserOutput(user)),
+      items: users.map((u) => this.toSafeUserOutput(u)),
       total,
       page,
       limit,
@@ -105,34 +105,40 @@ export class UserService {
 
   async createUser(dto: CreateUserDto): Promise<SafeUserOutput> {
     const cleanPhone = dto.phone.trim();
-    const existingPhone = await this.userRepository
-      .createQueryBuilder('u')
-      .withDeleted()
-      .where('u.phone = :phone', { phone: cleanPhone })
-      .getOne();
-
-    if (existingPhone) {
-      throw new ConflictError('رقم الهاتف مستخدم بالفعل', 'USER_PHONE_ALREADY_EXISTS');
-    }
-
-    const role = await this.roleService.findActiveRoleById(dto.roleId);
-    if (!role) {
-      throw new NotFoundError('الدور المحدد غير موجود أو غير نشط', 'ROLE_NOT_FOUND_OR_INACTIVE');
-    }
-
     const passwordHash = await hashPassword(dto.password);
 
-    const newUser = this.userRepository.create({
-      fullName: dto.fullName.trim(),
-      phone: cleanPhone,
-      passwordHash,
-      roleId: dto.roleId,
-      isActive: dto.isActive !== undefined ? dto.isActive : true,
-    });
-
     try {
-      const saved = await this.userRepository.save(newUser);
-      return this.toSafeUserOutput(saved, role.name);
+      return await AppDataSource.transaction(async (manager) => {
+        const userRepo = manager.getRepository(UserEntity);
+
+        // 1. Phone pre-check with deleted records
+        const existingPhone = await userRepo
+          .createQueryBuilder('u')
+          .withDeleted()
+          .where('u.phone = :phone', { phone: cleanPhone })
+          .getOne();
+
+        if (existingPhone) {
+          throw new ConflictError('رقم الهاتف مستخدم بالفعل', 'USER_PHONE_ALREADY_EXISTS');
+        }
+
+        // 2. Lock target Role row with pessimistic_write
+        const role = await this.roleService.findAssignableRoleForUpdate(dto.roleId, manager);
+        if (!role) {
+          throw new NotFoundError('الدور المحدد غير موجود أو غير نشط', 'ROLE_NOT_FOUND_OR_INACTIVE');
+        }
+
+        const newUser = userRepo.create({
+          fullName: dto.fullName.trim(),
+          phone: cleanPhone,
+          passwordHash,
+          roleId: dto.roleId,
+          isActive: dto.isActive !== undefined ? dto.isActive : true,
+        });
+
+        const saved = await userRepo.save(newUser);
+        return this.toSafeUserOutput(saved, role.name);
+      });
     } catch (error) {
       if (isDuplicatePhoneError(error)) {
         throw new ConflictError('رقم الهاتف مستخدم بالفعل', 'USER_PHONE_ALREADY_EXISTS');
@@ -153,7 +159,7 @@ export class UserService {
       }
     }
 
-    // 2. Transaction execution with Pessimistic Locking for Last Admin Safety
+    // 2. Transaction execution with Pessimistic Locking for Last Admin & Role Safety
     try {
       return await AppDataSource.transaction(async (manager) => {
         const userRepo = manager.getRepository(UserEntity);
@@ -208,9 +214,9 @@ export class UserService {
           }
         }
 
-        // Role Change Validation
+        // Role Change Validation with pessimistic lock on target role
         if (dto.roleId !== undefined && dto.roleId !== user.roleId) {
-          const targetRole = await this.roleService.findActiveRoleById(dto.roleId, manager);
+          const targetRole = await this.roleService.findAssignableRoleForUpdate(dto.roleId, manager);
           if (!targetRole) {
             throw new NotFoundError('الدور المحدد غير موجود أو غير نشط', 'ROLE_NOT_FOUND_OR_INACTIVE');
           }
@@ -278,9 +284,11 @@ export class UserService {
       throw new ForbiddenError('لا يمكنك أرشفة أو حذف حسابك الحالي', 'CANNOT_DELETE_OWN_ACCOUNT');
     }
 
-    // 2. Transaction Soft Delete + Revoke Sessions with Pessimistic Locking
-    await AppDataSource.transaction(async (manager) => {
+    // 2. Transaction execution with Pessimistic Locking
+    return await AppDataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(UserEntity);
+
+      // Reload target user inside transaction
       const user = await userRepo.findOne({
         where: { id, deletedAt: IsNull() },
         relations: { role: true },
@@ -290,7 +298,7 @@ export class UserService {
         throw new NotFoundError('المستخدم غير موجود', 'USER_NOT_FOUND');
       }
 
-      // Last SYSTEM_ADMIN Protection with Pessimistic Write Lock
+      // Invariant check for last SYSTEM_ADMIN
       if (user.role?.code === SystemRole.SYSTEM_ADMIN && user.isActive) {
         const activeAdmins = await userRepo
           .createQueryBuilder('u')
@@ -310,16 +318,30 @@ export class UserService {
         }
       }
 
+      // Revoke all active sessions
       await this.sessionService.revokeUserSessions(id, 'USER_DELETED', manager);
+
+      // Soft delete user and set isActive to false
       user.isActive = false;
       await userRepo.save(user);
       await userRepo.softDelete(id);
-    });
 
-    return {
-      success: true,
-      message: 'تم أرشفة المستخدم بنجاح',
-    };
+      return {
+        success: true,
+        message: 'تم أرشفة المستخدم بنجاح',
+      };
+    });
+  }
+
+  async countActiveSystemAdmins(manager?: EntityManager): Promise<number> {
+    const repo = manager ? manager.getRepository(UserEntity) : this.userRepository;
+    return repo
+      .createQueryBuilder('u')
+      .innerJoin('u.role', 'role')
+      .where('role.code = :adminCode', { adminCode: SystemRole.SYSTEM_ADMIN })
+      .andWhere('u.isActive = :isActive', { isActive: true })
+      .andWhere('u.deletedAt IS NULL')
+      .getCount();
   }
 }
 

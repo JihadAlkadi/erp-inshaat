@@ -14,20 +14,17 @@ import { BusinessRuleError } from '../../../common/errors/business-rule.error.js
 export class RolePermissionService {
   private readonly roleRepository: Repository<RoleEntity>;
   private readonly grantRepository: Repository<PermissionGrantEntity>;
-  private readonly ruleRepository: Repository<AccessRuleEntity>;
   private readonly roleService: RoleService;
   private readonly permissionService: PermissionService;
 
   constructor(
     roleRepo: Repository<RoleEntity> = AppDataSource.getRepository(RoleEntity),
     grantRepo: Repository<PermissionGrantEntity> = AppDataSource.getRepository(PermissionGrantEntity),
-    ruleRepo: Repository<AccessRuleEntity> = AppDataSource.getRepository(AccessRuleEntity),
     rService: RoleService = roleService,
     pService: PermissionService = permissionService
   ) {
     this.roleRepository = roleRepo;
     this.grantRepository = grantRepo;
-    this.ruleRepository = ruleRepo;
     this.roleService = rService;
     this.permissionService = pService;
   }
@@ -204,7 +201,7 @@ export class RolePermissionService {
 
     return {
       success: true,
-      message: 'تم تحديث صلاحيات الدور بنجاح',
+      message: 'تم حفظ صلاحيات الدور بنجاح',
     };
   }
 }

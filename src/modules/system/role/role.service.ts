@@ -127,10 +127,16 @@ export class RoleService {
       throw new ConflictError('رمز الدور مستخدم بالفعل', 'ROLE_CODE_ALREADY_EXISTS');
     }
 
+    let description: string | null = null;
+    if (dto.description && typeof dto.description === 'string') {
+      const trimmed = dto.description.trim();
+      description = trimmed === '' ? null : trimmed;
+    }
+
     const newRole = this.roleRepository.create({
       name: dto.name.trim(),
       code: cleanCode,
-      description: dto.description ? dto.description.trim() : null,
+      description,
       isActive: dto.isActive !== undefined ? dto.isActive : true,
     });
 
@@ -148,9 +154,14 @@ export class RoleService {
   async updateRole(id: string, dto: UpdateRoleDto): Promise<SafeRoleOutput> {
     return await AppDataSource.transaction(async (manager) => {
       const roleRepo = manager.getRepository(RoleEntity);
-      const targetRole = await roleRepo.findOne({
-        where: { id, deletedAt: IsNull() },
-      });
+
+      // Lock target Role row with pessimistic_write
+      const targetRole = await roleRepo
+        .createQueryBuilder('role')
+        .setLock('pessimistic_write')
+        .where('role.id = :id', { id })
+        .andWhere('role.deletedAt IS NULL')
+        .getOne();
 
       if (!targetRole) {
         throw new NotFoundError('الدور غير موجود', 'ROLE_NOT_FOUND');
@@ -178,7 +189,12 @@ export class RoleService {
         targetRole.name = dto.name.trim();
       }
       if (dto.description !== undefined) {
-        targetRole.description = dto.description.trim() === '' ? null : dto.description.trim();
+        if (dto.description === null) {
+          targetRole.description = null;
+        } else if (typeof dto.description === 'string') {
+          const trimmed = dto.description.trim();
+          targetRole.description = trimmed === '' ? null : trimmed;
+        }
       }
       if (dto.isActive !== undefined) {
         targetRole.isActive = dto.isActive;
@@ -193,9 +209,14 @@ export class RoleService {
   async softDeleteRole(id: string): Promise<{ success: boolean; message: string }> {
     return await AppDataSource.transaction(async (manager) => {
       const roleRepo = manager.getRepository(RoleEntity);
-      const targetRole = await roleRepo.findOne({
-        where: { id, deletedAt: IsNull() },
-      });
+
+      // Lock target Role row with pessimistic_write
+      const targetRole = await roleRepo
+        .createQueryBuilder('role')
+        .setLock('pessimistic_write')
+        .where('role.id = :id', { id })
+        .andWhere('role.deletedAt IS NULL')
+        .getOne();
 
       if (!targetRole) {
         throw new NotFoundError('الدور غير موجود', 'ROLE_NOT_FOUND');
@@ -234,6 +255,20 @@ export class RoleService {
       .where('u.roleId = :roleId', { roleId })
       .andWhere('u.deletedAt IS NULL')
       .getCount();
+  }
+
+  async findAssignableRoleForUpdate(
+    roleId: string,
+    manager: EntityManager
+  ): Promise<RoleEntity | null> {
+    return manager
+      .getRepository(RoleEntity)
+      .createQueryBuilder('role')
+      .setLock('pessimistic_write')
+      .where('role.id = :roleId', { roleId })
+      .andWhere('role.deletedAt IS NULL')
+      .andWhere('role.isActive = :isActive', { isActive: true })
+      .getOne();
   }
 
   async findActiveRoleById(roleId: string, manager?: EntityManager): Promise<RoleEntity | null> {

@@ -8,13 +8,15 @@ export class UpdateRoleDto {
   @Length(2, 100, { message: 'يجب أن يكون طول اسم الدور بين 2 و 100 محرف' })
   name?: string;
 
-  @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim() : value
-  )
+  @Transform(({ value }: { value: unknown }) => {
+    if (value === null) return null;
+    if (typeof value === 'string') return value.trim();
+    return value;
+  })
   @IsOptional()
   @IsString({ message: 'يجب أن يكون الوصف نصاً' })
   @Length(0, 500, { message: 'يجب ألا يتجاوز طول الوصف 500 محرف' })
-  description?: string;
+  description?: string | null;
 
   @IsOptional()
   @IsBoolean({ message: 'حالة التفعيل يجب أن تكون قيمة منطقية (true/false)' })

@@ -8,8 +8,9 @@
     - `listRoles`: استرجاع قائمة الأدوار مع Pagination، والبحث بالاسم أو الرمز التقني، وحساب عدد المستخدمين غير المحذوفين المرتبطين بكل دور (`userCount`) بكفاءة دون N+1، واستبعاد السجلات المحذوفة ناعماً.
     - `getRoleById`: استرجاع تفاصيل دور محدد مع حساب `userCount` ورمي `NotFoundError` إذا لم يوجد أو كان محذوفاً ناعماً.
     - `createRole`: إنشاء دور جديد بعد تنظيف وتوحيد الرمز التقني بالأحرف الإنجليزية الكبيرة (`code.trim().toUpperCase()`)، والتحقق المسبق من عدم وجود الرمز مسبقاً (مع فحص السجلات المحذوفة ناعماً `withDeleted()`)، والتقاط أخطاء الـ Race Condition في قاعدة البيانات (`ER_DUP_ENTRY` / 1062) وتحويلها إلى `ConflictError` برمز `ROLE_CODE_ALREADY_EXISTS`.
-    - `updateRole`: تحديث بيانات الدور (الاسم، الوصف، حالة التفعيل) داخل Transaction مع ثبات الرمز التقني وعدم السماح بتعديله نهائياً، وتطبيق حظر تعطيل دور مدير النظام (`SYSTEM_ADMIN`)، ومنع تعطيل أي دور مرتبط بمستخدمين حاليين غير محذوفين (`ROLE_HAS_ASSIGNED_USERS`).
-    - `softDeleteRole`: أرشفة الدور (Soft Delete) عبر `deletedAt` وضبط `isActive = false` داخل Transaction مع تطبيق حظر أرشفة دور مدير النظام (`SYSTEM_ADMIN`) ومنع أرشفة أو حذف أي دور مرتبط بمستخدمين حاليين غير محذوفين (`ROLE_HAS_ASSIGNED_USERS`). منع الحذف الصلب (Hard Delete) نهائياً والاحتفاظ بسجلات المنح وقواعد الوصول دون حذف.
+    - `updateRole`: تحديث بيانات الدور (الاسم، الوصف، حالة التفعيل) داخل Transaction مع فرض قفل تشاؤمي (`pessimistic_write`) على سجل الدور (`Role row`)، وثبات الرمز التقني وعدم السماح بتعديله نهائياً، والتعامل الآمن مع الوصف (`undefined` لا يغير، `null` يمسح، `string` يقص والمسافات تصبح `null`)، وتطبيق حظر تعطيل دور مدير النظام (`SYSTEM_ADMIN`)، ومنع تعطيل أي دور مرتبط بمستخدمين حاليين غير محذوفين (`ROLE_HAS_ASSIGNED_USERS`).
+    - `softDeleteRole`: أرشفة الدور (Soft Delete) عبر `deletedAt` وضبط `isActive = false` داخل Transaction مع فرض قفل تشاؤمي (`pessimistic_write`) على سجل الدور لمنع أي تزامن مع إسناد مستخدمين جدد، وتطبيق حظر أرشفة دور مدير النظام (`SYSTEM_ADMIN`)، ومنع أرشفة أو حذف أي دور مرتبط بمستخدمين حاليين غير محذوفين (`ROLE_HAS_ASSIGNED_USERS`). منع الحذف الصلب (Hard Delete) نهائياً والاحتفاظ بسجلات المنح وقواعد الوصول دون حذف.
+    - `findAssignableRoleForUpdate`: دالة مركزية لقفل والتحقق من صلاحية ونشاط الدور (`pessimistic_write`, `isActive = true`, `deletedAt IS NULL`) لاستخدامها أثناء إسناد الأدوار للمستخدمين.
     - `countAssignedUsers`: حساب عدد المستخدمين الفعليين غير المحذوفين ناعماً (`deletedAt IS NULL`) المرتبطين بالدور.
     - `findActiveRoleById` و `listActiveRoles`: دوال مساعدة لاسترجاع الأدوار النشطة الصالحة للاختيار عند إنشاء أو تعديل المستخدمين.
   - خدمة الصلاحيات الشاملة للدور `RolePermissionService` (`src/modules/system/role/role-permission.service.ts`):
@@ -21,7 +22,7 @@
       - تعطيل قواعد `ALLOW ALL` النشطة على الصلاحيات غير المحددة (`isActive = false`) مع دعم تعدد المنح القديمة وتعطيل القواعد عبر كافة منح الدور المطابقة.
       - الحفاظ التام والآمن على أي قواعد حظر (`DENY`) أو نطاقات مخصصة غير شاملة (Non-ALL) أو منح مباشرة للمستخدمين دون حذفها أو تعطيلها.
   - خدمة استعلام الصلاحيات `PermissionService` (`src/modules/system/permission/permission.service.ts`):
-    - `listActivePermissions`, `findActivePermissionById`, `findActivePermissionsByIds`: استرجاع الصلاحيات النشطة غير المحذوفة ناعماً كمرجع للنظام دون بناء CRUD للصلاحيات.
+    - `listActivePermissions`: استرجاع الصلاحيات النشطة غير المحذوفة ناعماً كمرجع للنظام دون بناء CRUD للصلاحيات.
   - واجهات برمجة التطبيقات (API Endpoints) المحمية بالصلاحيات:
     - `GET /api/system/roles` (محمي بـ `ROLE_VIEW` و `ListRolesQueryDto`).
     - `GET /api/system/roles/:id` (محمي بـ `ROLE_VIEW` و UUID).
@@ -32,8 +33,8 @@
     - `PUT /api/system/roles/:id/global-permissions` (محمي بـ `ROLE_PERMISSION_MANAGE` و UUID و `SetRoleGlobalPermissionsDto`).
   - واجهات الويب المعروضة من الخادم (Server-rendered EJS):
     - `GET /system/roles`: جدول الأدوار مع عدد المستخدمين المرتبطين، شارات الحالة، والإجراءات المشروطة بحالة الاستخدام وصلاحيات المستخدم.
-    - `GET /system/roles/create`: نموذج إنشاء دور جديد مع التحقق بالمتصفح وبواسطة Bootstrap وتوجيهات الرمز التقني.
-    - `GET /system/roles/:id/edit`: نموذج تعديل الدور مع قفل الرمز التقني كـ Read-only وقفل التعطيل لـ `SYSTEM_ADMIN`.
+    - `GET /system/roles/create`: نموذج إنشاء دور جديد مع كلاسات `needs-validation` والتحقق بالمتصفح وبواسطة Bootstrap وتوجيهات الرمز التقني.
+    - `GET /system/roles/:id/edit`: نموذج تعديل الدور مع كلاسات `needs-validation` وقفل الرمز التقني كـ Read-only وقفل التعطيل لـ `SYSTEM_ADMIN`.
     - `GET /system/roles/:id/permissions`: واجهة إسناد الصلاحيات الشاملة مجمعة حسب التطبيق والمورد، مع شارات توضيح قواعد الـ DENY، وقفل الشاشة كـ Read-only لدور مدير النظام.
   - تفاعل العميل (Client Scripts):
     - `src/public/js/roles.js`: استخدام Native Fetch لعمليات الإنشاء، التعديل، تبديل الحالة، الأرشفة، وحفظ الصلاحيات، واستخدام Event Delegation، ومعالجة رسائل الأخطاء، وحظر استخدام HTMX.
@@ -41,8 +42,8 @@
   - خدمة المستخدمين المركزية `UserService` (`src/modules/system/user/user.service.ts`):
     - `listUsers`: استرجاع قائمة المستخدمين مع Pagination، والبحث بالاسم أو رقم الهاتف، وضم الدور (Role) بكفاءة بدون N+1، واستبعاد المحذوفين ناعماً.
     - `getUserById`: استرجاع تفاصيل مستخدم محدد مع دوره واستبعاد `passwordHash`.
-    - `createUser`: إنشاء مستخدم جديد بعد التحقق المسبق من فرادية رقم الهاتف (حتى مع المحذوفين ناعماً)، والتقاط أخطاء الـ Race Condition في قاعدة البيانات (`ER_DUP_ENTRY` / 1062) وتحويلها إلى `ConflictError` برمز `USER_PHONE_ALREADY_EXISTS`، والتحقق من نشاط الدور، وتشفير كلمة المرور بـ bcrypt، وإرجاع كائن مستخدم آمن.
-    - `updateUser`: تحديث جزئي (PATCH) لبيانات المستخدم (الاسم، الهاتف مع فحص الفرادية والتقاط خطأ التكرار 409، الدور، حالة التفعيل) داخل Transaction مع تطبيق قواعد حماية الذات (Self Protection) وحماية آخر مدير نظام فعال (Last SYSTEM_ADMIN Protection) باستخدام قفل قاعدة البيانات التشاؤمي (Pessimistic Write Lock)، وإلغاء الجلسات النشطة تلقائياً عند التعطيل.
+    - `createUser`: إنشاء مستخدم جديد داخل Transaction متزامنة مع قفل تشاؤمي (`pessimistic_write`) على سجل الدور المستهدف عبر `findAssignableRoleForUpdate` (وتشفير كلمة المرور مسبقاً قبل فتح الـ Transaction)، والتحقق المسبق من فرادية رقم الهاتف (حتى مع المحذوفين ناعماً)، والتقاط أخطاء الـ Race Condition في قاعدة البيانات (`ER_DUP_ENTRY` / 1062) وتحويلها إلى `ConflictError` برمز `USER_PHONE_ALREADY_EXISTS`، وإرجاع كائن مستخدم آمن.
+    - `updateUser`: تحديث جزئي (PATCH) لبيانات المستخدم داخل Transaction مع تطبيق حماية الذات، وحماية آخر مدير نظام فعال بالقفل التشاؤمي، وقفل تشاؤمي (`pessimistic_write`) على الدور الجديد المستهدف عند تغيير الدور، والتحقق من فرادية الهاتف مع التقاط خطأ 409، وإلغاء الجلسات النشطة تلقائياً عند التعطيل.
     - `softDeleteUser`: أرشفة المستخدم (Soft Delete) عبر `deletedAt` وتعطيله مع إلغاء كافة جلساته النشطة داخل Transaction مع تطبيق حظر حذف الذات وحظر حذف آخر مدير نظام فعال بالقفل التشاؤمي. منع الحذف الصلب (Hard Delete) نهائياً.
   - واجهات برمجة التطبيقات (API Endpoints) المحمية بالصلاحيات:
     - `GET /api/system/users` (محمي بـ `USER_VIEW` والتحقق من الـ Query DTO وتخزين النتيجة في `req.validatedQuery` دون تعديل `req.query`).
@@ -64,7 +65,7 @@
   - تطبيق قاعدة التفوق للرفض (`DENY ALL` wins) والانغلاق التلقائي (Default Deny / Fail Closed).
   - عدم وجود أي تجاوز برمجي صلب لدور مدير النظام (`No SYSTEM_ADMIN hardcoded bypass`)؛ بل يخضع لتقييم المنح والقواعد المسندة إليه في الـ Seed كأي مستخدم آخر.
   - النطاقات المكانية والفرعية غير الشاملة (مثل `DEPARTMENT`, `YARD`) تنغلق بأمان (Fail closed) في هذه المرحلة ولا تمنح وصولاً شاملاً (`ALL`).
-  - قرار معماري: لا يتم فحص `role.isActive` داخل `AuthorizationService` لأن قاعدة الأعمال تمنع تماماً تعطيل أي دور مرتبط بمستخدمين فعليين غير محذوفين (In-use Role Protection Invariant).
+  - قرار معماري: لا يتم فحص `role.isActive` داخل `AuthorizationService` لأن بروتوكول قفل الأدوار وقواعد الأعمال تمنع تماماً إنشاء أو بقاء أي مستخدم غير محذوف مرتبط بدور معطل أو محذوف ناعماً (In-use Role Protection & Concurrency Invariant).
 - **وحدة المصادقة (Auth Module)** (`src/modules/system/auth/`) تشمل مسارات التحقق وتسجيل الدخول `POST /api/auth/login`، واسترجاع هوية المستخدم الموثق `GET /api/auth/me`، وتسجيل الخروج وإلغاء الجلسة `POST /api/auth/logout`.
 - **خدمة الجلسات (SessionService)** (`src/modules/system/session/session.service.ts`) مسؤولة عن إنشاء الجلسات، والتحقق من صحتها وتطابق الهاش، والتحديث المؤجل لآخر استخدام (Throttled `touchSession`)، وإلغاء الجلسات الفردية (`revokeSession`)، وإلغاء كافة جلسات المستخدم عند التعطيل أو الأرشفة (`revokeUserSessions`).
 - **أمان التوكن والجلسة (JWT & Session Security)**:
@@ -271,7 +272,7 @@ src/
 ## Role Management Core Infrastructure
 
 ### `RoleService` (`src/modules/system/role/role.service.ts`)
-- **Purpose**: تنفيذ منطق الأعمال، والتحقق من فرادة الرمز التقني، وحماية الأدوار المستخدمة، وإدارة دورة حياة الأدوار.
+- **Purpose**: تنفيذ منطق الأعمال، والتحقق من فرادة الرمز التقني، وحماية الأدوار المستخدمة، وإدارة دورة حياة الأدوار مع قفل تشاؤمي موحد لمنع التزامن غير المتسق.
 - **Methods**:
   - `listRoles(query: ListRolesQueryDto): Promise<PaginatedRolesResult>`
     - **Input**: `query` (`page`, `limit`, `search`).
@@ -285,26 +286,32 @@ src/
     - **Input**: `CreateRoleDto` (`name`, `code`, `description`, `isActive`).
     - **Action**:
       1. تنظيف الرمز التقني وتحويله إلى أحرف إنجليزية كبيرة.
-      2. التحقق المسبق من عدم وجود الرمز (مع المحذوفين ناعماً) ورمي `ConflictError` (`ROLE_CODE_ALREADY_EXISTS`).
-      3. حفظ الكيان مع التقاط أخطاء الـ Race Condition في قاعدة البيانات وتحويلها إلى 409 `ROLE_CODE_ALREADY_EXISTS`.
+      2. معالجة الوصف (`string` يقص ويتحول الفارغ إلى `null`).
+      3. التحقق المسبق من عدم وجود الرمز (مع المحذوفين ناعماً) ورمي `ConflictError` (`ROLE_CODE_ALREADY_EXISTS`).
+      4. حفظ الكيان مع التقاط أخطاء الـ Race Condition في قاعدة البيانات وتحويلها إلى 409 `ROLE_CODE_ALREADY_EXISTS`.
     - **Output**: `SafeRoleOutput`.
   - `updateRole(id: string, dto: UpdateRoleDto): Promise<SafeRoleOutput>`
     - **Input**: `id`, `UpdateRoleDto` (`name`, `description`, `isActive`).
     - **Action**:
-      1. بدء Transaction وإعادة تحميل الدور المستهدف.
+      1. بدء Transaction وإعادة تحميل الدور المستهدف مع قفل تشاؤمي (`pessimistic_write`).
       2. منع تعديل الرمز التقني نهائياً (`code` is immutable).
-      3. إذا كان المطلوب تعطيل الدور: منع تعطيل `SYSTEM_ADMIN` (`CANNOT_DEACTIVATE_SYSTEM_ADMIN_ROLE`)، والتحقق من عدم ارتباط الدور بأي مستخدم غير محذوف (`ROLE_HAS_ASSIGNED_USERS`).
-      4. حفظ التعديلات وإرجاع الكائن المحدث مع `userCount`.
+      3. معالجة الوصف بشكل آمن: `undefined` يبقي القيمة الحالية دون تغيير، `null` يمسح الوصف (`targetRole.description = null`)، و `string` يتم تنظيفه وتحويل الفراغات إلى `null`.
+      4. إذا كان المطلوب تعطيل الدور: منع تعطيل `SYSTEM_ADMIN` (`CANNOT_DEACTIVATE_SYSTEM_ADMIN_ROLE`)، والتحقق من عدم ارتباط الدور بأي مستخدم غير محذوف (`ROLE_HAS_ASSIGNED_USERS`).
+      5. حفظ التعديلات وإرجاع الكائن المحدث مع `userCount`.
     - **Output**: `SafeRoleOutput`.
   - `softDeleteRole(id: string): Promise<{ success: boolean; message: string }>`
     - **Input**: `id`.
     - **Action**:
-      1. بدء Transaction وإعادة تحميل الدور المستهدف.
+      1. بدء Transaction وإعادة تحميل الدور المستهدف مع قفل تشاؤمي (`pessimistic_write`).
       2. منع أرشفة أو حذف دور `SYSTEM_ADMIN` (`CANNOT_DELETE_SYSTEM_ADMIN_ROLE`).
       3. التحقق من عدم وجود أي مستخدم غير محذوف مرتبط بالدور (`ROLE_HAS_ASSIGNED_USERS`).
       4. ضبط `isActive = false` وتنفيذ `softDelete` دون حذف منح الصلاحيات التابعة للدور.
     - **Output**: `{ success: true, message: 'تم أرشفة الدور بنجاح' }`.
-  - `countAssignedUsers(roleId: string, manager?: EntityManager): Promise<number>`
+  - `findAssignableRoleForUpdate(roleId: string, manager: EntityManager): Promise<RoleEntity | null>`:
+    - **Input**: `roleId`, `manager`.
+    - **Action**: البحث عن دور نشط وغير محذوف ناعماً (`role.id = :roleId AND role.deletedAt IS NULL AND role.isActive = true`) مع فرض قفل تشاؤمي للكتابة (`setLock('pessimistic_write')`) لنقطة تسلسل موحدة أثناء إسناد الأدوار للمستخدمين.
+    - **Output**: `RoleEntity | null`.
+  - `countAssignedUsers(roleId: string, manager?: EntityManager): Promise<number>`:
     - **Action**: استعلام سريع لعدد سجلات `system_user` غير المحذوفة ناعماً المرتبطة بالدور.
   - `findActiveRoleById` و `listActiveRoles`: استرجاع الأدوار النشطة غير المحذوفة.
 
@@ -313,7 +320,7 @@ src/
 - **Methods**:
   - `getRoleGlobalPermissionStates(roleId: string): Promise<RoleGlobalPermissionsResponse>`
     - **Input**: `roleId`.
-    - **Action**: جلب الدور وكافة الصلاحيات النشطة، واستخراج المنح الفعالة وقواعد الوصول الشاملة (`ALLOW ALL` و `DENY ALL`) للدور، وحساب `effectiveGlobalAccess = hasAllowAll && !hasDenyAll` لكل صلاحية في استعلام تجميعي محكم بدون N+1.
+    - **Action**: جلب الدور وكافة الصلاحيات النشطة، واستخراج المنح الفعالة وقواعد الوصول الشاملة (`ALLOW ALL` و `DENY ALL`) للدور، وحساب `effectiveGlobalAccess = hasAllowAll && !hasDenyAll` لكل صلاحية في استعلام تجميعي محكم بدون N+1، مع استبعاد المنح غير النشطة أو المنتهية زمنياً.
     - **Output**: `{ role: SafeRoleOutput, permissions: RolePermissionState[], isSystemAdmin: boolean }`.
   - `setRoleGlobalPermissions(roleId: string, desiredPermissionIds: string[], actor: AuthPrincipal): Promise<{ success: boolean; message: string }>`
     - **Input**: `roleId`, `desiredPermissionIds: string[]`, `actor`.
@@ -330,12 +337,10 @@ src/
 - **Purpose**: خدمة استعلامية لقراءة الصلاحيات النشطة المتاحة في النظام.
 - **Methods**:
   - `listActivePermissions(manager?: EntityManager): Promise<PermissionEntity[]>`: استرجاع جميع الصلاحيات النشطة غير المحذوفة مرتبة بالاسم.
-  - `findActivePermissionById(id: string, manager?: EntityManager): Promise<PermissionEntity | null>`: استرجاع صلاحية نشطة بمعرفها.
-  - `findActivePermissionsByIds(ids: string[], manager?: EntityManager): Promise<PermissionEntity[]>`: استرجاع مجموعة صلاحيات نشطة.
 
 ### `Role DTOs` (`src/modules/system/role/dto/`)
 - `CreateRoleDto`: التحقق من الاسم (2-100 مع Trim)، الرمز التقني (`^[A-Z][A-Z0-9_]*$` بطول 2-50 مع تحويل تلقائي للأحرف الكبيرة والتنظيف)، الوصف الاختياري، وحالة التفعيل.
-- `UpdateRoleDto`: يدعم التحديث الجزئي (PATCH) للاسم، الوصف، وحالة التفعيل، مع قفل تام وعدم إتاحة تعديل الرمز التقني.
+- `UpdateRoleDto`: يدعم التحديث الجزئي (PATCH) للاسم، الوصف (`string | null` بحيث `undefined` لا يغير، `null` يمسح، و `string` يتم تنظيفه)، وحالة التفعيل، مع قفل تام وعدم إتاحة تعديل الرمز التقني.
 - `ListRolesQueryDto`: التحقق وتحويل معاملات الاستعلام (`page`, `limit`, `search`).
 - `SetRoleGlobalPermissionsDto`: التحقق من مصفوفة معرفات الصلاحيات (`permissionIds`) كمعرفات UUID v4 فريدة ومصفوفة صالحة.
 
@@ -348,11 +353,11 @@ src/
 ## User Management Core Infrastructure
 
 ### `UserService` (`src/modules/system/user/user.service.ts`)
-- **Purpose**: تنفيذ منطق الأعمال، وقواعد التحقق، وحماية الحسابات، وإدارة دورة حياة المستخدمين.
+- **Purpose**: تنفيذ منطق الأعمال، وقواعد التحقق، وحماية الحسابات، وإدارة دورة حياة المستخدمين مع قفل تشاؤمي على الأدوار لمنع التزامن غير المتسق.
 - **Methods**:
   - `listUsers(query: ListUsersQueryDto): Promise<PaginatedUsersResult>`
     - **Input**: `query` (`page`, `limit`, `search`).
-    - **Action**: استعلام مقسم لصفحات مع البحث بالاسم أو رقم الهاتف، ضم اسم الدور، استبعاد السجلات المحذوفة ناعماً، وترتيب النتائج تنازلياً حسب تاريخ الإنشاء.
+    - **Action**: استعلام مقسم لصفحات مع البحث بالاسم أو رقم الهاتف، وضم الدور (Role) بكفاءة بدون N+1، واستبعاد المحذوفين ناعماً.
     - **Output**: `{ items: SafeUserOutput[], total, page, limit, totalPages }`.
   - `getUserById(id: string): Promise<SafeUserOutput>`
     - **Input**: `id` (UUID).
@@ -361,10 +366,12 @@ src/
   - `createUser(dto: CreateUserDto): Promise<SafeUserOutput>`
     - **Input**: `CreateUserDto` (`fullName`, `phone`, `password`, `roleId`, `isActive`).
     - **Action**:
-      1. التحقق من عدم وجود رقم الهاتف مسبقاً (مع فحص السجلات المحذوفة ناعماً `withDeleted()`) ورمي `ConflictError` عند التكرار.
-      2. التحقق من وجود ونشاط الدور المحدد عبر `RoleService.findActiveRoleById` ورمي `NotFoundError` إذا لم يكن صالحاً.
-      3. تشفير كلمة المرور باستخدام `hashPassword`.
-      4. حفظ المستخدم مع التقاط أخطاء الـ Race Condition في قاعدة البيانات (`ER_DUP_ENTRY` / 1062) وتحويلها إلى `ConflictError` برمز `USER_PHONE_ALREADY_EXISTS`.
+      1. تشفير كلمة المرور مسبقاً (`hashPassword`) لتقليل زمن حجز القفل في قاعدة البيانات.
+      2. فتح Transaction:
+         - التحقق من عدم وجود رقم الهاتف مسبقاً (مع فحص السجلات المحذوفة ناعماً `withDeleted()`) ورمي `ConflictError` عند التكرار.
+         - قفل سجل الدور المستهدف بـ `pessimistic_write` عبر `RoleService.findAssignableRoleForUpdate` والتحقق من كونه نشطاً وغير محذوف ناعماً ورمي `NotFoundError('ROLE_NOT_FOUND_OR_INACTIVE')` في حال عدم صلاحيته.
+         - حفظ المستخدم داخل نفس الـ Transaction وإرجاع بياناته الآمنة.
+      3. التقاط أخطاء الـ Race Condition في قاعدة البيانات (`ER_DUP_ENTRY` / 1062) وتحويلها إلى `ConflictError` برمز `USER_PHONE_ALREADY_EXISTS`.
     - **Output**: `SafeUserOutput`.
   - `updateUser(id: string, dto: UpdateUserDto, currentPrincipal: AuthPrincipal): Promise<SafeUserOutput>`
     - **Input**: `id`, `UpdateUserDto` (`fullName`, `phone`, `roleId`, `isActive`), `currentPrincipal`.
@@ -373,7 +380,7 @@ src/
       2. **Transaction**: بدء Transaction وإعادة تحميل المستخدم المستهدف من قاعدة البيانات.
       3. **حماية الدور الشخصي**: منع المستخدم من تغيير دوره الخاص على السجل المحمل حديثاً.
       4. **حماية آخر مدير نظام بقفل تشاؤمي**: إذا كانت العملية ستؤدي لتعطيل مدير نظام فعال أو نقله لدور آخر، يتم فرض Pessimistic Write Lock (`setLock('pessimistic_write')`) على سجلات مدراء النظام الفعالة والتحقق من أن عددهم يتجاوز 1 لمنع أي Race Condition متزامن.
-      5. **التحقق من الدور الجديد**: التأكد من كون الدور نشطاً وغير محذوف ناعماً.
+      5. **التحقق من الدور الجديد وقفله**: في حال تغيير الدور، يتم قفل الدور الجديد بـ `pessimistic_write` عبر `findAssignableRoleForUpdate` والتحقق من كونه نشطاً وغير محذوف ناعماً.
       6. **فرادية الهاتف**: التحقق من عدم استخدام الهاتف الجديد من قبل حساب آخر (يشمل المحذوفين ناعماً) والتقاط خطأ التكرار 409.
       7. **حفظ التعديلات**: حفظ الكيان وإلغاء الجلسات النشطة تلقائياً عبر `SessionService.revokeUserSessions` في حال تحول المستخدم إلى غير نشط (`isActive = false`).
     - **Output**: `SafeUserOutput`.
@@ -476,7 +483,7 @@ src/
   - متغير البيئة `SEED_SYSTEM_ADMIN_PASSWORD` إلزامي فقط عند إنشاء مستخدم المدير لأول مرة.
   - لا توجد أي كلمة مرور افتراضية (No fallback) في الكود المصدري.
   - تشفير كلمة المرور بـ `bcrypt` قبل التخزين.
-  - حماية كلمات مرور المستخدمين المنشئين مسبقاً من إعادة التعيين أو التغيير عند تكرار تشغيل `npm run seed`.
+  - حماية كلمات مرور المستخدمين المنشئين مسبقاً من إعادة التعيين أثناء إعادة تشغيل الـ Seed.
 - **SYSTEM_ADMIN Auto-Grants & Safe Updates**: عند تشغيل الـ Seed، يتم تحديث أي منح قديمة معطلة أو منتهية لمدير النظام لتصبح نشطة ودائمة مع قواعد `ALLOW ALL`، مع الحفاظ على أي قواعد `DENY` صريحة أضافها المستخدم يدوياً.
 
 ---
@@ -645,6 +652,10 @@ src/
    - ثبات الرمز التقني للدور: رمز الدور (`role.code`) هو معرّف تقني ثابت لا يمكن تعديله بعد الإنشاء.
    - حماية دور مدير النظام (`SYSTEM_ADMIN`): لا يمكن تعطيل دور مدير النظام أو حذفه ناعماً، وتُدار صلاحياته الأساسية تلقائياً عبر النظام (Seeds) ولا تُعدل من واجهة إسناد الصلاحيات (`SYSTEM_ADMIN_PERMISSIONS_MANAGED_BY_SYSTEM`).
    - منع تعطيل أو حذف الأدوار المستخدمة (Role in Use): لا يمكن تعطيل أو أرشفة/حذف أي دور طالما يوجد مستخدمون غير محذوفين مرتبطون به (`ROLE_HAS_ASSIGNED_USERS`).
+   - بروتوكول قفل سجل الدور لمنع التزامن غير المتسق (`Role Lock Protocol`):
+     - سجل الدور المستهدف في `system_role` هو نقطة التسلسل المركزية (`Serialization Point`) لجميع عمليات إسناد الأدوار ودورة حياة الأدوار.
+     - كل عملية تسند دوراً لمستخدم (إنشاء مستخدم جديد `createUser` أو تعديل دور مستخدم `updateUser`)، وكل عملية تغير دورة حياة الدور (تعطيل الدور `updateRole` أو أرشفة الدور `softDeleteRole`)، يجب أن تنفذ داخل Transaction وتحصل على قفل تشاؤمي للكتابة (`setLock('pessimistic_write')`) على نفس سجل الدور المستهدف.
+     - هذا البروتوكول يضمن رياضياً وتزامنياً استحالة وجود أي مستخدم غير محذوف مرتبط بدور معطل أو محذوف ناعماً تحت أي ظروف تزامن متوازية.
    - نطاق إدارة صلاحيات الدور: واجهة إدارة صلاحيات الأدوار تدير فقط الصلاحيات الشاملة (`ALLOW ALL`) للدور، ويُمنع حذف أو إلغاء قواعد الحظر (`DENY`) أو النطاقات المخصصة أو المنح المباشرة للمستخدمين.
    - معالجة أخطاء فرادة المفاتيح في قاعدة البيانات: يتم التقاط أخطاء التزامن الخاصة بفرادة رقم الهاتف (`USER_PHONE_ALREADY_EXISTS`) وفرادة رمز الدور (`ROLE_CODE_ALREADY_EXISTS`) وتحويلها إلى أخطاء تضارب آمنة (`ConflictError` 409) دون إظهار استثناءات قاعدة البيانات الخام (500).
    - إخفاء العناصر والأزرار في واجهة المستخدم (`UI Visibility`) ليس بديلاً عن الصلاحيات الأمنية؛ يجب على الـ APIs التحقق الصارم من الصلاحيات.
@@ -729,11 +740,11 @@ src/
 ## Implemented Infrastructure
 
 - Centralized Role Management Module & Global Permission Assignment (`src/modules/system/role/`, `src/modules/system/permission/`).
-- Role Service with Assignment Count, Uniqueness Protection and Code Immutability (`src/modules/system/role/role.service.ts`).
+- Role Service with Assignment Count, Pessimistic Lock Protocol, Code Immutability, and Safe Description Handling (`src/modules/system/role/role.service.ts`).
 - Role Global Permission Service (`src/modules/system/role/role-permission.service.ts`).
 - Permission Lookup Service (`src/modules/system/permission/permission.service.ts`).
 - Centralized User Management Module (`src/modules/system/user/`).
-- User Service with Concurrency Phone Uniqueness Hardening, Pessimistic Locking and Transactional Invariants (`src/modules/system/user/user.service.ts`).
+- User Service with Concurrency Phone Uniqueness Hardening, Pessimistic Locking on Role Assignment and Invariants (`src/modules/system/user/user.service.ts`).
 - Centralized Authorization Module (`src/modules/system/authorization/`).
 - Permission Evaluation Service `AuthorizationService` (`src/modules/system/authorization/authorization.service.ts`).
 - Route Authorization Middleware `requirePermission` (`src/modules/system/authorization/authorization.middleware.ts`).
@@ -756,7 +767,7 @@ src/
 - Standardized `ValidationError` representation (`src/common/errors/validation.error.ts`).
 - Centralized Error Handling (`AppError`, `errorHandlerMiddleware`).
 - Standardized typed `ApiResponse` for API endpoints.
-- EJS + `express-ejs-layouts` server-rendered views.
+- EJS + `express-ejs-layouts` server-rendered views with Bootstrap validation.
 - Static assets serving (`src/public`).
 - Client scripts (`src/public/js/app.js`, `src/public/js/login.js`, `src/public/js/users.js`, `src/public/js/roles.js`).
 - TypeORM MySQL connection and robust graceful shutdown.

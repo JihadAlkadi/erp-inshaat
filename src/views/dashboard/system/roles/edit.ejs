@@ -23,7 +23,7 @@
           </div>
         <% } %>
 
-        <form id="editRoleForm" data-role-id="<%= targetRole.id %>" novalidate>
+        <form id="editRoleForm" class="needs-validation" data-role-id="<%= targetRole.id %>" novalidate>
           <div class="mb-3">
             <label for="name" class="form-label fw-bold">اسم الدور <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="name" name="name" required minlength="2" maxlength="100" value="<%= targetRole.name %>" placeholder="مثال: مدير الإنتاج">
