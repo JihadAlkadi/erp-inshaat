@@ -2,7 +2,15 @@
 
 ## Current Project State
 
-تم تنفيذ مرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات الدائمة وقاعدة البيانات، مع الحفاظ على الهيكلية المعيارية (Modular Monolith) وقواعد النظام الصارمة:
+تم تنفيذ مرحلة المصادقة الأساسية (Authentication Core) ومرحلة محرك الصلاحيات وقواعد الوصول (Authorization Core - Phase 1) بالكامل ودمجهما مع نموذج الجلسات وقاعدة البيانات:
+- **محرك الصلاحيات (Authorization Core - Phase 1)** (`src/modules/system/authorization/`):
+  - خدمة الصلاحيات المركزية `AuthorizationService` (`src/modules/system/authorization/authorization.service.ts`) المسؤولة عن تقييم وصول المستخدمين عبر `hasPermission` واسترجاع قائمة الصلاحيات الفعالة الشاملة عبر `getEffectivePermissions`.
+  - وسيط التحقق من الصلاحيات `requirePermission` (`src/modules/system/authorization/authorization.middleware.ts`) الذي يتحقق من هوية المستخدم الموثق ويمرر `ForbiddenError` برمز `PERMISSION_DENIED` عند عدم امتلاك الصلاحية.
+  - دمج وتقييم منح الدور الأساسي للمستخدم (`Role Grants`) مع المنح المباشرة للمستخدم (`Direct User Grants`) في استعلام واحد محكم بدون N+1.
+  - استبعاد المنح غير النشطة أو المنتهية زمنياً (`expires_at <= now`) والمنح التابعة لصلاحيات معطلة أو محذوفة ناعماً.
+  - تطبيق قاعدة التفوق للرفض (`DENY ALL` wins) والانغلاق التلقائي (Default Deny / Fail Closed).
+  - عدم وجود أي تجاوز برمجي صلب لدور مدير النظام (`No SYSTEM_ADMIN hardcoded bypass`)؛ بل يخضع لتقييم المنح والقواعد المسندة إليه في الـ Seed كأي مستخدم آخر.
+  - النطاقات المكانية والفرعية غير الشاملة (مثل `DEPARTMENT`, `YARD`) تنغلق بأمان (Fail closed) في هذه المرحلة ولا تمنح وصولاً شاملاً (`ALL`).
 - **وحدة المصادقة (Auth Module)** (`src/modules/system/auth/`) تشمل مسارات التحقق وتسجيل الدخول `POST /api/auth/login`، واسترجاع هوية المستخدم الموثق `GET /api/auth/me`، وتسجيل الخروج وإلغاء الجلسة `POST /api/auth/logout`.
 - **خدمة الجلسات (SessionService)** (`src/modules/system/session/session.service.ts`) مسؤولة عن إنشاء الجلسات، والتحقق من صحتها وتطابق الهاش، والتحديث المؤجل لآخر استخدام (Throttled `touchSession`)، وإلغاء الجلسات عند تسجيل الخروج (`revokeSession`).
 - **أمان التوكن والجلسة (JWT & Session Security)**:
@@ -25,8 +33,8 @@
   - صفحة تسجيل الدخول (`src/public/js/login.js`) تستخدم Native Fetch مع Bootstrap Validation لمعالجة الطلب وعرض رسائل الخطأ بأمان.
   - شريط التنقل (`src/views/dashboard/partials/navbar.ejs`) يعرض الاسم الكامل للمستخدم الموثق من `res.locals.user`، وزر تسجيل الخروج ينفذ `POST /api/auth/logout` عبر `src/public/js/app.js` ثم يوجه المتصفح إلى `/login`.
 - **موديولات النظام الأساسية والـ Seeds**:
-  - موديول الصلاحيات `permission`، ومنح الصلاحيات `permission-grant`، وقواعد نطاق الوصول `access-rule`، والأدوار `role`، والمستخدمين `user`، والجلسات `session`، والمصادقة `auth`.
-  - دور `SYSTEM_ADMIN` يحصل تلقائياً على كافة الصلاحيات النشطة عند تشغيل الـ Seed.
+  - موديول الصلاحيات `permission`، ومنح الصلاحيات `permission-grant`، وقواعد نطاق الوصول `access-rule`، والأدوار `role`، والمستخدمين `user`، والجلسات `session`، والمصادقة `auth`، والتحقق من الصلاحيات `authorization`.
+  - دور `SYSTEM_ADMIN` يحصل تلقائياً على كافة الصلاحيات النشطة عند تشغيل الـ Seed مع قواعد `ALLOW ALL`.
 
 ---
 
@@ -82,6 +90,10 @@ src/
 │       │   ├── auth.service.ts
 │       │   ├── auth.types.ts
 │       │   └── passport-jwt.strategy.ts
+│       ├── authorization/
+│       │   ├── authorization.middleware.ts
+│       │   ├── authorization.service.ts
+│       │   └── authorization.types.ts
 │       ├── permission/
 │       │   ├── constants/
 │       │   │   └── system-permission.enum.ts
@@ -220,6 +232,36 @@ storage/
 
 ---
 
+## Authorization Core Services (Phase 1)
+
+### `AuthorizationService` (`src/modules/system/authorization/authorization.service.ts`)
+- **Purpose**: تقييم الصلاحيات الفعالة للمستخدمين بناءً على المنح المطبقة (منح الدور + المنح المباشرة) وقواعد الوصول المقترنة بها.
+- **Methods**:
+  - `hasPermission(principal: AuthPrincipal, permissionName: string): Promise<boolean>`
+    - **Input**: `principal` (`AuthPrincipal`), `permissionName` (`string`).
+    - **Action**:
+      1. يستعلم عن جميع القواعد الفعالة (`rule.isActive = true`, `rule.scopeType = 'ALL'`) التابعة لمنح فعالة (`grant.isActive = true`, `grant.expiresAt > now OR NULL`) الموجهة لدور المستخدم (`roleId`) أو للمستخدم مباشرة (`userId`).
+      2. يتأكد من كون الصلاحية نشطة (`permission.isActive = true`) وغير محذوفة ناعماً (`permission.deletedAt IS NULL`).
+      3. إذا وجدت أي قاعدة `DENY`، ترجع الدالة `false` فوراً (`DENY ALL` wins).
+      4. إذا وجدت قاعدة واحدة على الأقل `ALLOW` ولم يوجد أي `DENY`، ترجع الدالة `true`.
+      5. في حال غياب قواعد `ALLOW ALL`، ترجع الدالة `false` (Fail Closed / Default Deny).
+    - **Output**: `boolean`.
+  - `getEffectivePermissions(principal: AuthPrincipal): Promise<string[]>`
+    - **Input**: `principal` (`AuthPrincipal`).
+    - **Action**: استعلام تجميعي موحد (Single aggregated QueryBuilder without N+1) يستخرج كافة أسماء الصلاحيات التي يمتلك المستخدم عليها قاعدة `ALLOW ALL` نشطة بدون أي قاعدة `DENY ALL`.
+    - **Output**: `string[]` (مثل `['system.user.view', 'system.user.create', ...]`).
+
+### `Authorization Middleware` (`src/modules/system/authorization/authorization.middleware.ts`)
+- `requirePermission(permissionName: string)`:
+  - **Input**: `permissionName` (اسم الصلاحية المطلوب فحصها).
+  - **Action**:
+    1. يتحقق من وجود المستخدم الموثق `req.user`، وإذا لم يوجد يمرر `UnauthorizedError` (HTTP 401).
+    2. يستدعي `authorizationService.hasPermission(req.user, permissionName)`.
+    3. إذا كانت النتيجة `true`، يمرر التنفيذ للوسيط التالي عبر `next()`.
+    4. إذا كانت النتيجة `false`، يمرر `ForbiddenError('ليس لديك صلاحية لتنفيذ هذا الإجراء', 'PERMISSION_DENIED')` (HTTP 403) إلى معالج الأخطاء المركزي.
+
+---
+
 ## Seed Infrastructure
 
 ### Seed Execution Order & Module Ownership
@@ -236,7 +278,7 @@ storage/
   - لا توجد أي كلمة مرور افتراضية (No fallback) في الكود المصدري.
   - تشفير كلمة المرور بـ `bcrypt` قبل التخزين.
   - حماية كلمات مرور المستخدمين المنشئين مسبقاً من إعادة التعيين أو التغيير عند تكرار تشغيل `npm run seed`.
-- **SYSTEM_ADMIN Auto-Grants**: عند إضافة أي صلاحيات جديدة نشطة في النظام وإعادة تشغيل الـ Seed، يحصل دور `SYSTEM_ADMIN` عليها تلقائياً.
+- **SYSTEM_ADMIN Auto-Grants**: عند إضافة أي صلاحيات جديدة نشطة في النظام وإعادة تشغيل الـ Seed، يحصل دور `SYSTEM_ADMIN` عليها تلقائياً مع قواعد `ALLOW ALL`.
 - **Decoupled Module Seeds**: كل Seeder يتبع للموديول المالك للكيان، ومشغل الـ Seed (`src/database/seeds/system-initial.seed.ts`) ينسق التنفيذ داخل Transaction موحدة.
 
 ---
@@ -396,11 +438,22 @@ storage/
 
 ## Architectural Rules
 
-1. **System Permission Architecture**:
-   - **Permission**: يحدد نوع العملية المسموحة فقط (`WHAT`) مثل `system.user.view`، ولا يحتوي على شروط أو نطاقات بيانات.
-   - **PermissionGrant**: يحدد الجهة الممنوحة (`WHO`) إما مستخدم محدد أو دور محدد (حصراً أحدهما عبر XOR constraint).
-   - **AccessRule**: يحدد نطاق البيانات المتاح للمنحة (`WHICH DATA`) مع تحديد الأثر (`ALLOW` أو `DENY`).
-   - قاعدة الوصول الفعال المستقبلي: `(ALLOW 1 OR ALLOW 2 ...) AND NOT (DENY 1 OR DENY 2 ...)` حيث `DENY` يتفوق دوماً وبغياب `ALLOW` يكون الوصول مرفوضاً افتراضياً.
+1. **System Permission & Access Control Architecture (Implemented Phase 1)**:
+   - **المفاهيم الأساسية**:
+     - **Authentication**: من هو المستخدم؟ (`Identity`)
+     - **Authorization**: ماذا يستطيع المستخدم فعله؟ (`Permissions & Access`)
+     - **Permission**: يحدد نوع العملية فقط (`WHAT`) مثل `system.user.view`، ولا يحتوي على نطاقات بيانات أو شروط.
+     - **PermissionGrant**: يحدد المستفيد من المنحة (`WHO`) إما مستخدم محدد أو دور محدد (حصراً أحدهما عبر XOR constraint).
+     - **AccessRule**: يحدد نطاق البيانات المتاح للمنحة (`WHICH DATA`) مع تحديد الأثر (`ALLOW` أو `DENY`).
+   - **قواعد التقييم الفعال (Evaluation Rules)**:
+     - **المصادر المدمجة**: تُجمع المنح المطبقة للمستخدم من مصدرين: منح دوره الأساسي (`Role Grants`) ومنحه المباشرة (`Direct User Grants`).
+     - **التحقق من الصلاحية والفعالية**: تُستبعد أي منحة غير نشطة (`isActive = false`) أو منتهية زمنياً (`expiresAt <= now`) أو مرتبطة بصلاحية معطلة أو محذوفة ناعماً.
+     - **قاعدة الحسم**: `(ALLOW 1 OR ALLOW 2 ...) AND NOT (DENY 1 OR DENY 2 ...)`.
+     - **تفوق الرفض (`DENY ALL` wins)**: أي قاعدة `DENY ALL` على أي منحة مطبقة للمستخدم لنفس الصلاحية تلغي وتتفوق على أي `ALLOW ALL` قادمة من Role أو Direct Grant.
+     - **الانغلاق الافتراضي (Fail Closed / Default Deny)**: غياب أي قاعدة `ALLOW ALL` نشطة يعني رفض الوصول مباشرة.
+     - **النطاقات غير المدعومة**: النطاقات الفرعية (مثل `DEPARTMENT`, `YARD`) لا تمنح وصولاً شاملاً (`ALL`) في هذه المرحلة وتنغلق بأمان.
+     - **عدم وجود استثناء لمدير النظام**: دور `SYSTEM_ADMIN` لا يمتلك أي Hardcoded Bypass، ويمر عبر نفس محرك الصلاحيات مستنداً إلى المنح والقواعد المعرفة في الـ Seed.
+     - **فصل التفويض**: حقل `can_delegate` لا يؤثر على وصول المستخدم الحالي للعملية.
 
 2. **User Role & Session Architecture**:
    - لكل مستخدم دور أساسي واحد فقط (`system_user.role_id` $\rightarrow$ `system_role.id`).
@@ -430,7 +483,7 @@ storage/
    - منع وجود أي كلمات مرور افتراضية (Fallback) في الكود، وإلزامية متغير البيئة عند إنشاء مدير النظام لأول مرة.
    - حماية كلمات مرور المستخدمين المنشئين مسبقاً من إعادة التعيين أثناء إعادة تشغيل الـ Seed.
    - استخدام ثوابت الصلاحيات من `SystemPermission` enum وثوابت الأدوار من `SystemRole` enum بدلاً من تكرار النصوص.
-   - دور `SYSTEM_ADMIN` يحصل تلقائياً على جميع الصلاحيات النشطة عند تشغيل الـ Seed.
+   - دور `SYSTEM_ADMIN` يحصل تلقائياً على جميع الصلاحيات النشطة عند تشغيل الـ Seed مع قواعد `ALLOW ALL`.
 
 6. **Client Interaction & Views**:
    - صفحات الواجهة تعتمد على العرض من طرف الخادم (Server-rendered EJS pages).
@@ -453,20 +506,25 @@ storage/
 9. **Known Follow-ups & Security Hardening**:
    - تعزيز حماية CSRF على الـ State-changing APIs قبل التوسع في بناء موديولات الأعمال.
    - تطبيق Rate Limiting على نقطة تسجيل الدخول لحماية الحسابات من هجمات التخمين (Brute-force).
-   - بناء محرك الصلاحيات وقواعد الوصول (Authorization Engine).
+   - بناء محرك النطاقات السياقية المتقدمة (Context-aware Dynamic Scopes & Row Filtering).
+   - بناء محرك التفويض وتفويض الصلاحيات (Delegation Engine & canDelegate evaluation).
    - بناء واجهات إدارة الأجهزة والجلسات وخيار تسجيل الخروج من كافة الأجهزة (Logout all devices).
+   - بناء واجهات إدارة المستخدمين والأدوار ومنح الصلاحيات (User/Role/Grant Management UI).
 
 ---
 
 ## Implemented Infrastructure
 
+- Centralized Authorization Module (`src/modules/system/authorization/`).
+- Permission Evaluation Service `AuthorizationService` (`src/modules/system/authorization/authorization.service.ts`).
+- Route Authorization Middleware `requirePermission` (`src/modules/system/authorization/authorization.middleware.ts`).
 - Full Authentication Module (`src/modules/system/auth/`).
 - Database Session Service (`src/modules/system/session/session.service.ts`).
 - Passport JWT Authentication Strategy & Cookie Extractor with HS256 restriction (`src/bootstrap/passport.bootstrap.ts`, `passport-jwt.strategy.ts`).
 - Route Protection Middlewares (`requireWebAuth`, `requireApiAuth`, `redirectIfAuthenticated`).
-- Standardized `UnauthorizedError` (HTTP 401).
+- Standardized `UnauthorizedError` (HTTP 401) and `ForbiddenError` (HTTP 403).
 - Token Hashing Utility (`src/common/security/token-hash.util.ts`).
-- System Modules Organization (`auth`, `permission`, `permission-grant`, `access-rule`, `role`, `session`, `user`).
+- System Modules Organization (`auth`, `authorization`, `permission`, `permission-grant`, `access-rule`, `role`, `session`, `user`).
 - System Session Data Model & Migration (`SessionEntity`, `system_session`).
 - Initial System Seed Data & Runner (`npm run seed`).
 - Password Hashing & Comparison Utilities (`src/common/security/password.util.ts`).
