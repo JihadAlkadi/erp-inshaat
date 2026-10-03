@@ -1,6 +1,6 @@
 /**
  * ERP Core Client Scripts
- * General presentation behaviors (password toggle, disabled link handling)
+ * General presentation behaviors (password toggle, disabled link handling, global logout)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -32,5 +32,25 @@ document.addEventListener('DOMContentLoaded', () => {
     link.addEventListener('click', (e) => {
       e.preventDefault();
     });
+  });
+
+  // Global Logout Handler
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null;
+    const logoutTrigger = target?.closest('#logoutBtn, [data-action="logout"]');
+
+    if (logoutTrigger) {
+      e.preventDefault();
+
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+        .finally(() => {
+          window.location.href = '/login';
+        });
+    }
   });
 });

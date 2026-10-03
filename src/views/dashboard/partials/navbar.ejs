@@ -16,13 +16,13 @@
       <!-- User Identity -->
       <div class="dropdown">
         <a href="#" class="d-flex align-items-center text-white text-decoration-none dropdown-toggle" data-bs-toggle="dropdown">
-          <img src="https://ui-avatars.com/api/?name=<%= locals.user ? locals.user.fullName : 'Admin' %>&background=ffffff&color=714B67" width="32" height="32" class="rounded-circle me-1 shadow-sm" alt="User Avatar">
-          <span class="d-none d-md-inline ms-1"><%= locals.user ? locals.user.fullName : 'مدير النظام' %></span>
+          <img src="https://ui-avatars.com/api/?name=<%= locals.user ? encodeURIComponent(locals.user.fullName) : 'User' %>&background=ffffff&color=714B67" width="32" height="32" class="rounded-circle me-1 shadow-sm" alt="User Avatar">
+          <span class="d-none d-md-inline ms-1"><%= locals.user ? locals.user.fullName : 'المستخدم' %></span>
         </a>
         <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2 position-absolute">
           <li><a class="dropdown-item text-end" href="#"><i class="fa-solid fa-user me-2"></i> حسابي</a></li>
           <li><hr class="dropdown-divider"></li>
-          <li><a class="dropdown-item text-end text-danger fw-bold" href="/login"><i class="fa-solid fa-right-from-bracket me-2"></i> تسجيل الخروج</a></li>
+          <li><a class="dropdown-item text-end text-danger fw-bold" href="#" id="logoutBtn" data-action="logout"><i class="fa-solid fa-right-from-bracket me-2"></i> تسجيل الخروج</a></li>
         </ul>
       </div>
     </div>

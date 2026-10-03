@@ -2,14 +2,20 @@
 
 ## Current Project State
 
-تم تنفيذ تنظيم شامل وفصل لموديولات النظام الأساسية، وتأمين كلمات المرور الأولية، وتحسين عملية إيقاف الخادم (Graceful Shutdown):
-- موديول منح الصلاحيات المستقل `permission-grant` (`src/modules/system/permission-grant/`) يحتوي على `PermissionGrantEntity` والـ Seed الخاص به.
-- موديول قواعد نطاق الوصول المستقل `access-rule` (`src/modules/system/access-rule/`) يحتوي على `AccessRuleEntity` والـ Seed الخاص به.
-- دور مدير النظام `SYSTEM_ADMIN` يحصل تلقائياً على جميع الصلاحيات النشطة (`isActive: true`) عند تنفيذ الـ Seed.
-- تأمين كلمة مرور المدير الأولي بحيث تكون `SEED_SYSTEM_ADMIN_PASSWORD` إلزامية فقط عند إنشاء المدير لأول مرة، دون وجود أي كلمة مرور افتراضية (No fallback) في الكود المصدري، مع حماية كلمة مرور المستخدم الحالي من التغيير عند إعادة التشغيل.
-- تحسين عملية الإيقاف الآمن (Graceful Shutdown) في `src/server.ts` بانتظار إغلاق خادم HTTP فعلياً قبل إغلاق اتصال قاعدة البيانات، مع منع الاستدعاء المتزامن المزدوج وإزالة الخروج الإجباري.
-- إزالة أي تبعية أو كود أو توثيق متعلق بـ HTMX والاعتماد على صفحات EJS المخدمة من الخادم و Native Fetch لطلبات الـ JSON API.
-- جداول وكيانات النظام الأساسية: `system_role`, `system_user`, `system_permission`, `system_permission_grant`, `system_access_rule`, `system_session`.
+تم تنفيذ مرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات الدائمة وقاعدة البيانات:
+- **وحدة المصادقة (Auth Module)** (`src/modules/system/auth/`) تشمل مسارات التحقق وتسجيل الدخول `/api/auth/login`، ومعلومات المستخدم الحالي `/api/auth/me`، وتسجيل الخروج وإلغاء الجلسة `/api/auth/logout`.
+- **خدمة الجلسات (SessionService)** (`src/modules/system/session/session.service.ts`) مسؤولة عن إنشاء الجلسات، والتحقق من صحتها وحالتها، وتحديث آخر استخدام (Throttled)، وإلغائها عند تسجيل الخروج.
+- **تأمين التوكن (JWT Security)**: يتم توليد التوكن بتوقيع خوارزمية HS256 متضمناً `sub: userId` و `sid: sessionId` فقط دون أي بيانات حساسة، مع تشفير التوكن بـ SHA-256 قبل حفظه في جدول `system_session` (لا يُخزن الـ JWT الخام في قاعدة البيانات مطلقاً)، وتمرير التوكن للمتصفح عبر كوكيز محمية `HttpOnly` باسم `erp_session`.
+- **استراتيجية Passport JWT** (`src/modules/system/auth/passport-jwt.strategy.ts`) تستخرج التوكن من الكوكيز وتتحقق من توقيعه، وتطابق الهاش مع الجلسة النشطة غير الملغاة وغير المنتهية في قاعدة البيانات، وتتحقق من فعالية المستخدم قبل منحه هوية الطلب (`AuthPrincipal`).
+- **حماية المسارات (Route Protection)**:
+  - مسارات صفحات الويب (`GET /`, `GET /system`) محمية بوسيط `requireWebAuth` مع التوجيه التلقائي إلى `/login` وتعيين `res.locals.user` وإلغاء التخزين المؤقت `Cache-Control: no-store`.
+  - صفحة تسجيل الدخول `GET /login` تستخدم وسيط `redirectIfAuthenticated` لإعادة توجيه المستخدمين المسجلين مسبقاً إلى الصفحة الرئيسية `/`.
+  - مسارات الـ API المحمية تستخدم `requireApiAuth` وتعيد أخطاء بصيغة JSON المعيارية `UNAUTHORIZED` (401).
+  - نقطة الفحص الصحي `GET /api/health` والملفات الثابتة تبقى عامة (Public).
+- **واجهة المستخدم والعميل (Frontend Auth Flow)**:
+  - نموذج تسجيل الدخول (`src/public/js/login.js`) يعتمد على Native Fetch مع التحقق من الحقول بـ Bootstrap وعرض الأخطاء القادمة من الخادم.
+  - شريط التنقل (`src/views/dashboard/partials/navbar.ejs`) يعرض الاسم الكامل للمستخدم الحالي، وزر تسجيل الخروج ينفذ `POST /api/auth/logout` عبر `src/public/js/app.js`.
+- موديول منح الصلاحيات المستقل `permission-grant` وموديول قواعد نطاق الوصول `access-rule` ودور مدير النظام `SYSTEM_ADMIN` والـ Seeds الخاصة بها تعمل بنجاح وبشكل متكامل.
 
 ---
 
@@ -18,12 +24,14 @@
 ```text
 src/
 ├── bootstrap/
-│   └── database.bootstrap.ts
+│   ├── database.bootstrap.ts
+│   └── passport.bootstrap.ts
 ├── common/
 │   ├── errors/
 │   │   ├── app.error.ts
 │   │   ├── forbidden.error.ts
 │   │   ├── not-found.error.ts
+│   │   ├── unauthorized.error.ts
 │   │   └── validation.error.ts
 │   ├── logging/
 │   │   └── logger.ts
@@ -34,7 +42,8 @@ src/
 │   ├── responses/
 │   │   └── api-response.ts
 │   └── security/
-│       └── password.util.ts
+│       ├── password.util.ts
+│       └── token-hash.util.ts
 ├── config/
 │   ├── database.config.ts
 │   ├── env.config.ts
@@ -52,6 +61,16 @@ src/
 │       │   ├── seeds/
 │       │   │   └── system-admin-access-rules.seed.ts
 │       │   └── access-rule.entity.ts
+│       ├── auth/
+│       │   ├── dto/
+│       │   │   └── login.dto.ts
+│       │   ├── auth.constants.ts
+│       │   ├── auth.controller.ts
+│       │   ├── auth.middleware.ts
+│       │   ├── auth.route.ts
+│       │   ├── auth.service.ts
+│       │   ├── auth.types.ts
+│       │   └── passport-jwt.strategy.ts
 │       ├── permission/
 │       │   ├── constants/
 │       │   │   └── system-permission.enum.ts
@@ -69,7 +88,8 @@ src/
 │       │   │   └── system-admin-role.seed.ts
 │       │   └── role.entity.ts
 │       ├── session/
-│       │   └── session.entity.ts
+│       │   ├── session.entity.ts
+│       │   └── session.service.ts
 │       └── user/
 │           ├── seeds/
 │           │   └── system-admin-user.seed.ts
@@ -112,22 +132,64 @@ storage/
 
 ---
 
+## Authentication & Session Architecture
+
+### Core Components & Classes
+
+#### `AuthService` (`src/modules/system/auth/auth.service.ts`)
+- **Purpose**: التحقق من بيانات الدخول، وتوليد الـ JWT، وإنشاء سجل الجلسة الدائمة.
+- **Methods**:
+  - `login(dto: LoginDto, context: AuthContext): Promise<LoginResult>`
+    - Input: `LoginDto` (`phone`, `password`), `context` (`ipAddress`, `userAgent`).
+    - Action: يتحقق من وجود المستخدم وتطابق كلمة المرور، وفعالية الحساب، وينشئ `sessionId` UUID، ويوقع JWT، ويخزن الهاش في `system_session` عبر `SessionService`.
+    - Output: `{ user: SafeUser, token: string, expiresAt: Date, sessionId: string }`.
+    - Throws: `UnauthorizedError` عند خطأ رقم الهاتف أو كلمة المرور (حماية ضد User Enumeration)، `ForbiddenError` عند كون الحساب غير فعّال.
+
+#### `SessionService` (`src/modules/system/session/session.service.ts`)
+- **Purpose**: إدارة دورة حياة الجلسات في جدول `system_session`.
+- **Methods**:
+  - `createSession(params: CreateSessionParams): Promise<SessionEntity>`
+  - `validateSession(sessionId, userId, rawToken): Promise<SessionEntity | null>`: يتحقق من مطابقة الهاش، والفعالية `is_active: true`، وعدم الإلغاء `revoked_at IS NULL`، وعدم الانتهاء الزمني `expires_at > now`.
+  - `touchSession(sessionId, currentLastUsedAt): Promise<void>`: تحديث مؤجل (Throttled كل 5 دقائق على الأقل) لحقل `last_used_at` لمنع كثرة عمليات الكتابة على قاعدة البيانات.
+  - `revokeSession(sessionId, reason): Promise<void>`: إلغاء الجلسة بوضع `is_active: false` وتوثيق وقت الإلغاء والسبب (`LOGOUT`).
+
+#### `AuthController` (`src/modules/system/auth/auth.controller.ts`)
+- **Purpose**: معالجة طلبات HTTP للمصادقة وإدارة الكوكيز.
+- **Methods**:
+  - `login(req, res, next)`: يستدعي `authService.login`، ويضبط الكوكيز `erp_session` كـ `HttpOnly` و `SameSite: Lax` و `Secure: production`، ويعيد بيانات المستخدم الآمنة فقط.
+  - `me(req, res)`: يعيد بيانات `req.user` (`AuthPrincipal`).
+  - `logout(req, res, next)`: يستدعي `sessionService.revokeSession` لجلسة المستخدم الحالية، ويمسح الكوكيز `erp_session`، ويعيد رسالة نجاح.
+
+#### `AuthPrincipal` (`src/modules/system/auth/auth.types.ts`)
+- **Purpose**: تمثيل هوية المستخدم الموثق داخل سياق الطلب (`req.user`).
+- **Fields**: `id`, `fullName`, `phone`, `roleId`, `sessionId`.
+
+#### `PassportJwtStrategy` (`src/modules/system/auth/passport-jwt.strategy.ts`)
+- **Purpose**: استخراج التوكن من الكوكيز `erp_session` والتحقق من صلاحية التوكن وقاعدة البيانات.
+
+#### `Auth Middlewares` (`src/modules/system/auth/auth.middleware.ts`)
+- `requireApiAuth`: وسيط لمسارات الـ API المحمية، يمرر `UnauthorizedError` إلى معالج الأخطاء المركزي عند فشل المصادقة.
+- `requireWebAuth`: وسيط لصفحات الويب المحمية، يوجه الطلب غير المصادق إلى `/login` ويملأ `res.locals.user` ويعطل التخزين المؤقت `Cache-Control: no-store`.
+- `redirectIfAuthenticated`: يوجه المستخدم المسجل إلى `/` عند محاولة فتح `/login`.
+
+---
+
 ## Constants & Enums
 
 ### `SystemRole`
 - **File**: `src/modules/system/role/constants/system-role.enum.ts`
-- **Purpose**: المصدر الثابت لتعريف كودات أدوار النظام.
-- **Values**:
-  - `SYSTEM_ADMIN = 'SYSTEM_ADMIN'` (مدير النظام)
+- **Purpose**: المصدر الثابت لتعريف كودات أدوار النظام (`SYSTEM_ADMIN = 'SYSTEM_ADMIN'`).
 
 ### `SystemPermission`
 - **File**: `src/modules/system/permission/constants/system-permission.enum.ts`
-- **Purpose**: المصدر الثابت والوحيد (Single Source of Truth) لكودات صلاحيات النظام.
+- **Purpose**: المصدر الثابت لكودات صلاحيات النظام (`USER_VIEW`, `USER_CREATE`, `USER_UPDATE`, `USER_DELETE`).
+
+### `AuthConstants`
+- **File**: `src/modules/system/auth/auth.constants.ts`
 - **Values**:
-  - `USER_VIEW = 'system.user.view'` (عرض المستخدمين)
-  - `USER_CREATE = 'system.user.create'` (إنشاء مستخدم)
-  - `USER_UPDATE = 'system.user.update'` (تعديل بيانات المستخدم)
-  - `USER_DELETE = 'system.user.delete'` (حذف المستخدم)
+  - `AUTH_COOKIE_NAME = 'erp_session'`
+  - `AUTH_JWT_ISSUER = 'erp-inshaat'`
+  - `AUTH_JWT_AUDIENCE = 'erp-users'`
 
 ---
 
@@ -140,236 +202,94 @@ storage/
 4. **SYSTEM_ADMIN Permission Grants Seed** (`src/modules/system/permission-grant/seeds/system-admin-permission-grants.seed.ts`) $\rightarrow$ يمنح دور `SYSTEM_ADMIN` تلقائياً جميع الصلاحيات النشطة (`isActive: true`) مع `can_delegate: true` و `granted_by: adminUser.id`.
 5. **SYSTEM_ADMIN Access Rules Seed** (`src/modules/system/access-rule/seeds/system-admin-access-rules.seed.ts`) $\rightarrow$ ينشئ قواعد `ALLOW` / `ALL` لكل منحة صلاحية خاصة بمدير النظام.
 
-### Seed Idempotency & Security Rules
-- **Idempotency**: يعتمد التحقق على المفاتيح الطبيعية (`Role.code`, `Permission.name`, `User.phone`, `Grant(roleId + permissionId)`, `Rule(grantId + effect + scopeType)`).
-- **Password Security**:
-  - متغير البيئة `SEED_SYSTEM_ADMIN_PASSWORD` إلزامي فقط عند إنشاء مستخدم المدير لأول مرة.
-  - لا توجد أي كلمة مرور افتراضية (No fallback) في الكود المصدري.
-  - تشفير كلمة المرور بـ `bcrypt` قبل التخزين.
-  - حماية كلمات مرور المستخدمين المنشئين مسبقاً من إعادة التعيين أو التغيير عند تكرار تشغيل `npm run seed`.
-- **SYSTEM_ADMIN Auto-Grants**: عند إضافة أي صلاحيات جديدة نشطة في النظام وإعادة تشغيل الـ Seed، يحصل دور `SYSTEM_ADMIN` عليها تلقائياً.
-- **Decoupled Module Seeds**: كل Seeder يتبع للموديول المالك للكيان، ومشغل الـ Seed (`src/database/seeds/system-initial.seed.ts`) ينسق التنفيذ داخل Transaction موحدة.
-
 ---
 
 ## Database Structure
 
 ### `system_role`
 - **Entity**: `RoleEntity` (`src/modules/system/role/role.entity.ts`)
-- **Purpose**: تعريف الأدوار الأساسية للمستخدمين في النظام.
-- **Fields**:
-  - `id`: varchar(36) UUID, Primary Key
-  - `name`: varchar(100), NOT NULL
-  - `code`: varchar(50), NOT NULL, UNIQUE (`UQ_system_role_code`)
-  - `description`: text, NULL
-  - `is_active`: tinyint(1), NOT NULL, default: 1
-  - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
-  - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
-  - `deleted_at`: datetime(6), NULL (Soft Delete)
-- **Relations**:
-  - `users`: OneToMany $\rightarrow$ `UserEntity` (`eager: false`, `cascade: false`)
-  - `permissionGrants`: OneToMany $\rightarrow$ `PermissionGrantEntity` (`eager: false`, `cascade: false`)
-- **Constraints / Indexes**:
-  - `UQ_system_role_code`: UNIQUE(`code`)
-
----
+- **Fields**: `id` (UUID), `name`, `code` (UNIQUE), `description`, `is_active`, `created_at`, `updated_at`, `deleted_at`.
 
 ### `system_user`
 - **Entity**: `UserEntity` (`src/modules/system/user/user.entity.ts`)
-- **Purpose**: تمثيل حسابات المستخدمين في النظام مع ارتباط كل مستخدم بدور أساسي واحد.
-- **Fields**:
-  - `id`: varchar(36) UUID, Primary Key
-  - `full_name`: varchar(150), NOT NULL
-  - `phone`: varchar(20), NOT NULL, UNIQUE (`UQ_system_user_phone`)
-  - `password_hash`: varchar(255), NOT NULL
-  - `role_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `system_role.id`
-  - `is_active`: tinyint(1), NOT NULL, default: 1
-  - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
-  - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
-  - `deleted_at`: datetime(6), NULL (Soft Delete)
-- **Relations**:
-  - `role`: ManyToOne $\rightarrow$ `RoleEntity` (`role_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, `eager: false`)
-  - `permissionGrants`: OneToMany $\rightarrow$ `PermissionGrantEntity` (Direct grants to user, `eager: false`, `cascade: false`)
-  - `grantedPermissions`: OneToMany $\rightarrow$ `PermissionGrantEntity` (Grants issued by this user, `eager: false`, `cascade: false`)
-  - `sessions`: OneToMany $\rightarrow$ `SessionEntity` (Active and past user sessions, `eager: false`, `cascade: false`)
-- **Constraints / Indexes**:
-  - `UQ_system_user_phone`: UNIQUE(`phone`)
-  - `IDX_system_user_role_id`: INDEX(`role_id`)
-  - `FK_system_user_role_id`: FOREIGN KEY (`role_id`) REFERENCES `system_role`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
-
----
+- **Fields**: `id` (UUID), `full_name`, `phone` (UNIQUE), `password_hash`, `role_id` (FK), `is_active`, `created_at`, `updated_at`, `deleted_at`.
 
 ### `system_permission`
 - **Entity**: `PermissionEntity` (`src/modules/system/permission/permission.entity.ts`)
-- **Purpose**: تعريف الصلاحيات المتاحة في النظام بنمط `<application>.<resource>.<action>`.
-- **Fields**:
-  - `id`: varchar(36) UUID, Primary Key
-  - `name`: varchar(150), NOT NULL, UNIQUE (`UQ_system_permission_name`)
-  - `description`: text, NULL
-  - `is_active`: tinyint(1), NOT NULL, default: 1
-  - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
-  - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
-  - `deleted_at`: datetime(6), NULL (Soft Delete)
-- **Relations**:
-  - `permissionGrants`: OneToMany $\rightarrow$ `PermissionGrantEntity` (`eager: false`, `cascade: false`)
-- **Constraints / Indexes**:
-  - `UQ_system_permission_name`: UNIQUE(`name`)
-
----
+- **Fields**: `id` (UUID), `name` (UNIQUE), `description`, `is_active`, `created_at`, `updated_at`, `deleted_at`.
 
 ### `system_permission_grant`
 - **Entity**: `PermissionGrantEntity` (`src/modules/system/permission-grant/permission-grant.entity.ts`)
-- **Purpose**: تمثيل منح صلاحية محددة إما لمستخدم مباشرة أو لدور معين (Exactly one target).
-- **Fields**:
-  - `id`: varchar(36) UUID, Primary Key
-  - `permission_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `system_permission.id`
-  - `user_id`: varchar(36) UUID, NULL, FK $\rightarrow$ `system_user.id`
-  - `role_id`: varchar(36) UUID, NULL, FK $\rightarrow$ `system_role.id`
-  - `can_delegate`: tinyint(1), NOT NULL, default: 0
-  - `granted_by`: varchar(36) UUID, NULL, FK $\rightarrow$ `system_user.id`
-  - `granted_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
-  - `expires_at`: datetime(6), NULL
-  - `is_active`: tinyint(1), NOT NULL, default: 1
-  - `reason`: text, NULL
-  - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
-  - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
-- **Relations**:
-  - `permission`: ManyToOne $\rightarrow$ `PermissionEntity` (`permission_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`)
-  - `user`: ManyToOne $\rightarrow$ `UserEntity` (`user_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, nullable: true)
-  - `role`: ManyToOne $\rightarrow$ `RoleEntity` (`role_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, nullable: true)
-  - `grantedByUser`: ManyToOne $\rightarrow$ `UserEntity` (`granted_by`, `onDelete: SET NULL`, `onUpdate: CASCADE`, nullable: true)
-  - `accessRules`: OneToMany $\rightarrow$ `AccessRuleEntity` (`eager: false`, `cascade: false`)
-- **Constraints / Indexes**:
-  - `CHK_system_permission_grant_target`: CHECK `((user_id IS NOT NULL AND role_id IS NULL) OR (user_id IS NULL AND role_id IS NOT NULL))`
-  - `IDX_system_permission_grant_permission_id`: INDEX(`permission_id`)
-  - `IDX_system_permission_grant_user_id`: INDEX(`user_id`)
-  - `IDX_system_permission_grant_role_id`: INDEX(`role_id`)
-  - `IDX_system_permission_grant_granted_by`: INDEX(`granted_by`)
-  - `IDX_system_permission_grant_is_active`: INDEX(`is_active`)
-  - `IDX_system_permission_grant_expires_at`: INDEX(`expires_at`)
-
----
+- **Fields**: `id` (UUID), `permission_id` (FK), `user_id` (FK), `role_id` (FK), `can_delegate`, `granted_by` (FK), `granted_at`, `expires_at`, `is_active`, `reason`, `created_at`, `updated_at`.
 
 ### `system_access_rule`
 - **Entity**: `AccessRuleEntity` (`src/modules/system/access-rule/access-rule.entity.ts`)
-- **Purpose**: تحديد نطاق البيانات (Row/Scope Filter) المسموح أو الممنوع لمنحة صلاحية معينة.
-- **Fields**:
-  - `id`: varchar(36) UUID, Primary Key
-  - `permission_grant_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `system_permission_grant.id`
-  - `effect`: varchar(10), NOT NULL ('ALLOW' | 'DENY')
-  - `scope_type`: varchar(50), NOT NULL
-  - `scope`: json, NULL (Business metadata for scope filtering)
-  - `is_active`: tinyint(1), NOT NULL, default: 1
-  - `description`: text, NULL
-  - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
-  - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
-- **Relations**:
-  - `permissionGrant`: ManyToOne $\rightarrow$ `PermissionGrantEntity` (`permission_grant_id`, `onDelete: CASCADE`, `onUpdate: CASCADE`)
-- **Constraints / Indexes**:
-  - `CHK_system_access_rule_effect`: CHECK `(effect IN ('ALLOW', 'DENY'))`
-  - `IDX_system_access_rule_permission_grant_id`: INDEX(`permission_grant_id`)
-  - `IDX_system_access_rule_effect`: INDEX(`effect`)
-  - `IDX_system_access_rule_scope_type`: INDEX(`scope_type`)
-  - `IDX_system_access_rule_is_active`: INDEX(`is_active`)
-
----
+- **Fields**: `id` (UUID), `permission_grant_id` (FK), `effect` ('ALLOW' | 'DENY'), `scope_type`, `scope` (JSON), `is_active`, `description`, `created_at`, `updated_at`.
 
 ### `system_session`
 - **Entity**: `SessionEntity` (`src/modules/system/session/session.entity.ts`)
-- **Purpose**: تخزين جلسات تسجيل دخول المستخدمين بشكل دائم، مع دعم تعدد الأجهزة، انتهاء الجلسة، الإلغاء، وتتبع آخر استخدام.
+- **Purpose**: تخزين جلسات تسجيل دخول المستخدمين بشكل دائم مع التحقق من الهاش.
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
   - `user_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `system_user.id`
   - `token_hash`: varchar(64), NOT NULL, UNIQUE (`UQ_system_session_token_hash`)
-  - `device_type`: varchar(50), NULL (نوع الجهاز بصورة عامة للعرض)
-  - `device_name`: varchar(150), NULL (اسم وصفي للجهاز للعرض)
-  - `browser`: varchar(50), NULL (اسم المتصفح)
-  - `os`: varchar(50), NULL (نظام التشغيل)
-  - `user_agent`: text, NULL (نص User-Agent الخام القادم من الطلب)
-  - `ip_address`: varchar(45), NULL (عنوان IP للطلب يدعم IPv4 و IPv6)
-  - `last_used_at`: datetime(6), NOT NULL (آخر وقت تم فيه استخدام الجلسة بنجاح)
-  - `expires_at`: datetime(6), NOT NULL (وقت الانتهاء التلقائي للجلسة)
-  - `is_active`: tinyint(1), NOT NULL, default: 1 (حالة فعالية الجلسة)
-  - `revoked_at`: datetime(6), NULL (تاريخ ووقت إلغاء الجلسة يدوياً إن وُجد)
-  - `revoked_reason`: text, NULL (سبب إلغاء الجلسة مثل Logout أو Admin Revoke)
+  - `device_type`: varchar(50), NULL
+  - `device_name`: varchar(150), NULL
+  - `browser`: varchar(50), NULL
+  - `os`: varchar(50), NULL
+  - `user_agent`: text, NULL
+  - `ip_address`: varchar(45), NULL
+  - `last_used_at`: datetime(6), NOT NULL
+  - `expires_at`: datetime(6), NOT NULL
+  - `is_active`: tinyint(1), NOT NULL, default: 1
+  - `revoked_at`: datetime(6), NULL
+  - `revoked_reason`: text, NULL
   - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
   - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
-- **Relations**:
-  - `user`: ManyToOne $\rightarrow$ `UserEntity` (`user_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, `eager: false`, `cascade: false`)
-- **Constraints / Indexes**:
-  - `UQ_system_session_token_hash`: UNIQUE(`token_hash`)
-  - `IDX_system_session_user_id`: INDEX(`user_id`)
-  - `IDX_system_session_expires_at`: INDEX(`expires_at`)
-  - `IDX_system_session_is_active`: INDEX(`is_active`)
-  - `IDX_system_session_user_is_active`: INDEX(`user_id`, `is_active`)
 
 ---
 
 ## Architectural Rules
 
-1. **System Permission Architecture**:
-   - **Permission**: يحدد نوع العملية المسموحة فقط (`WHAT`) مثل `system.user.view`، ولا يحتوي على شروط أو نطاقات بيانات.
-   - **PermissionGrant**: يحدد الجهة الممنوحة (`WHO`) إما مستخدم محدد أو دور محدد (حصراً أحدهما عبر XOR constraint).
-   - **AccessRule**: يحدد نطاق البيانات المتاح للمنحة (`WHICH DATA`) مع تحديد الأثر (`ALLOW` أو `DENY`).
-   - قاعدة الوصول الفعال المستقبلي: `(ALLOW 1 OR ALLOW 2 ...) AND NOT (DENY 1 OR DENY 2 ...)` حيث `DENY` يتفوق دوماً وبغياب `ALLOW` يكون الوصول مرفوضاً افتراضياً.
-
-2. **User Role & Session Architecture**:
-   - لكل مستخدم دور أساسي واحد فقط (`system_user.role_id` $\rightarrow$ `system_role.id`).
-   - للمستخدم الواحد عدة جلسات نشطة في نفس الوقت (`system_user` $1 \rightarrow N$ `system_session`).
-   - **قاعدة الأمان للـ Token**: الـ JWT الأصلي لا يُخزن مطلقاً داخل قاعدة البيانات، بل يُخزن `token_hash` فقط (SHA-256 / HMAC-SHA256 بطول 64 محرفاً)، بينما يبقى الـ JWT الفعلي داخل HttpOnly Cookie.
-   - **دورة حياة الجلسة (Session Lifecycle)**: تعتمد صلاحية الجلسة المستقبلية على `(is_active = true AND revoked_at IS NULL AND expires_at > now AND token_hash matches)`. لا يتم استخدام Soft Delete للجلسات للاحتفاظ بسجل تدقيق كامل.
-   - بيانات الجهاز (`device_type`, `device_name`, `browser`, `os`, `user_agent`) هي بيانات وصفية للعرض وإدارة الأجهزة وليست مصدراً للثقة الأمنية.
-
-3. **Future Authentication Flow (Intended Design)**:
+1. **Authentication Flow (Implemented)**:
    - **عند تسجيل الدخول (Login)**:
-     `Login Request` $\rightarrow$ `Verify Credentials` $\rightarrow$ `Create system_session` $\rightarrow$ `Generate JWT` $\rightarrow$ `Hash JWT` $\rightarrow$ `Store token_hash in DB` $\rightarrow$ `Send JWT via HttpOnly Cookie`.
+     `Login Request (phone, password)` $\rightarrow$ `Validate DTO` $\rightarrow$ `Find User by Phone` $\rightarrow$ `Verify Password Hash (bcrypt)` $\rightarrow$ `Check User Active` $\rightarrow$ `Generate UUID sessionId` $\rightarrow$ `Sign JWT (sub, sid)` $\rightarrow$ `Hash JWT with SHA-256` $\rightarrow$ `Create system_session in DB` $\rightarrow$ `Set HttpOnly Cookie (erp_session)` $\rightarrow$ `Return Safe User JSON`.
    - **عند كل طلب لاحق (Subsequent Request)**:
-     `Request with Cookie` $\rightarrow$ `Extract JWT` $\rightarrow$ `Verify JWT Signature` $\rightarrow$ `Hash JWT` $\rightarrow$ `Find system_session by token_hash` $\rightarrow$ `Verify Session State (active, unrevoked, unexpired)` $\rightarrow$ `Attach RequestContext & Continue`.
+     `Request with HttpOnly Cookie` $\rightarrow$ `Extract JWT` $\rightarrow$ `Verify JWT Signature (Passport HS256)` $\rightarrow$ `Hash JWT (SHA-256)` $\rightarrow$ `Query system_session (sessionId, userId, tokenHash, isActive, unrevoked, unexpired)` $\rightarrow$ `Query system_user (isActive, un-deleted)` $\rightarrow$ `Throttled Touch last_used_at` $\rightarrow$ `Attach req.user (AuthPrincipal)` $\rightarrow$ `Continue / Render / Respond`.
+   - **عند تسجيل الخروج (Logout)**:
+     `POST /api/auth/logout` $\rightarrow$ `Revoke session (is_active: false, revoked_at: now, reason: LOGOUT)` $\rightarrow$ `Clear HttpOnly Cookie` $\rightarrow$ `Return Success`.
 
-4. **Data Integrity & Persistence**:
-   - جميع المفاتيح الأساسية UUID v4.
-   - جميع العلاقات `eager: false` و `cascade: false` (باستثناء حذف منحة الصلاحية الذي يحذف قواعد الوصول التابعة لها `CASCADE`).
-   - الحذف الناعم (Soft Delete) عبر `deleted_at` للكيانات الأساسية (`Role`, `User`, `Permission`).
-   - جميع تعديلات المخطط (Schema) تتم حصراً عبر الـ Migrations مع بقاء `synchronize: false`.
+2. **Security & Session Rules**:
+   - الـ JWT الخام لا يُخزن في قاعدة البيانات مطلقاً؛ جدول `system_session` يحتوي على `token_hash` فقط (SHA-256 بطول 64 محرفاً).
+   - الـ JWT لا يُرسل في استجابات الـ JSON ولا يُخزن في `localStorage` أو `sessionStorage`، بل يبقى حصراً داخل `HttpOnly` Cookie.
+   - كوكيز الجلسة `erp_session` مضبوطة بخصائص `HttpOnly: true`, `SameSite: Lax`, `Path: /`, `Secure: isProduction`.
+   - متغير البيئة `AUTH_JWT_SECRET` إلزامي ويجب أن يكون بطول 32 محرفاً على الأقل بدون أي قيمة افتراضية في الكود المصدري.
+   - مدة صلاحية الجلسة موحدة عبر `AUTH_SESSION_TTL_DAYS` لكل من انتهاء الـ JWT وانتهاء سجل قاعدة البيانات والكوكيز.
 
-5. **Seed Architecture & Rules**:
-   - كل Seeder ينتمي حصراً إلى الـ Module المالك للبيانات (`permission-grant` للـ Grants، و `access-rule` للـ Rules).
-   - الـ Seed Runner مسؤول فقط عن تهيئة الاتصال وتنظيم تسلسل التنفيذ داخل Transaction.
-   - الـ Seed Idempotent بالكامل ويعتمد على المفاتيح الطبيعية لمنع التكرار.
-   - منع وجود أي كلمات مرور افتراضية (Fallback) في الكود، وإلزامية متغير البيئة عند إنشاء مدير النظام لأول مرة.
-   - حماية كلمات مرور المستخدمين المنشئين مسبقاً من إعادة التعيين أثناء إعادة تشغيل الـ Seed.
-   - استخدام ثوابت الصلاحيات من `SystemPermission` enum وثوابت الأدوار من `SystemRole` enum بدلاً من تكرار النصوص.
-   - دور `SYSTEM_ADMIN` يحصل تلقائياً على جميع الصلاحيات النشطة عند تشغيل الـ Seed.
+3. **Known Follow-ups & Security Hardening**:
+   - تعزيز حماية CSRF على الـ State-changing APIs قبل التوسع في بناء موديولات الأعمال.
+   - تطبيق Rate Limiting على نقطة تسجيل الدخول لحماية الحسابات من هجمات التخمين (Brute-force).
+   - بناء محرك الصلاحيات وقواعد الوصول (Authorization Engine).
+   - بناء واجهات إدارة الأجهزة والجلسات وخيار تسجيل الخروج من كافة الأجهزة (Logout all devices).
 
-6. **Client Interaction & Views**:
-   - صفحات الواجهة تعتمد على العرض من طرف الخادم (Server-rendered EJS pages).
-   - التفاعل مع الواجهات البرمجية يتم باستخدام `native fetch` للعمليات التي تعتمد على JSON API.
-   - المشروع لا يعتمد ولا يستخدم مكتبة HTMX.
-
-7. **Graceful Shutdown**:
-   - عند استقبال إشارات الإيقاف (`SIGINT`, `SIGTERM`)، يتم انتظار إغلاق خادم HTTP (`server.close()`) وتوقف استقبال الطلبات، ثم محاولة إغلاق اتصال قاعدة البيانات (`AppDataSource.destroy()`) بشكل مستقل حتى في حال فشل إغلاق خادم HTTP.
-   - وجود حماية تمنع تنفيذ الإيقاف أكثر من مرة بالتوازي (`isShuttingDown` guard).
-   - ضبط `process.exitCode` (0 عند النجاح، 1 عند وجود خطأ في أي مرحلة) بدلاً من الخروج القسري المباشر.
-
-8. **Backend Validation Flow**:
-   - `Route` $\rightarrow$ `validateDto(Dto)` $\rightarrow$ `Controller` $\rightarrow$ `Service`.
-   - استخدام `class-validator` و `class-transformer`.
-   - عدم تكرار التحقق من الـ DTO داخل الـ Controllers.
-   - عدم بناء استجابات HTTP مباشرة داخل وسيط التحقق، وتمرير الأخطاء عبر المعالج المركزي.
-   - حظر ورفض أي حقول غير معرفة في الـ DTO تلقائياً.
-   - منع استخدام `any` في تعريفات التحقق والـ Types.
+4. **Graceful Shutdown**:
+   - إغلاق خادم HTTP أولاً، ثم إغلاق اتصال قاعدة البيانات TypeORM بشكل مستقل، وضبط `process.exitCode` المناسب.
 
 ---
 
 ## Implemented Infrastructure
 
-- System Modules Organization (`permission`, `permission-grant`, `access-rule`, `role`, `session`, `user`).
+- Full Authentication Module (`src/modules/system/auth/`).
+- Session Service (`src/modules/system/session/session.service.ts`).
+- Passport JWT Authentication Strategy & Cookie Extractor (`src/bootstrap/passport.bootstrap.ts`, `passport-jwt.strategy.ts`).
+- Route Protection Middlewares (`requireWebAuth`, `requireApiAuth`, `redirectIfAuthenticated`).
+- Standardized `UnauthorizedError` (HTTP 401).
+- Token Hashing Utility (`src/common/security/token-hash.util.ts`).
+- System Modules Organization (`auth`, `permission`, `permission-grant`, `access-rule`, `role`, `session`, `user`).
 - System Session Data Model & Migration (`SessionEntity`, `system_session`).
 - Initial System Seed Data & Runner (`npm run seed`).
 - Password Hashing & Comparison Utilities (`src/common/security/password.util.ts`).
-- Migrations:
-  - `1710000000000-CreateSystemCoreTables.ts` (executed).
-  - `1710000000001-CreateSystemSessionTable.ts` (executed).
+- Migrations (`1710000000000-CreateSystemCoreTables.ts`, `1710000000001-CreateSystemSessionTable.ts`).
 - Centralized DTO Validation Middleware (`src/common/middleware/validate-dto.middleware.ts`).
 - Standardized `ValidationError` representation (`src/common/errors/validation.error.ts`).
 - Centralized Error Handling (`AppError`, `errorHandlerMiddleware`).

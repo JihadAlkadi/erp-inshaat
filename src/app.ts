@@ -5,6 +5,9 @@ import { notFoundMiddleware } from './common/middleware/not-found.middleware.js'
 import { errorHandlerMiddleware } from './common/middleware/error-handler.middleware.js';
 
 import expressLayouts from 'express-ejs-layouts';
+import cookieParser from 'cookie-parser';
+import passport from 'passport';
+import { initializePassport } from './bootstrap/passport.bootstrap.js';
 
 const app: Express = express();
 
@@ -19,9 +22,14 @@ app.set('layout extractStyles', true);
 // Static files
 app.use(express.static(path.resolve(process.cwd(), 'src/public')));
 
-// Body parsers
+// Body & Cookie parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// Initialize Passport & JWT Strategy
+initializePassport();
+app.use(passport.initialize());
 
 // Application Routes
 app.use(appRouter);

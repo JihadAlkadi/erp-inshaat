@@ -12,6 +12,7 @@
   var passwordInput = document.getElementById('passwordInput');
   var passwordFeedback = document.getElementById('passwordFeedback');
   var togglePasswordBtn = document.getElementById('togglePassword');
+  var errorAlert = document.getElementById('errorAlert');
 
   // Custom validation messages updater
   function updatePhoneValidationMessage() {
@@ -38,12 +39,20 @@
       // Filter out non-numeric characters
       this.value = this.value.replace(/[^0-9]/g, '');
       updatePhoneValidationMessage();
+      if (errorAlert) {
+        errorAlert.classList.add('d-none');
+        errorAlert.textContent = '';
+      }
     });
   }
 
   if (passwordInput) {
     passwordInput.addEventListener('input', function() {
       updatePasswordValidationMessage();
+      if (errorAlert) {
+        errorAlert.classList.add('d-none');
+        errorAlert.textContent = '';
+      }
     });
   }
 
@@ -67,37 +76,92 @@
     });
   }
 
-  // Fetch all the forms we want to apply custom Bootstrap validation styles to
-  var bsValidationForms = document.querySelectorAll('.needs-validation');
+  // Form submission handler
+  var loginForm = document.getElementById('loginForm');
+  if (loginForm) {
+    var isSubmitting = false;
 
-  // Loop over them and prevent submission
-  Array.prototype.slice.call(bsValidationForms).forEach(function(form) {
-    form.addEventListener(
-      'submit',
-      function(event) {
-        updatePhoneValidationMessage();
-        updatePasswordValidationMessage();
+    loginForm.addEventListener('submit', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
 
-        if (!form.checkValidity()) {
-          event.preventDefault();
-          event.stopPropagation();
-        } else {
-          event.preventDefault();
-          
-          var submitBtn = form.querySelector('.btn-submit');
-          if (submitBtn) {
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin me-2"></i> جاري التحقق...';
-          }
+      updatePhoneValidationMessage();
+      updatePasswordValidationMessage();
 
-          setTimeout(function() {
+      if (!loginForm.checkValidity()) {
+        loginForm.classList.add('was-validated');
+        return;
+      }
+
+      if (isSubmitting) {
+        return;
+      }
+
+      isSubmitting = true;
+      var submitBtn = loginForm.querySelector('.btn-submit');
+      var originalBtnHtml = submitBtn ? submitBtn.innerHTML : 'تسجيل الدخول';
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin me-2"></i> جاري تسجيل الدخول...';
+      }
+
+      if (errorAlert) {
+        errorAlert.classList.add('d-none');
+        errorAlert.textContent = '';
+      }
+
+      var phone = phoneInput ? phoneInput.value.trim() : '';
+      var password = passwordInput ? passwordInput.value : '';
+
+      fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          phone: phone,
+          password: password,
+        }),
+      })
+        .then(function(res) {
+          return res.json().then(function(data) {
+            return {
+              ok: res.ok,
+              status: res.status,
+              body: data,
+            };
+          });
+        })
+        .then(function(result) {
+          if (result.ok && result.body && result.body.success) {
             window.location.href = '/';
-          }, 400);
-        }
+          } else {
+            var errorMsg = (result.body && result.body.message) || 'حدث خطأ أثناء تسجيل الدخول';
+            if (errorAlert) {
+              errorAlert.textContent = errorMsg;
+              errorAlert.classList.remove('d-none');
+            }
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.innerHTML = originalBtnHtml;
+            }
+            isSubmitting = false;
+          }
+        })
+        .catch(function(_err) {
+          if (errorAlert) {
+            errorAlert.textContent = 'تعذر الاتصال بالخادم، يرجى المحاولة لاحقاً';
+            errorAlert.classList.remove('d-none');
+          }
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalBtnHtml;
+          }
+          isSubmitting = false;
+        });
 
-        form.classList.add('was-validated');
-      },
-      false
-    );
-  });
+      loginForm.classList.add('was-validated');
+    });
+  }
 })();
