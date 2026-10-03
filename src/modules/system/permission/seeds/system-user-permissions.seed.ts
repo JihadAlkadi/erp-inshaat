@@ -48,6 +48,38 @@ const SYSTEM_USER_PERMISSIONS: PermissionDefinition[] = [
     name: SystemPermission.ROLE_PERMISSION_MANAGE,
     description: 'إدارة وإسناد صلاحيات الدور',
   },
+  {
+    name: SystemPermission.PRODUCTION_DEPARTMENT_VIEW,
+    description: 'عرض أقسام الإنتاج',
+  },
+  {
+    name: SystemPermission.PRODUCTION_DEPARTMENT_CREATE,
+    description: 'إنشاء قسم إنتاج',
+  },
+  {
+    name: SystemPermission.PRODUCTION_DEPARTMENT_UPDATE,
+    description: 'تعديل قسم إنتاج',
+  },
+  {
+    name: SystemPermission.PRODUCTION_DEPARTMENT_DELETE,
+    description: 'أرشفة قسم إنتاج',
+  },
+  {
+    name: SystemPermission.PRODUCTION_YARD_VIEW,
+    description: 'عرض ساحات الإنتاج',
+  },
+  {
+    name: SystemPermission.PRODUCTION_YARD_CREATE,
+    description: 'إنشاء ساحة إنتاج',
+  },
+  {
+    name: SystemPermission.PRODUCTION_YARD_UPDATE,
+    description: 'تعديل ساحة إنتاج',
+  },
+  {
+    name: SystemPermission.PRODUCTION_YARD_DELETE,
+    description: 'أرشفة ساحة إنتاج',
+  },
 ];
 
 export async function seedSystemUserPermissions(

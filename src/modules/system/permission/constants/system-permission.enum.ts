@@ -9,5 +9,13 @@ export enum SystemPermission {
   ROLE_UPDATE = 'system.role.update',
   ROLE_DELETE = 'system.role.delete',
   ROLE_PERMISSION_MANAGE = 'system.role.permission.manage',
+  PRODUCTION_DEPARTMENT_VIEW = 'production.department.view',
+  PRODUCTION_DEPARTMENT_CREATE = 'production.department.create',
+  PRODUCTION_DEPARTMENT_UPDATE = 'production.department.update',
+  PRODUCTION_DEPARTMENT_DELETE = 'production.department.delete',
+  PRODUCTION_YARD_VIEW = 'production.yard.view',
+  PRODUCTION_YARD_CREATE = 'production.yard.create',
+  PRODUCTION_YARD_UPDATE = 'production.yard.update',
+  PRODUCTION_YARD_DELETE = 'production.yard.delete',
 }
 

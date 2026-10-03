@@ -1,0 +1,132 @@
+<div class="row justify-content-center">
+  <div class="col-lg-8 col-xl-7">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div>
+        <h3 class="fw-bold mb-1" style="color: #1F2937;">
+          تعديل ساحة الإنتاج
+          <i class="fa-solid fa-pen-to-square text-muted fs-5 ms-2"></i>
+        </h3>
+        <p class="text-muted mb-0 small">
+          تحديث بيانات ساحة الإنتاج: <strong class="text-dark"><%= yard.name %></strong>
+        </p>
+      </div>
+      <a href="/production/yards" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2">
+        <i class="fa-solid fa-arrow-right"></i>
+        <span>العودة للساحات</span>
+      </a>
+    </div>
+
+    <div class="card border-0 shadow-sm" style="border-radius: 12px;">
+      <div class="card-body p-4">
+        <div id="formAlert" class="alert alert-danger d-none mb-4" role="alert"></div>
+
+        <form id="editYardForm" data-yard-id="<%= yard.id %>" class="needs-validation" novalidate>
+          <div class="mb-3">
+            <label for="departmentId" class="form-label fw-bold">قسم الإنتاج التابع له <span class="text-danger">*</span></label>
+            <select class="form-select" id="departmentId" name="departmentId" required>
+              <option value="">-- اختر قسم الإنتاج --</option>
+              <% if (departments && departments.length > 0) { %>
+                <% departments.forEach(function(d) { %>
+                  <option value="<%= d.id %>" <%= yard.departmentId === d.id ? 'selected' : '' %>>
+                    <%= d.name %> <%= d.code ? '(' + d.code + ')' : '' %>
+                  </option>
+                <% }); %>
+              <% } %>
+            </select>
+            <div class="invalid-feedback">يرجى اختيار قسم الإنتاج التابع له هذه الساحة.</div>
+          </div>
+
+          <div class="mb-3">
+            <label for="name" class="form-label fw-bold">اسم الساحة <span class="text-danger">*</span></label>
+            <input
+              type="text"
+              class="form-control"
+              id="name"
+              name="name"
+              value="<%= yard.name %>"
+              minlength="2"
+              maxlength="100"
+              required
+            >
+            <div class="invalid-feedback">يرجى إدخال اسم الساحة (بين 2 و 100 حرف).</div>
+          </div>
+
+          <div class="mb-3">
+            <label for="code" class="form-label fw-bold text-muted">الرمز التقني</label>
+            <div class="input-group">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-lock"></i></span>
+              <input
+                type="text"
+                class="form-control bg-light text-muted border"
+                id="code"
+                value="<%= yard.code %>"
+                readonly
+                disabled
+              >
+            </div>
+            <div class="form-text small text-muted">الرمز التقني ثابت ولا يمكن تعديله بعد الإنشاء.</div>
+          </div>
+
+          <div class="mb-3">
+            <label for="capacity" class="form-label fw-bold">السعة الاستيعابية (عدد الغرف) <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-cubes-stacked"></i></span>
+              <input
+                type="number"
+                class="form-control"
+                id="capacity"
+                name="capacity"
+                value="<%= yard.capacity %>"
+                min="1"
+                step="1"
+                required
+              >
+            </div>
+            <div class="form-text small text-muted">
+              أقصى عدد للغرف التي يمكن أن تستوعبها الساحة في نفس الوقت (1 غرفة = 1 وحدة سعة).
+            </div>
+            <div class="invalid-feedback">يرجى إدخال سعة استيعابية صحيحة (1 على الأقل).</div>
+          </div>
+
+          <div class="mb-3">
+            <label for="description" class="form-label fw-bold">الوصف</label>
+            <textarea
+              class="form-control"
+              id="description"
+              name="description"
+              rows="3"
+              placeholder="وصف مختصر لموقع أو تجهيزات الساحة..."
+              maxlength="500"
+            ><%= yard.description || '' %></textarea>
+            <div class="form-text small text-muted">الحد الأقصى 500 حرف.</div>
+          </div>
+
+          <div class="mb-4">
+            <div class="form-check form-switch pt-1">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                id="isActive"
+                name="isActive"
+                <%= yard.isActive ? 'checked' : '' %>
+              >
+              <label class="form-check-label fw-bold" for="isActive">الساحة نشطة ومفعّلة</label>
+            </div>
+            <div class="form-text small text-muted">لا يمكن تفعيل الساحة إذا كان قسم الإنتاج التابع له معطلاً.</div>
+          </div>
+
+          <div class="d-flex justify-content-end gap-2 pt-3 border-top">
+            <a href="/production/yards" class="btn btn-light px-4">إلغاء</a>
+            <button type="submit" id="submitBtn" class="btn btn-primary d-inline-flex align-items-center gap-2 px-4" style="background-color: #0984E3; border-color: #0984E3;">
+              <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+              <i class="fa-solid fa-floppy-disk"></i>
+              <span id="btnText">حفظ التعديلات</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/production-yards.js"></script>

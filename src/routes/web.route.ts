@@ -5,6 +5,8 @@ import { SystemPermission } from '../modules/system/permission/constants/system-
 import { validateUuidParam } from '../common/middleware/validate-uuid-param.middleware.js';
 import { userWebController } from '../modules/system/user/user.web.controller.js';
 import { roleWebController } from '../modules/system/role/role.web.controller.js';
+import { productionDepartmentWebController } from '../modules/production/department/production-department.web.controller.js';
+import { productionYardWebController } from '../modules/production/yard/production-yard.web.controller.js';
 
 const webRouter: Router = Router();
 
@@ -108,5 +110,73 @@ webRouter.get(
   roleWebController.renderRolePermissionsForm
 );
 
+// ==========================================
+// PRODUCTION APPLICATION WEB ROUTES
+// ==========================================
+
+// GET /production - Production Dashboard (Protected)
+webRouter.get('/production', requireWebAuth, (_req: Request, res: Response) => {
+  res.render('dashboard/production/index', {
+    layout: 'dashboard/production/layout',
+    title: 'لوحة التحكم | إدارة الإنتاج',
+    appName: 'إدارة الإنتاج',
+    themeColor: '#0984E3',
+    hasSidebar: true,
+    sidebarPath: 'production/partials/sidebar',
+    activeTab: 'dashboard',
+  });
+});
+
+// GET /production/departments - Production Departments List (Protected)
+webRouter.get(
+  '/production/departments',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_VIEW),
+  productionDepartmentWebController.renderDepartmentsList
+);
+
+// GET /production/departments/create - Create Production Department Page (Protected)
+webRouter.get(
+  '/production/departments/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_CREATE),
+  productionDepartmentWebController.renderCreateDepartmentForm
+);
+
+// GET /production/departments/:id/edit - Edit Production Department Page (Protected)
+webRouter.get(
+  '/production/departments/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_UPDATE),
+  validateUuidParam('id'),
+  productionDepartmentWebController.renderEditDepartmentForm
+);
+
+// GET /production/yards - Production Yards List (Protected)
+webRouter.get(
+  '/production/yards',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_YARD_VIEW),
+  productionYardWebController.renderYardsList
+);
+
+// GET /production/yards/create - Create Production Yard Page (Protected)
+webRouter.get(
+  '/production/yards/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_YARD_CREATE),
+  productionYardWebController.renderCreateYardForm
+);
+
+// GET /production/yards/:id/edit - Edit Production Yard Page (Protected)
+webRouter.get(
+  '/production/yards/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_YARD_UPDATE),
+  validateUuidParam('id'),
+  productionYardWebController.renderEditYardForm
+);
+
 export { webRouter };
+
 

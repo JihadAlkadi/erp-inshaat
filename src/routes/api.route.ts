@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { authRouter } from '../modules/system/auth/auth.route.js';
 import { userApiRouter } from '../modules/system/user/user.route.js';
 import { roleApiRouter } from '../modules/system/role/role.route.js';
+import { departmentApiRouter } from '../modules/production/department/production-department.route.js';
+import { yardApiRouter } from '../modules/production/yard/production-yard.route.js';
 
 const apiRouter: Router = Router();
 
@@ -22,5 +24,12 @@ apiRouter.use('/system/users', userApiRouter);
 // System Roles Routes (/api/system/roles)
 apiRouter.use('/system/roles', roleApiRouter);
 
+// Production Departments Routes (/api/production/departments)
+apiRouter.use('/production/departments', departmentApiRouter);
+
+// Production Yards Routes (/api/production/yards)
+apiRouter.use('/production/yards', yardApiRouter);
+
 export { apiRouter };
+
 
