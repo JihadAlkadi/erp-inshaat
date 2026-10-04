@@ -117,7 +117,7 @@
     - `listAvailableEngineerUsers`: استرجاع المستخدمين المتاحين للإسناد كمهندسين (نشطون، غير محذوفين، ليسوا رؤساء أقسام، لا يملكون إسناد مهندس نشط في أي قسم، وبلا ساحات مسندة متعارضة، مع إمكانية إعادة استخدام السجل التاريخي المعطل النظيف).
     - `setDepartmentHead`: تعيين أو تغيير رئيس القسم داخل Transaction بقفل تشاؤمي بترتيب (`Department -> User`).
     - `addEngineerToDepartment`: إسناد مهندس وتحديد ساحاته داخل Transaction بقفل تشاؤمي بترتيب (`Department -> User -> Assignment -> Yards sorted`).
-    - `updateEngineerYards`: تعديل الساحات المسندة للمهندس داخل Transaction بقفل تشاؤمي بترتيب (`Department -> User -> Assignment -> Yards sorted`).
+    - `updateEngineerYards`: تعديل الساحات المسندة للمهندس داخل Transaction بقفل تشاؤمي بترتيب (Department -> User -> Assignment -> فحص الارتباطات الحالية والانغلاق الآمن Fail-Closed -> اتحاد الساحات الحالية والمطلوبة -> أقفال الساحات التسلسلية الفردية بترتيب المعرفات تصاعدياً -> إعادة التحقق -> استبدال ذري للارتباطات).
     - `removeEngineerFromDepartment`: إزالة المهندس وتعطيل السجل وحذف ارتباطات الساحات داخل Transaction بقفل تشاؤمي بترتيب (`Department -> User -> Assignment`).
   - **بروتوكول قفل سجلات فريق الإنتاج الموحد (Production Team Lock Order Protocol)**:
     - كافة عمليات فريق الإنتاج تلتزم بترتيب القفل التشاؤمي الموحد دون أي انعكاس:
@@ -275,7 +275,7 @@
   - استبعاد المنح غير النشطة أو المنتهية زمنياً (`expires_at <= now`) والمنح التابعة لصلاحيات معطلة أو محذوفة ناعماً.
   - تطبيق قاعدة التفوق للرفض (`DENY ALL` wins) والانغلاق التلقائي (Default Deny / Fail Closed).
   - عدم وجود أي تجاوز برمجي صلب لدور مدير النظام (`No SYSTEM_ADMIN hardcoded bypass`)؛ بل يخضع لتقييم المنح والقواعد المسندة إليه في الـ Seed كأي مستخدم آخر.
-  - النطاقات المكانية والفرعية غير الشاملة (مثل `DEPARTMENT`, `YARD`) تنغلق بأمان (Fail closed) في هذه المرحلة ولا تمنح وصولاً شاملاً (`ALL`).
+  - خدمة الصلاحيات الشاملة `AuthorizationService` تقيّم الوصول الشامل (Global Access) حصراً عبر قواعد `ALL` الصالحة (`scopeType = 'ALL'` و `scope = null`)، ولا تمنح النطاقات المكانية والفرعية غير الشاملة (مثل `PRODUCTION_DEPARTMENT`, `PRODUCTION_YARD`) وصولاً شاملاً؛ بينما تتولى محركات السياسات الخاصة بالموارد مثل `ProductionAccessPolicyService` تفسير النطاقات الديناميكية والمحددة وتطبيقها على مستوى الصفوف.
   - قرار معماري: لا يتم فحص `role.isActive` داخل `AuthorizationService` لأن بروتوكول قفل الأدوار وقواعد الأعمال تمنع تماماً إنشاء أو بقاء أي مستخدم غير محذوف مرتبط بدور معطل أو محذوف ناعماً (In-use Role Protection & Concurrency Invariant).
 - **وحدة المصادقة (Auth Module)** (`src/modules/system/auth/`) تشمل مسارات التحقق وتسجيل الدخول `POST /api/auth/login`، واسترجاع هوية المستخدم الموثق `GET /api/auth/me`، وتسجيل الخروج وإلغاء الجلسة `POST /api/auth/logout`.
 - **خدمة الجلسات (SessionService)** (`src/modules/system/session/session.service.ts`) مسؤولة عن إنشاء الجلسات، والتحقق من صحتها وتطابق الهاش، والتحديث المؤجل لآخر استخدام (Throttled `touchSession`)، وإلغاء الجلسات الفردية (`revokeSession`)، وإلغاء كافة جلسات المستخدم عند التعطيل أو الأرشفة (`revokeUserSessions`).

@@ -488,7 +488,13 @@ export class ProductionTeamService {
 
   /**
    * Updates an engineer's assigned yards inside the same department atomically.
-   * Lock Order: Department -> User -> Assignment -> Yards (sorted).
+   * Lock Order: Department -> User -> Assignment -> Yards (sorted sequentially).
+   * Invariants enforced:
+   * - Inspects existing mappings before replacement (Fail closed on any stale/archived/inactive/wrong-department/missing yard mapping).
+   * - No stale mapping is silently deleted or repaired.
+   * - Lock set is union of existing and requested yard IDs, sorted ascending.
+   * - Yards are locked individually and sequentially in ascending UUID order without `IN (...)`.
+   * - Locked yard states are revalidated before atomic replacement.
    */
   async updateEngineerYards(
     departmentId: string,
@@ -552,42 +558,89 @@ export class ProductionTeamService {
         );
       }
 
-      // 4. Validate & Lock Target Yards (Protocol step 4: Sorted IDs)
-      const sortedYardIds = [...new Set(dto.yardIds)].sort();
-      if (sortedYardIds.length === 0) {
+      // 4. Inspect Existing Mappings (Protocol step 4: Fail closed on stale/uneditable mappings)
+      const existingMappings = await yardEngRepo.find({
+        where: { departmentEngineerId: assignment.id },
+        select: { id: true, yardId: true, departmentEngineerId: true },
+      });
+
+      const existingYardIds: string[] = [];
+      for (const mapping of existingMappings) {
+        if (!mapping.yardId) {
+          throw new BusinessRuleError(
+            'لدى المهندس ارتباطات ساحات حالية غير قابلة للتعديل. يجب معالجة الحالة المتعارضة قبل تغيير إسناد الساحات.',
+            'PRODUCTION_ENGINEER_HAS_UNEDITABLE_YARD_ASSIGNMENTS'
+          );
+        }
+        existingYardIds.push(mapping.yardId);
+      }
+
+      // 5. Validate & Normalize Requested Yard IDs
+      const sortedRequestedYardIds = [...new Set(dto.yardIds)].sort();
+      if (sortedRequestedYardIds.length === 0) {
         throw new BusinessRuleError(
           'يجب تحديد ساحة واحدة على الأقل للمهندس',
           'PRODUCTION_ENGINEER_YARDS_REQUIRED'
         );
       }
 
-      const yards = await yardRepo
-        .createQueryBuilder('yard')
-        .setLock('pessimistic_write')
-        .where('yard.id IN (:...yardIds)', { yardIds: sortedYardIds })
-        .andWhere('yard.deletedAt IS NULL')
-        .andWhere('yard.isActive = :isActive', { isActive: true })
-        .getMany();
+      // 6. Build Lock Set: Union(existingYardIds, requestedYardIds) sorted ascending
+      const lockYardIds = [...new Set([...existingYardIds, ...sortedRequestedYardIds])].sort();
 
-      if (yards.length !== sortedYardIds.length) {
-        throw new BusinessRuleError(
-          'إحدى الساحات المحددة غير موجودة أو معطلة',
-          'PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH'
-        );
+      // 7. Lock Yards Individually & Sequentially in ascending UUID order (Protocol step 5)
+      const lockedYardMap = new Map<string, ProductionYardEntity>();
+      for (const yardId of lockYardIds) {
+        const lockedYard = await yardRepo
+          .createQueryBuilder('yard')
+          .withDeleted()
+          .setLock('pessimistic_write')
+          .where('yard.id = :yardId', { yardId })
+          .getOne();
+
+        if (lockedYard) {
+          lockedYardMap.set(lockedYard.id, lockedYard);
+        }
       }
 
-      const invalidDeptYard = yards.find((y) => y.departmentId !== departmentId);
-      if (invalidDeptYard) {
-        throw new BusinessRuleError(
-          'الساحة المحددة تتبع لقسم إنتاج آخر ولا يمكن إسنادها لمهندس هذا القسم',
-          'PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH'
-        );
+      // 8. Revalidate Existing Yards (Must exist, active, non-deleted, and belong to current department)
+      for (const existingYardId of existingYardIds) {
+        const lockedYard = lockedYardMap.get(existingYardId);
+        if (
+          !lockedYard ||
+          lockedYard.deletedAt !== null ||
+          !lockedYard.isActive ||
+          lockedYard.departmentId !== department.id
+        ) {
+          throw new BusinessRuleError(
+            'لدى المهندس ارتباطات ساحات حالية غير قابلة للتعديل. يجب معالجة الحالة المتعارضة قبل تغيير إسناد الساحات.',
+            'PRODUCTION_ENGINEER_HAS_UNEDITABLE_YARD_ASSIGNMENTS'
+          );
+        }
       }
 
-      // 5. Replace mappings atomically
+      // 9. Revalidate Requested Yards (Must exist, active, non-deleted, and belong to current department)
+      const targetYards: ProductionYardEntity[] = [];
+      for (const requestedYardId of sortedRequestedYardIds) {
+        const lockedYard = lockedYardMap.get(requestedYardId);
+        if (!lockedYard || lockedYard.deletedAt !== null || !lockedYard.isActive) {
+          throw new BusinessRuleError(
+            'إحدى الساحات المحددة غير موجودة أو معطلة',
+            'PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH'
+          );
+        }
+        if (lockedYard.departmentId !== department.id) {
+          throw new BusinessRuleError(
+            'الساحة المحددة تتبع لقسم إنتاج آخر ولا يمكن إسنادها لمهندس هذا القسم',
+            'PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH'
+          );
+        }
+        targetYards.push(lockedYard);
+      }
+
+      // 10. Replace mappings atomically
       await yardEngRepo.delete({ departmentEngineerId: assignment.id });
 
-      const mappings = yards.map((yard) =>
+      const mappings = targetYards.map((yard) =>
         yardEngRepo.create({
           departmentEngineerId: assignment.id,
           yardId: yard.id,
@@ -608,7 +661,7 @@ export class ProductionTeamService {
         userIsActive: Boolean(resolvedUser?.isActive && !resolvedUser?.deletedAt),
         userIsArchived: Boolean(resolvedUser?.deletedAt),
         assignmentIsActive: assignment.isActive,
-        yards: yards.map((y) => ({
+        yards: targetYards.map((y) => ({
           id: y.id,
           name: y.name,
           code: y.code,
