@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { ProductionTeamService, productionTeamService } from './production-team.service.js';
-import { authorizationService } from '../../system/authorization/authorization.service.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
-import { AuthPrincipal } from '../../system/auth/auth.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
+import { getProductionAccessPolicy } from '../authorization/production-authorization-context.js';
+import { canAccessDepartment } from '../authorization/production-access-query.helper.js';
 
 export class ProductionTeamWebController {
   private readonly teamService: ProductionTeamService;
@@ -15,13 +15,14 @@ export class ProductionTeamWebController {
   renderDepartmentTeam = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { departmentId } = req.params;
-      const teamData = await this.teamService.getDepartmentTeam(departmentId as string);
+      const viewPolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_VIEW);
+      const managePolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE);
+
+      const teamData = await this.teamService.getDepartmentTeam(departmentId as string, viewPolicy);
       const activeUsers = await this.teamService.listAvailableDepartmentHeadUsers();
       const departmentYards = await this.teamService.listDepartmentActiveYards(departmentId as string);
 
-      const currentUser = req.user as AuthPrincipal;
-      const userPermissions = await authorizationService.getEffectivePermissions(currentUser);
-      const canManage = userPermissions.includes(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE);
+      const canManage = canAccessDepartment(managePolicy, departmentId as string);
 
       res.render('dashboard/production/team/index', {
         layout: 'dashboard/production/layout',
@@ -46,7 +47,13 @@ export class ProductionTeamWebController {
   renderAddEngineerForm = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { departmentId } = req.params;
-      const teamData = await this.teamService.getDepartmentTeam(departmentId as string);
+      const managePolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE);
+      if (!canAccessDepartment(managePolicy, departmentId as string)) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      const viewPolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_VIEW);
+      const teamData = await this.teamService.getDepartmentTeam(departmentId as string, viewPolicy);
       const activeUsers = await this.teamService.listAvailableEngineerUsers();
       const departmentYards = await this.teamService.listDepartmentActiveYards(departmentId as string);
 
@@ -70,7 +77,13 @@ export class ProductionTeamWebController {
   renderEditEngineerYardsForm = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { departmentId, assignmentId } = req.params;
-      const teamData = await this.teamService.getDepartmentTeam(departmentId as string);
+      const managePolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE);
+      if (!canAccessDepartment(managePolicy, departmentId as string)) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      const viewPolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_VIEW);
+      const teamData = await this.teamService.getDepartmentTeam(departmentId as string, viewPolicy);
       const engineer = teamData.engineers.find((e) => e.assignmentId === assignmentId);
 
       if (!engineer) {

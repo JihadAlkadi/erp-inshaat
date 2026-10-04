@@ -2,9 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import { ProductionYardService, productionYardService } from './production-yard.service.js';
 import { ProductionDepartmentService, productionDepartmentService } from '../department/production-department.service.js';
 import { ListProductionYardsQueryDto } from './dto/list-production-yards-query.dto.js';
-import { authorizationService } from '../../system/authorization/authorization.service.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { AuthPrincipal } from '../../system/auth/auth.types.js';
+import { getProductionAccessPolicy } from '../authorization/production-authorization-context.js';
+import { canAccessYard, canAccessDepartment } from '../authorization/production-access-query.helper.js';
 
 export class ProductionYardWebController {
   private readonly yardService: ProductionYardService;
@@ -27,16 +28,37 @@ export class ProductionYardWebController {
         ? req.query.departmentId.trim()
         : undefined;
 
+      const currentUser = req.user as AuthPrincipal;
+      const viewPolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_YARD_VIEW
+      );
+      const createPolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_YARD_CREATE
+      );
+      const updatePolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_YARD_UPDATE
+      );
+      const deletePolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_YARD_DELETE
+      );
+
       const queryDto: ListProductionYardsQueryDto = { page, limit, search, departmentId };
-      const yardsData = await this.yardService.listYards(queryDto);
+      const yardsData = await this.yardService.listYards(queryDto, viewPolicy);
       const activeDepartments = await this.departmentService.listActiveDepartments();
 
-      const currentUser = req.user as AuthPrincipal;
-      const userPermissions = await authorizationService.getEffectivePermissions(currentUser);
-
-      const canCreate = userPermissions.includes(SystemPermission.PRODUCTION_YARD_CREATE);
-      const canUpdate = userPermissions.includes(SystemPermission.PRODUCTION_YARD_UPDATE);
-      const canDelete = userPermissions.includes(SystemPermission.PRODUCTION_YARD_DELETE);
+      const yards = yardsData.items.map((yard) => ({
+        ...yard,
+        canUpdate: canAccessYard(updatePolicy, yard),
+        canDelete: canAccessYard(deletePolicy, yard),
+      }));
 
       res.render('dashboard/production/yards/index', {
         layout: 'dashboard/production/layout',
@@ -46,7 +68,7 @@ export class ProductionYardWebController {
         hasSidebar: true,
         sidebarPath: 'production/partials/sidebar',
         activeTab: 'yards',
-        yards: yardsData.items,
+        yards,
         departments: activeDepartments,
         selectedDepartmentId: departmentId || '',
         pagination: {
@@ -56,18 +78,29 @@ export class ProductionYardWebController {
           totalPages: yardsData.totalPages,
         },
         search: search || '',
-        canCreate,
-        canUpdate,
-        canDelete,
+        canCreate: createPolicy.hasAnyAccess,
+        canUpdate: updatePolicy.hasAnyAccess,
+        canDelete: deletePolicy.hasAnyAccess,
       });
     } catch (error) {
       next(error);
     }
   };
 
-  renderCreateYardForm = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  renderCreateYardForm = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const activeDepartments = await this.departmentService.listActiveDepartments();
+      const currentUser = req.user as AuthPrincipal;
+      const createPolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_YARD_CREATE
+      );
+
+      // Filter departments dropdown to only those permitted by policy for yard creation
+      const allActiveDepartments = await this.departmentService.listActiveDepartments();
+      const permittedDepartments = allActiveDepartments.filter((d) =>
+        canAccessDepartment(createPolicy, d.id)
+      );
 
       res.render('dashboard/production/yards/create', {
         layout: 'dashboard/production/layout',
@@ -77,7 +110,7 @@ export class ProductionYardWebController {
         hasSidebar: true,
         sidebarPath: 'production/partials/sidebar',
         activeTab: 'yards',
-        departments: activeDepartments,
+        departments: permittedDepartments,
       });
     } catch (error) {
       next(error);
@@ -87,7 +120,13 @@ export class ProductionYardWebController {
   renderEditYardForm = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { id } = req.params;
-      const yard = await this.yardService.getYardById(id as string);
+      const currentUser = req.user as AuthPrincipal;
+      const updatePolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_YARD_UPDATE
+      );
+      const yard = await this.yardService.getYardById(id as string, updatePolicy);
       const activeDepartments = await this.departmentService.listActiveDepartments();
 
       // Ensure the current department is in the list even if it was deactivated

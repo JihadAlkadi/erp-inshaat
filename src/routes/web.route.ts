@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireWebAuth, redirectIfAuthenticated } from '../modules/system/auth/auth.middleware.js';
 import { requirePermission } from '../modules/system/authorization/authorization.middleware.js';
+import { requireProductionAccess } from '../modules/production/authorization/production-authorization.middleware.js';
 import { SystemPermission } from '../modules/system/permission/constants/system-permission.enum.js';
 import { validateUuidParam } from '../common/middleware/validate-uuid-param.middleware.js';
 import { userWebController } from '../modules/system/user/user.web.controller.js';
@@ -132,7 +133,7 @@ webRouter.get('/production', requireWebAuth, (_req: Request, res: Response) => {
 webRouter.get(
   '/production/departments',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_DEPARTMENT_VIEW),
   productionDepartmentWebController.renderDepartmentsList
 );
 
@@ -148,7 +149,7 @@ webRouter.get(
 webRouter.get(
   '/production/departments/:id/edit',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_UPDATE),
+  requireProductionAccess(SystemPermission.PRODUCTION_DEPARTMENT_UPDATE),
   validateUuidParam('id'),
   productionDepartmentWebController.renderEditDepartmentForm
 );
@@ -157,7 +158,7 @@ webRouter.get(
 webRouter.get(
   '/production/departments/:departmentId/team',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_VIEW),
   validateUuidParam('departmentId'),
   productionTeamWebController.renderDepartmentTeam
 );
@@ -166,7 +167,7 @@ webRouter.get(
 webRouter.get(
   '/production/departments/:departmentId/team/engineers/create',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
   validateUuidParam('departmentId'),
   productionTeamWebController.renderAddEngineerForm
 );
@@ -175,7 +176,7 @@ webRouter.get(
 webRouter.get(
   '/production/departments/:departmentId/team/engineers/:assignmentId/edit',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
   validateUuidParam('departmentId'),
   validateUuidParam('assignmentId'),
   productionTeamWebController.renderEditEngineerYardsForm
@@ -185,7 +186,7 @@ webRouter.get(
 webRouter.get(
   '/production/yards',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_YARD_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_YARD_VIEW),
   productionYardWebController.renderYardsList
 );
 
@@ -193,7 +194,7 @@ webRouter.get(
 webRouter.get(
   '/production/yards/create',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_YARD_CREATE),
+  requireProductionAccess(SystemPermission.PRODUCTION_YARD_CREATE),
   productionYardWebController.renderCreateYardForm
 );
 
@@ -201,7 +202,7 @@ webRouter.get(
 webRouter.get(
   '/production/yards/:id/edit',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_YARD_UPDATE),
+  requireProductionAccess(SystemPermission.PRODUCTION_YARD_UPDATE),
   validateUuidParam('id'),
   productionYardWebController.renderEditYardForm
 );

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { productionYardController } from './production-yard.controller.js';
 import { requireApiAuth } from '../../system/auth/auth.middleware.js';
-import { requirePermission } from '../../system/authorization/authorization.middleware.js';
+import { requireProductionAccess } from '../authorization/production-authorization.middleware.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { validateDto } from '../../../common/middleware/validate-dto.middleware.js';
 import { validateQueryDto } from '../../../common/middleware/validate-query-dto.middleware.js';
@@ -18,7 +18,7 @@ yardApiRouter.use(requireApiAuth);
 // GET /api/production/yards - List yards
 yardApiRouter.get(
   '/',
-  requirePermission(SystemPermission.PRODUCTION_YARD_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_YARD_VIEW),
   validateQueryDto(ListProductionYardsQueryDto),
   productionYardController.listYards
 );
@@ -26,15 +26,15 @@ yardApiRouter.get(
 // GET /api/production/yards/:id - Get yard details
 yardApiRouter.get(
   '/:id',
-  requirePermission(SystemPermission.PRODUCTION_YARD_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_YARD_VIEW),
   validateUuidParam('id'),
   productionYardController.getYardById
 );
 
-// POST /api/production/yards - Create new yard
+// POST /api/production/yards - Create new yard (Scoped to target department)
 yardApiRouter.post(
   '/',
-  requirePermission(SystemPermission.PRODUCTION_YARD_CREATE),
+  requireProductionAccess(SystemPermission.PRODUCTION_YARD_CREATE),
   validateDto(CreateProductionYardDto),
   productionYardController.createYard
 );
@@ -42,7 +42,7 @@ yardApiRouter.post(
 // PATCH /api/production/yards/:id - Update yard
 yardApiRouter.patch(
   '/:id',
-  requirePermission(SystemPermission.PRODUCTION_YARD_UPDATE),
+  requireProductionAccess(SystemPermission.PRODUCTION_YARD_UPDATE),
   validateUuidParam('id'),
   validateYardUpdatePayload,
   validateDto(UpdateProductionYardDto),
@@ -52,7 +52,7 @@ yardApiRouter.patch(
 // DELETE /api/production/yards/:id - Soft delete yard
 yardApiRouter.delete(
   '/:id',
-  requirePermission(SystemPermission.PRODUCTION_YARD_DELETE),
+  requireProductionAccess(SystemPermission.PRODUCTION_YARD_DELETE),
   validateUuidParam('id'),
   productionYardController.deleteYard
 );

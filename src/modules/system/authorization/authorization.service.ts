@@ -2,6 +2,7 @@ import { Repository } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { AccessRuleEntity } from '../access-rule/access-rule.entity.js';
 import { AuthPrincipal } from '../auth/auth.types.js';
+import { ApplicableAccessRule } from './authorization.types.js';
 
 export class AuthorizationService {
   private readonly accessRuleRepository: Repository<AccessRuleEntity>;
@@ -65,6 +66,53 @@ export class AuthorizationService {
   }
 
   /**
+   * Retrieves all applicable active access rules for the given permission and principal (both role grants and direct grants).
+   * Does NOT filter by scopeType, enabling higher layers to evaluate ALL, scoped, or dynamic access rules.
+   */
+  async getApplicableAccessRules(
+    principal: AuthPrincipal,
+    permissionName: string
+  ): Promise<ApplicableAccessRule[]> {
+    if (!principal || !principal.id || !principal.roleId || !permissionName) {
+      return [];
+    }
+
+    const now = new Date();
+
+    const rules = await this.accessRuleRepository
+      .createQueryBuilder('rule')
+      .innerJoin('rule.permissionGrant', 'grant')
+      .innerJoin('grant.permission', 'permission')
+      .where('permission.name = :permissionName', { permissionName })
+      .andWhere('permission.isActive = :isActive', { isActive: true })
+      .andWhere('permission.deletedAt IS NULL')
+      .andWhere('grant.isActive = :isActive', { isActive: true })
+      .andWhere('(grant.expiresAt IS NULL OR grant.expiresAt > :now)', { now })
+      .andWhere('(grant.userId = :userId OR grant.roleId = :roleId)', {
+        userId: principal.id,
+        roleId: principal.roleId,
+      })
+      .andWhere('rule.isActive = :isActive', { isActive: true })
+      .select([
+        'rule.id',
+        'rule.permissionGrantId',
+        'rule.effect',
+        'rule.scopeType',
+        'rule.scope',
+      ])
+      .getMany();
+
+    return rules.map((r) => ({
+      ruleId: r.id,
+      grantId: r.permissionGrantId,
+      effect: r.effect,
+      scopeType: r.scopeType,
+      scope: r.scope,
+      permissionName,
+    }));
+  }
+
+  /**
    * Retrieves all permission names for which the authenticated principal possesses effective global access (ALLOW ALL).
    * Single aggregated query without N+1.
    */
@@ -120,3 +168,4 @@ export class AuthorizationService {
 }
 
 export const authorizationService = new AuthorizationService();
+

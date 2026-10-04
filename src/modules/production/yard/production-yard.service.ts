@@ -12,8 +12,15 @@ import {
 } from './production-yard.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
+import { ForbiddenError } from '../../../common/errors/forbidden.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 import { ProductionYardEngineerEntity } from '../team/entities/production-yard-engineer.entity.js';
+import { ResolvedProductionAccessPolicy } from '../authorization/production-access-policy.types.js';
+import {
+  applyYardAccessScope,
+  canAccessDepartment,
+  canAccessYard,
+} from '../authorization/production-access-query.helper.js';
 
 export class ProductionYardService {
   private readonly yardRepository: Repository<ProductionYardEntity>;
@@ -27,7 +34,10 @@ export class ProductionYardService {
     this.departmentService = deptService;
   }
 
-  async listYards(query: ListProductionYardsQueryDto): Promise<PaginatedProductionYardsResult> {
+  async listYards(
+    query: ListProductionYardsQueryDto,
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<PaginatedProductionYardsResult> {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 10));
     const skip = (page - 1) * limit;
@@ -36,6 +46,9 @@ export class ProductionYardService {
       .createQueryBuilder('yard')
       .leftJoinAndSelect('yard.department', 'department')
       .where('yard.deletedAt IS NULL');
+
+    // Apply row-level access scope before pagination & counting
+    applyYardAccessScope(qb, policy, 'yard');
 
     if (query.departmentId) {
       qb.andWhere('yard.departmentId = :deptId', { deptId: query.departmentId });
@@ -74,11 +87,19 @@ export class ProductionYardService {
     };
   }
 
-  async getYardById(id: string): Promise<SafeProductionYardOutput> {
-    const yard = await this.yardRepository.findOne({
-      where: { id, deletedAt: IsNull() },
-      relations: { department: true },
-    });
+  async getYardById(
+    id: string,
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<SafeProductionYardOutput> {
+    const qb = this.yardRepository
+      .createQueryBuilder('yard')
+      .leftJoinAndSelect('yard.department', 'department')
+      .where('yard.id = :id', { id })
+      .andWhere('yard.deletedAt IS NULL');
+
+    applyYardAccessScope(qb, policy, 'yard');
+
+    const yard = await qb.getOne();
 
     if (!yard) {
       throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
@@ -98,19 +119,30 @@ export class ProductionYardService {
     };
   }
 
-  async createYard(dto: CreateProductionYardDto): Promise<SafeProductionYardOutput> {
+  async createYard(
+    dto: CreateProductionYardDto,
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<SafeProductionYardOutput> {
+    // 1. Authorize creation in target department scope
+    if (!canAccessDepartment(policy, dto.departmentId)) {
+      throw new ForbiddenError(
+        'ليس لديك صلاحية لإنشاء ساحة في هذا القسم',
+        'ACCESS_SCOPE_DENIED'
+      );
+    }
+
     const normalizedCode = dto.code.trim().toUpperCase();
 
     return await AppDataSource.transaction(async (manager) => {
       const yardRepo = manager.getRepository(ProductionYardEntity);
 
-      // 1. Lock Target Department to ensure active and serialize concurrent department deactivation
+      // 2. Lock Target Department to ensure active and serialize concurrent department deactivation
       const department = await this.departmentService.findAssignableDepartmentForUpdate(
         dto.departmentId,
         manager
       );
 
-      // 2. Check code uniqueness including soft-deleted yards
+      // 3. Check code uniqueness including soft-deleted yards
       const existingCode = await yardRepo
         .createQueryBuilder('yard')
         .withDeleted()
@@ -166,7 +198,11 @@ export class ProductionYardService {
     });
   }
 
-  async updateYard(id: string, dto: UpdateProductionYardDto): Promise<SafeProductionYardOutput> {
+  async updateYard(
+    id: string,
+    dto: UpdateProductionYardDto,
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<SafeProductionYardOutput> {
     // 1. Pre-read Yard outside transaction to discover involved department IDs
     const unverifiedYard = await this.yardRepository.findOne({
       where: { id, deletedAt: IsNull() },
@@ -229,6 +265,14 @@ export class ProductionYardService {
           );
         }
         targetDepartment = foundTarget;
+
+        // Verify user has department-level access to the target department
+        if (!canAccessDepartment(policy, targetDepartment.id)) {
+          throw new ForbiddenError(
+            'ليس لديك صلاحية لنقل الساحة إلى قسم الإنتاج المستهدف',
+            'ACCESS_SCOPE_DENIED'
+          );
+        }
       }
 
       // 3. Lock Target Yard (Protocol step 2)
@@ -251,7 +295,12 @@ export class ProductionYardService {
         );
       }
 
-      // 4. Invariant: If moving to another department, verify no assigned engineers
+      // 4. Enforce row-level authorization on current yard
+      if (!canAccessYard(policy, { id: yard.id, departmentId: yard.departmentId })) {
+        throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+      }
+
+      // 5. Invariant: If moving to another department, verify no assigned engineers
       if (isMovingDepartment) {
         const assignedCount = await yardEngRepo.count({
           where: { yardId: yard.id },
@@ -267,7 +316,7 @@ export class ProductionYardService {
         yard.departmentId = targetDepartment.id;
       }
 
-      // 5. Invariant: If reactivating yard (isActive: true), ensure active parent department
+      // 6. Invariant: If reactivating yard (isActive: true), ensure active parent department
       const willBeActive = dto.isActive !== undefined ? dto.isActive : yard.isActive;
       if (willBeActive && !yard.isActive) {
         const parentDept = targetDepartment;
@@ -312,7 +361,10 @@ export class ProductionYardService {
     });
   }
 
-  async softDeleteYard(id: string): Promise<void> {
+  async softDeleteYard(
+    id: string,
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<void> {
     // 1. Pre-read Yard outside transaction to discover departmentId
     const unverifiedYard = await this.yardRepository.findOne({
       where: { id, deletedAt: IsNull() },
@@ -360,7 +412,12 @@ export class ProductionYardService {
         );
       }
 
-      // 4. Invariant: Cannot delete yard if assigned to engineers
+      // 4. Enforce row-level authorization on locked yard
+      if (!canAccessYard(policy, { id: yard.id, departmentId: yard.departmentId })) {
+        throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+      }
+
+      // 5. Invariant: Cannot delete yard if assigned to engineers
       const assignedCount = await yardEngRepo.count({
         where: { yardId: yard.id },
       });

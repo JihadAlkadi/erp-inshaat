@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { productionTeamController } from './production-team.controller.js';
 import { requireApiAuth } from '../../system/auth/auth.middleware.js';
-import { requirePermission } from '../../system/authorization/authorization.middleware.js';
+import { requireProductionAccess } from '../authorization/production-authorization.middleware.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { validateDto } from '../../../common/middleware/validate-dto.middleware.js';
 import { validateUuidParam } from '../../../common/middleware/validate-uuid-param.middleware.js';
@@ -16,7 +16,7 @@ productionTeamApiRouter.use(requireApiAuth);
 // GET /api/production/departments/:departmentId/team - Get department team
 productionTeamApiRouter.get(
   '/:departmentId/team',
-  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_VIEW),
   validateUuidParam('departmentId'),
   productionTeamController.getDepartmentTeam
 );
@@ -24,7 +24,7 @@ productionTeamApiRouter.get(
 // PUT /api/production/departments/:departmentId/team/head - Set department head
 productionTeamApiRouter.put(
   '/:departmentId/team/head',
-  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
   validateUuidParam('departmentId'),
   validateDto(SetProductionDepartmentHeadDto),
   productionTeamController.setDepartmentHead
@@ -33,7 +33,7 @@ productionTeamApiRouter.put(
 // POST /api/production/departments/:departmentId/team/engineers - Add engineer assignment
 productionTeamApiRouter.post(
   '/:departmentId/team/engineers',
-  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
   validateUuidParam('departmentId'),
   validateDto(CreateProductionEngineerAssignmentDto),
   productionTeamController.addEngineer
@@ -42,7 +42,7 @@ productionTeamApiRouter.post(
 // PUT /api/production/departments/:departmentId/team/engineers/:assignmentId - Update engineer yards
 productionTeamApiRouter.put(
   '/:departmentId/team/engineers/:assignmentId',
-  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
   validateUuidParam('departmentId'),
   validateUuidParam('assignmentId'),
   validateDto(UpdateProductionEngineerYardsDto),
@@ -52,7 +52,7 @@ productionTeamApiRouter.put(
 // DELETE /api/production/departments/:departmentId/team/engineers/:assignmentId - Remove engineer assignment
 productionTeamApiRouter.delete(
   '/:departmentId/team/engineers/:assignmentId',
-  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
   validateUuidParam('departmentId'),
   validateUuidParam('assignmentId'),
   productionTeamController.removeEngineer
