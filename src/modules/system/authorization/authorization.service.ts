@@ -3,6 +3,7 @@ import { AppDataSource } from '../../../database/data-source.js';
 import { AccessRuleEntity } from '../access-rule/access-rule.entity.js';
 import { AuthPrincipal } from '../auth/auth.types.js';
 import { ApplicableAccessRule } from './authorization.types.js';
+import { isValidAllScope } from './access-rule-scope.util.js';
 
 export class AuthorizationService {
   private readonly accessRuleRepository: Repository<AccessRuleEntity>;
@@ -20,9 +21,10 @@ export class AuthorizationService {
    * 2. Ignores inactive or expired grants.
    * 3. Ignores inactive or soft-deleted permissions.
    * 4. Ignores inactive access rules.
-   * 5. Only evaluates scopeType = 'ALL' (non-ALL scopes fail closed in this phase).
-   * 6. DENY ALL wins over any ALLOW ALL across all sources.
-   * 7. Fail closed: requires at least one active ALLOW ALL rule and zero active DENY ALL rules.
+   * 5. Only evaluates scopeType = 'ALL'.
+   * 6. Valid ALL requires scope === null. Malformed ALLOW ALL (scope !== null) grants nothing.
+   * 7. Valid and Malformed DENY ALL fail closed and deny access across all sources.
+   * 8. Fail closed: requires at least one valid ALLOW ALL rule and zero active DENY ALL rules.
    */
   async hasPermission(
     principal: AuthPrincipal,
@@ -49,20 +51,26 @@ export class AuthorizationService {
       })
       .andWhere('rule.isActive = :isActive', { isActive: true })
       .andWhere('rule.scopeType = :scopeType', { scopeType: 'ALL' })
-      .select(['rule.id', 'rule.effect'])
+      .select(['rule.id', 'rule.effect', 'rule.scope'])
       .getMany();
 
     if (rules.length === 0) {
       return false;
     }
 
-    const hasDenyAll = rules.some((rule) => rule.effect === 'DENY');
-    if (hasDenyAll) {
-      return false;
+    let hasValidAllowAll = false;
+    let hasEffectiveDenyAll = false;
+
+    for (const rule of rules) {
+      const isValidAll = isValidAllScope(rule.scope);
+      if (rule.effect === 'DENY') {
+        hasEffectiveDenyAll = true;
+      } else if (rule.effect === 'ALLOW' && isValidAll) {
+        hasValidAllowAll = true;
+      }
     }
 
-    const hasAllowAll = rules.some((rule) => rule.effect === 'ALLOW');
-    return hasAllowAll;
+    return hasValidAllowAll && !hasEffectiveDenyAll;
   }
 
   /**
@@ -139,7 +147,8 @@ export class AuthorizationService {
       .andWhere('rule.scopeType = :scopeType', { scopeType: 'ALL' })
       .select('permission.name', 'permissionName')
       .addSelect('rule.effect', 'effect')
-      .getRawMany<{ permissionName: string; effect: string }>();
+      .addSelect('rule.scope', 'scope')
+      .getRawMany<{ permissionName: string; effect: string; scope: unknown }>();
 
     const permissionMap = new Map<string, { hasAllow: boolean; hasDeny: boolean }>();
 
@@ -149,9 +158,10 @@ export class AuthorizationService {
         permissionMap.set(perm, { hasAllow: false, hasDeny: false });
       }
       const entry = permissionMap.get(perm)!;
+      const isValidAll = isValidAllScope(row.scope);
       if (row.effect === 'DENY') {
         entry.hasDeny = true;
-      } else if (row.effect === 'ALLOW') {
+      } else if (row.effect === 'ALLOW' && isValidAll) {
         entry.hasAllow = true;
       }
     }

@@ -1,4 +1,5 @@
 import { ApplicableAccessRule } from '../../system/authorization/authorization.types.js';
+import { isValidAllScope } from '../../system/authorization/access-rule-scope.util.js';
 import {
   ProductionAccessScopeType,
 } from './production-access-scope.constants.js';
@@ -16,7 +17,7 @@ export class ProductionAccessPolicyService {
    * into a deterministic ResolvedProductionAccessPolicy.
    * Rules:
    * 1. DENY ALL wins over everything.
-   * 2. Unknown ALLOW scopes grant nothing.
+   * 2. Valid ALL requires scope === null. Malformed ALLOW ALL grants nothing.
    * 3. Unknown / Malformed DENY scopes fail closed (denyAll = true).
    * 4. Inconsistent responsibility state fails closed for dynamic ALLOW rules.
    * 5. Specific ID rules do not depend on operational responsibility consistency.
@@ -36,10 +37,11 @@ export class ProductionAccessPolicyService {
 
     for (const rule of rules) {
       if (rule.scopeType === 'ALL') {
-        if (rule.effect === 'ALLOW') {
-          allowAll = true;
-        } else if (rule.effect === 'DENY') {
+        const isValidAll = isValidAllScope(rule.scope);
+        if (rule.effect === 'DENY') {
           denyAll = true;
+        } else if (rule.effect === 'ALLOW' && isValidAll) {
+          allowAll = true;
         }
         continue;
       }

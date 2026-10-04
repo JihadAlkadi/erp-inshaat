@@ -22,7 +22,7 @@
       - `production.assignment.view/manage`: `ALL`, `CURRENT_PRODUCTION_DEPARTMENT`, `SPECIFIC_PRODUCTION_DEPARTMENTS`.
   - **قوالب الإدارة المهيكلة ومطابقة التخزين (Typed Presets & Persistence Mapping)**:
     - العميل لا يرسل JSON خام أو SQL؛ بل يرسل القالب `preset` وقائمة المعرفات `targetIds`.
-    - `ALL`: `scopeType = 'ALL'`, `scope = null`.
+    - `ALL`: `scopeType = 'ALL'`, `scope = null`. (عقد النطاق الشامل الصارم: صالحة حصراً عندما يكون `scope = null`؛ أي قاعدة `ALLOW ALL` تالفة `scope !== null` تُهمل ولا تمنح شيئاً، وأي قاعدة `DENY ALL` تالفة تفشل مغلقة وتمنع الوصول تماماً).
     - `CURRENT_PRODUCTION_DEPARTMENT`: `scopeType = 'PRODUCTION_DEPARTMENT'`, `scope = { source: 'CURRENT_PRODUCTION_RESPONSIBILITY' }`.
     - `CURRENT_PRODUCTION_YARDS`: `scopeType = 'PRODUCTION_YARD'`, `scope = { source: 'CURRENT_PRODUCTION_RESPONSIBILITY' }`.
     - `SPECIFIC_PRODUCTION_DEPARTMENTS`: `scopeType = 'PRODUCTION_DEPARTMENT'`, `scope = { source: 'SPECIFIC_IDS', departmentIds: [...] }`.
@@ -190,18 +190,18 @@
     - `src/public/js/production-yards.js`: إدارة الساحات عبر Native Fetch وتأكيد الحذف والتعطيل ومعالجة الأخطاء.
 - **إدارة الصلاحيات وقواعد الوصول للمستخدمين (Direct User Permission & Access Rule Administration)** (`src/modules/system/user/`, `src/modules/system/authorization/access-administration/`):
   - خدمة الصلاحيات المباشرة للمستخدم `UserPermissionService` (`src/modules/system/user/user-permission.service.ts`):
-    - `getUserPermissionsOverview`: استرجاع قائمة الصلاحيات النشطة مع تفصيل الصلاحيات الموروثة من الدور، والصلاحيات المباشرة للمستخدم، والنتيجة الفعالة لكل صلاحية دون N+1.
-    - `setUserDirectPermissionState`: تفعيل أو تعطيل منحة الصلاحية المباشرة للمستخدم داخل TypeORM Transaction مع قفل تشاؤمي (`pessimistic_write`) على سجل المستخدم، وحظر إدارة الصلاحيات الذاتية (`CANNOT_MANAGE_OWN_PERMISSIONS`).
+    - `getUserPermissionsState`: استرجاع قائمة الصلاحيات النشطة مع تفصيل الصلاحيات الموروثة من الدور، والصلاحيات المباشرة للمستخدم، والنتيجة الفعالة لكل صلاحية دون N+1.
+    - `setUserPermissionState`: تفعيل أو تعطيل منحة الصلاحية المباشرة للمستخدم داخل TypeORM Transaction مع قفل تشاؤمي (`pessimistic_write`) على سجل المستخدم، وحظر إدارة الصلاحيات الذاتية (`CANNOT_MANAGE_OWN_PERMISSIONS`).
     - `getUserPermissionAccessRules`: استرجاع قواعد الوصول المباشرة للمستخدم مع قواعد الدور الأساسي وقدرات الصلاحية المسموحة (`capabilities`).
-    - `createUserDirectAccessRule`: إنشاء قاعدة وصول مباشرة جديدة للمستخدم مع التحقق من مطابقة القالب لقدرات الصلاحية، والتحقق من صحة المعرفات المحددة في قاعدة البيانات، وفرض قفل تشاؤمي على سجل المستخدم.
-    - `updateUserDirectAccessRule`: تعديل قاعدة وصول مباشرة للمستخدم مع التحقق من التبعية وقفل سجل المستخدم تشاؤمياً.
-    - `disableUserDirectAccessRule`: تعطيل قاعدة وصول مباشرة للمستخدم (`isActive = false`) دون حذف السجل.
+    - `createUserAccessRule`: إنشاء قاعدة وصول مباشرة جديدة للمستخدم مع التحقق من مطابقة القالب لقدرات الصلاحية، والتحقق من صحة المعرفات المحددة في قاعدة البيانات، وفرض قفل تشاؤمي على سجل المستخدم.
+    - `updateUserAccessRule`: تعديل قاعدة وصول مباشرة للمستخدم مع التحقق من التبعية وقفل سجل المستخدم تشاؤمياً.
+    - `deleteUserAccessRule`: تعطيل قاعدة وصول مباشرة للمستخدم (`isActive = false`) دون حذف السجل.
   - واجهات برمجة التطبيقات (API Endpoints):
     - `GET /api/system/users/:id/permissions` (محمي بـ `USER_VIEW` و UUID).
-    - `PUT /api/system/users/:id/permissions/:permissionId/state` (محمي بـ `USER_PERMISSION_MANAGE`, UUIDs, و `TogglePermissionStateDto`).
+    - `PUT /api/system/users/:id/permissions/:permissionId/state` (محمي بـ `USER_PERMISSION_MANAGE`, UUIDs, و `SetPermissionStateDto`).
     - `GET /api/system/users/:id/permissions/:permissionId/access-rules` (محمي بـ `USER_VIEW` و UUIDs).
-    - `POST /api/system/users/:id/permissions/:permissionId/access-rules` (محمي بـ `USER_PERMISSION_MANAGE`, UUIDs, و `CreateAccessRuleAdminDto`).
-    - `PUT /api/system/users/:id/permissions/:permissionId/access-rules/:ruleId` (محمي بـ `USER_PERMISSION_MANAGE`, UUIDs, و `UpdateAccessRuleAdminDto`).
+    - `POST /api/system/users/:id/permissions/:permissionId/access-rules` (محمي بـ `USER_PERMISSION_MANAGE`, UUIDs, و `CreateAccessRuleDto`).
+    - `PUT /api/system/users/:id/permissions/:permissionId/access-rules/:ruleId` (محمي بـ `USER_PERMISSION_MANAGE`, UUIDs, و `UpdateAccessRuleDto`).
     - `DELETE /api/system/users/:id/permissions/:permissionId/access-rules/:ruleId` (محمي بـ `USER_PERMISSION_MANAGE` و UUIDs).
     - `GET /api/system/users/lookups/departments` (محمي بـ `USER_PERMISSION_MANAGE` و `ListProductionDepartmentAdminLookupQueryDto`).
     - `GET /api/system/users/lookups/yards` (محمي بـ `USER_PERMISSION_MANAGE` و `ListProductionYardAdminLookupQueryDto`).
@@ -209,7 +209,7 @@
     - `GET /system/users/:id/permissions`: واجهة إدارة الصلاحيات وقواعد الوصول المباشرة للمستخدم مجمعة حسب التطبيق والمورد، مع فصل واضح بين الصلاحيات الموروثة من الدور والصلاحيات المباشرة والنتيجة الفعالة، ودرج جانبي تفاعلي متجاوب (Offcanvas) لإدارة القواعد، وقفل الواجهة كـ Read-only للمستخدم على حسابه الشخصي.
   - تفاعل العميل (Client Scripts):
     - `src/public/js/user-permissions.js`: استخدام Native Fetch لتبديل حالة التفعيل وإدارة قواعد الوصول والبحث عن الأقسام والساحات، وحماية تامة ضد DOM XSS بالاعتماد الحصري على Native DOM APIs و `textContent`.
-- **إدارة الأدوار وصلاحيات وقواعد الوصول (Role Management & Access Rule Administration)** (`src/modules/system/role/`, `src/modules/system/permission/`, `src/modules/system/authorization/access-administration/`):
+- **إدارة الأدوار وصلاحيات وقواعد الوصول (Role Management & Permission/Access Rule Administration)** (`src/modules/system/role/`, `src/modules/system/permission/`, `src/modules/system/authorization/access-administration/`):
   - خدمة الأدوار المركزية `RoleService` (`src/modules/system/role/role.service.ts`):
     - `listRoles`: استرجاع قائمة الأدوار مع Pagination، والبحث بالاسم أو الرمز التقني، وحساب عدد المستخدمين غير المحذوفين المرتبطين بكل دور (`userCount`) بكفاءة دون N+1، واستبعاد السجلات المحذوفة ناعماً.
     - `getRoleById`: استرجاع تفاصيل دور محدد مع حساب `userCount` ورمي `NotFoundError` إذا لم يوجد أو كان محذوفاً ناعماً.
@@ -220,12 +220,12 @@
     - `countAssignedUsers`: حساب عدد المستخدمين الفعليين غير المحذوفين ناعماً (`deletedAt IS NULL`) المرتبطين بالدور.
     - `findActiveRoleById` و `listActiveRoles`: دوال مساعدة لاسترجاع الأدوار النشطة الصالحة للاختيار عند إنشاء أو تعديل المستخدمين.
   - خدمة صلاحيات الأدوار `RolePermissionService` (`src/modules/system/role/role-permission.service.ts`):
-    - `getRolePermissionsOverview`: استرجاع قائمة جميع الصلاحيات النشطة في النظام مع حالة المنحة وقواعد الوصول وملخص الوصول للدور دون N+1.
+    - `getRolePermissionsState`: استرجاع قائمة جميع الصلاحيات النشطة في النظام مع حالة المنحة وقواعد الوصول وملخص الوصول للدور دون N+1.
     - `setRolePermissionState`: تفعيل أو تعطيل منحة الصلاحية للدور داخل TypeORM Transaction مع قفل تشاؤمي (`pessimistic_write`) على سجل الدور، وحظر تعديل صلاحيات دور مدير النظام (`SYSTEM_ADMIN_PERMISSIONS_MANAGED_BY_SYSTEM`).
     - `getRolePermissionAccessRules`: استرجاع قواعد الوصول المسجلة للدور مع القدرات المسموحة للصلاحية (`capabilities`).
     - `createRoleAccessRule`: إنشاء قاعدة وصول جديدة للدور مع التحقق من مطابقة القالب للقدرات المسموحة والتحقق من المعرفات المحددة وقفل سجل الدور تشاؤمياً.
     - `updateRoleAccessRule`: تعديل قاعدة وصول للدور مع التحقق من التبعية وقفل سجل الدور تشاؤمياً.
-    - `disableRoleAccessRule`: تعطيل قاعدة وصول للدور (`isActive = false`) دون حذف السجل.
+    - `deleteRoleAccessRule`: تعطيل قاعدة وصول للدور (`isActive = false`) دون حذف السجل.
   - خدمة استعلام الصلاحيات `PermissionService` (`src/modules/system/permission/permission.service.ts`):
     - `listActivePermissions`: استرجاع الصلاحيات النشطة غير المحذوفة ناعماً كمرجع للنظام دون بناء CRUD للصلاحيات.
   - واجهات برمجة التطبيقات (API Endpoints) المحمية بالصلاحيات:
@@ -235,10 +235,10 @@
     - `PATCH /api/system/roles/:id` (محمي بـ `ROLE_UPDATE` و UUID و `UpdateRoleDto` مع وسيط `validateRoleUpdatePayload` لرفض الـ PATCH الفارغ).
     - `DELETE /api/system/roles/:id` (محمي بـ `ROLE_DELETE` و UUID).
     - `GET /api/system/roles/:id/permissions` (محمي بـ `ROLE_VIEW` و UUID).
-    - `PUT /api/system/roles/:id/permissions/:permissionId/state` (محمي بـ `ROLE_PERMISSION_MANAGE`, UUIDs, و `TogglePermissionStateDto`).
+    - `PUT /api/system/roles/:id/permissions/:permissionId/state` (محمي بـ `ROLE_PERMISSION_MANAGE`, UUIDs, و `SetPermissionStateDto`).
     - `GET /api/system/roles/:id/permissions/:permissionId/access-rules` (محمي بـ `ROLE_VIEW` و UUIDs).
-    - `POST /api/system/roles/:id/permissions/:permissionId/access-rules` (محمي بـ `ROLE_PERMISSION_MANAGE`, UUIDs, و `CreateAccessRuleAdminDto`).
-    - `PUT /api/system/roles/:id/permissions/:permissionId/access-rules/:ruleId` (محمي بـ `ROLE_PERMISSION_MANAGE`, UUIDs, و `UpdateAccessRuleAdminDto`).
+    - `POST /api/system/roles/:id/permissions/:permissionId/access-rules` (محمي بـ `ROLE_PERMISSION_MANAGE`, UUIDs, و `CreateAccessRuleDto`).
+    - `PUT /api/system/roles/:id/permissions/:permissionId/access-rules/:ruleId` (محمي بـ `ROLE_PERMISSION_MANAGE`, UUIDs, و `UpdateAccessRuleDto`).
     - `DELETE /api/system/roles/:id/permissions/:permissionId/access-rules/:ruleId` (محمي بـ `ROLE_PERMISSION_MANAGE` و UUIDs).
     - `GET /api/system/roles/lookups/departments` (محمي بـ `ROLE_PERMISSION_MANAGE` و `ListProductionDepartmentAdminLookupQueryDto`).
     - `GET /api/system/roles/lookups/yards` (محمي بـ `ROLE_PERMISSION_MANAGE` و `ListProductionYardAdminLookupQueryDto`).
@@ -246,7 +246,7 @@
     - `GET /system/roles`: جدول الأدوار مع عدد المستخدمين المرتبطين، شارات الحالة، والإجراءات المشروطة بحالة الاستخدام وصلاحيات المستخدم.
     - `GET /system/roles/create`: نموذج إنشاء دور جديد مع كلاسات `needs-validation` والتحقق بالمتصفح وبواسطة Bootstrap وتوجيهات الرمز التقني.
     - `GET /system/roles/:id/edit`: نموذج تعديل الدور مع كلاسات `needs-validation` وقفل الرمز التقني كـ Read-only وقفل التعطيل لـ `SYSTEM_ADMIN`.
-    - `GET /system/roles/:id/permissions`: واجهة إدارة الصلاحيات وقواعد الوصول للأدوار مجمعة حسب التطبيق والمورد، مع شارات الحالة وقفل التعديل لدور مدير النظام، ودرج جانبي تفاعلي متجاوب لإدارة قواعد الوصول.
+    - `GET /system/roles/:id/permissions`: واجهة إدارة الصلاحيات وقواعد الوصول للأدوار مجمعة حسب التطبيق والمورد، مع شارات الحالة وقفل التعديل لدور مدير النظام، ودرج جانبي تفاعلي متجاوب لإدارة قواعد الوصول (تدير تفعيل المنح، وتعدد القواعد ALLOW/DENY، والنطاق الشامل ALL، والنطاقات التشغيلية والمحددة للأقسام والساحات وفق Registry).
   - تفاعل العميل (Client Scripts):
     - `src/public/js/roles.js`: استخدام Native Fetch لعمليات الإنشاء، التعديل، تبديل الحالة، الأرشفة، وإدارة قواعد الوصول، وحماية تامة ضد DOM XSS بالاعتماد الحصري على Native DOM APIs و `textContent`.
 - **إدارة المستخدمين الأساسية (User Management Core)** (`src/modules/system/user/`):
@@ -746,17 +746,17 @@ src/
 ### `RolePermissionService` (`src/modules/system/role/role-permission.service.ts`)
 - **Purpose**: إدارة وتقييم الصلاحيات وقواعد الوصول للأدوار مع تطبيق حماية مدير النظام وقفل الدور التشاؤمي.
 - **Methods**:
-  - `getRolePermissionsOverview(roleId: string): Promise<RolePermissionsOverviewResponse>`:
+  - `getRolePermissionsState(roleId: string): Promise<RolePermissionsAdminResponse>`:
     - **Input**: `roleId`.
     - **Action**: جلب الدور وكافة الصلاحيات النشطة، واستخراج المنح الفعالة وقواعد الوصول المسجلة للدور، وحساب ملخص الوصول وإحصائيات القواعد لكل صلاحية في استعلام تجميعي محكم بدون N+1، مع استبعاد المنح غير النشطة أو المنتهية زمنياً.
-    - **Output**: `{ role: SafeRoleOutput, permissions: RolePermissionOverviewItem[], isSystemAdmin: boolean }`.
+    - **Output**: `{ role: SafeRoleOutput, permissions: RolePermissionAdminItem[], isSystemAdmin: boolean }`.
   - `setRolePermissionState(roleId: string, permissionId: string, enabled: boolean, actor: AuthPrincipal): Promise<{ success: boolean; message: string }>`:
     - **Input**: `roleId`, `permissionId`, `enabled`, `actor`.
     - **Action**: تفعيل أو تعطيل منحة الصلاحية للدور داخل Transaction مع قفل تشاؤمي على سجل الدور، وحظر تعديل صلاحيات دور مدير النظام.
   - `getRolePermissionAccessRules(roleId: string, permissionId: string)`: استرجاع القواعد المسجلة وقدرات الصلاحية.
-  - `createRoleAccessRule(roleId: string, permissionId: string, dto: CreateAccessRuleAdminDto, actor: AuthPrincipal)`: إنشاء قاعدة وصول جديدة مع التحقق من القالب والمعرفات المحددة وقفل الدور تشاؤمياً.
-  - `updateRoleAccessRule(roleId: string, permissionId: string, ruleId: string, dto: UpdateAccessRuleAdminDto, actor: AuthPrincipal)`: تعديل قاعدة وصول مع التحقق وقفل الدور تشاؤمياً.
-  - `disableRoleAccessRule(roleId: string, permissionId: string, ruleId: string, actor: AuthPrincipal)`: تعطيل قاعدة وصول (`isActive = false`).
+  - `createRoleAccessRule(roleId: string, permissionId: string, dto: CreateAccessRuleDto, actor: AuthPrincipal)`: إنشاء قاعدة وصول جديدة مع التحقق من القالب والمعرفات المحددة وقفل الدور تشاؤمياً.
+  - `updateRoleAccessRule(roleId: string, permissionId: string, ruleId: string, dto: UpdateAccessRuleDto, actor: AuthPrincipal)`: تعديل قاعدة وصول مع التحقق وقفل الدور تشاؤمياً.
+  - `deleteRoleAccessRule(roleId: string, permissionId: string, ruleId: string, actor: AuthPrincipal)`: تعطيل قاعدة وصول (`isActive = false`).
 
 ### `PermissionService` (`src/modules/system/permission/permission.service.ts`)
 - **Purpose**: خدمة استعلامية لقراءة الصلاحيات النشطة المتاحة في النظام.
@@ -816,6 +816,20 @@ src/
       3. إلغاء الجلسات النشطة، ضبط `isActive = false`، وتنفيذ `softDelete` للكيان.
     - **Output**: `{ success: true, message: 'تم أرشفة المستخدم بنجاح' }`.
 
+### `UserPermissionService` (`src/modules/system/user/user-permission.service.ts`)
+- **Purpose**: إدارة وتقييم الصلاحيات وقواعد الوصول المباشرة للمستخدمين مع تطبيق حماية الذات وقفل المستخدم التشاؤمي.
+- **Methods**:
+  - `getUserPermissionsState(userId: string): Promise<UserPermissionsAdminResponse>`:
+    - **Input**: `userId`.
+    - **Action**: استرجاع الصلاحيات النشطة مع تفصيل منح وقواعد الدور، والمنح والقواعد المباشرة، والنتيجة الفعالة لكل صلاحية دون N+1.
+  - `setUserPermissionState(userId: string, permissionId: string, enabled: boolean, actor: AuthPrincipal): Promise<{ success: boolean; message: string }>`:
+    - **Input**: `userId`, `permissionId`, `enabled`, `actor`.
+    - **Action**: تفعيل أو تعطيل منحة الصلاحية المباشرة للمستخدم داخل Transaction مع قفل تشاؤمي على سجل المستخدم وحظر إدارة الصلاحيات الذاتية (`CANNOT_MANAGE_OWN_PERMISSIONS`).
+  - `getUserPermissionAccessRules(userId: string, permissionId: string)`: استرجاع القواعد المباشرة وقواعد الدور وقدرات الصلاحية.
+  - `createUserAccessRule(userId: string, permissionId: string, dto: CreateAccessRuleDto, actor: AuthPrincipal)`: إنشاء قاعدة وصول مباشرة للمستخدم مع قفل المستخدم تشاؤمياً.
+  - `updateUserAccessRule(userId: string, permissionId: string, ruleId: string, dto: UpdateAccessRuleDto, actor: AuthPrincipal)`: تعديل قاعدة وصول مباشرة للمستخدم مع قفل المستخدم تشاؤمياً.
+  - `deleteUserAccessRule(userId: string, permissionId: string, ruleId: string, actor: AuthPrincipal)`: تعطيل قاعدة وصول مباشرة للمستخدم (`isActive = false`).
+
 ### `User DTOs` (`src/modules/system/user/dto/`)
 - `CreateUserDto`: التحقق من الاسم الكامل (2-150 مع Trim تلقائي عبر `@Transform`)، الهاتف (`^09[0-9]{8}$` مع Trim)، كلمة المرور (6 محارف على الأقل بدون Trim)، `roleId` (UUID v4)، وحالة التفعيل الاختيارية.
 - `UpdateUserDto`: يدعم التحديث الجزئي (PATCH) مع Trim للمدخلات النصية وخلوه التام من حقول كلمات المرور أو الصلاحيات.
@@ -871,24 +885,28 @@ src/
 ## Authorization Core Services (Phase 1)
 
 ### `AuthorizationService` (`src/modules/system/authorization/authorization.service.ts`)
-- **Purpose**: تقييم الصلاحيات الفعالة للمستخدمين بناءً على المنح المطبقة (منح الدور + المنح المباشرة) وقواعد الوصول المقترنة بها.
+- **Purpose**: تقييم الصلاحيات الفعالة الشاملة للمستخدمين بناءً على المنح المطبقة (منح الدور + المنح المباشرة) وقواعد الوصول المقترنة بها ذات النطاق الشامل الصالح (`scopeType = 'ALL'`, `scope = null`).
 - **Methods**:
   - `hasPermission(principal: AuthPrincipal, permissionName: string): Promise<boolean>`
     - **Input**: `principal` (`AuthPrincipal`), `permissionName` (`string`).
     - **Action**:
-      1. يستعلم عن جميع القواعد الفعالة (`rule.isActive = true`, `rule.scopeType = 'ALL'`) التابعة لمنح فعالة (`grant.isActive = true`, `grant.expiresAt > now OR NULL`) الموجهة لدور المستخدم (`roleId`) أو للمستخدم مباشرة (`userId`).
+      1. يستعلم عن جميع القواعد الفعالة (`rule.isActive = true`, `rule.scopeType = 'ALL'`) التابعة لمنح فعالة (`grant.isActive = true`, `grant.expiresAt > now OR NULL`) الموجهة لدور المستخدم (`roleId`) أو للمستخدم مباشرة (`userId`) مع جلب `rule.scope`.
       2. يتأكد من كون الصلاحية نشطة (`permission.isActive = true`) وغير محذوفة ناعماً (`permission.deletedAt IS NULL`).
-      3. إذا وجدت أي قاعدة `DENY`، ترجع الدالة `false` فوراً (`DENY ALL` wins).
-      4. إذا وجدت قاعدة واحدة على الأقل `ALLOW` ولم يوجد أي `DENY`، ترجع الدالة `true`.
-      5. في حال غياب قواعد `ALLOW ALL`، ترجع الدالة `false` (Fail Closed / Default Deny).
+      3. التحقق الصارم من عقد ALL (`isValidAllScope: scope === null`):
+         - قواعد `ALLOW ALL` الصالحة (`scope === null`) تسجل منحاً فعالاً. وقواعد `ALLOW ALL` التالفة (`scope !== null`) تُهمل تماماً ولا تمنح أي وصول.
+         - قواعد `DENY ALL` الصالحة أو التالفة تسجل حظراً فعالاً وتفشل مغلقة (`Effective DENY ALL` wins).
+      4. إذا وجدت أي قاعدة حظر فعالة، ترجع الدالة `false` فوراً (`DENY ALL` wins).
+      5. إذا وجدت قاعدة منح صالحة واحدة على الأقل `ALLOW ALL` ولم يوجد أي `DENY ALL`، ترجع الدالة `true`.
+      6. في حال غياب قواعد `ALLOW ALL` الصالحة، ترجع الدالة `false` (Fail Closed / Default Deny).
+      7. ملاحظة معمارية: فحص الصلاحيات العالمية في `AuthorizationService.hasPermission()` يقتصر على النطاق الشامل (`ALL`)؛ بينما الوصول المقيد على مستوى الصفوف (Row-Level Scopes) كالأقسام والساحات يتم تقييمه وفحصه عبر `getApplicableAccessRules()` وسياسات النطاقات المتخصصة مثل `ProductionAccessPolicyService`.
     - **Output**: `boolean`.
   - `getEffectivePermissions(principal: AuthPrincipal): Promise<string[]>`
     - **Input**: `principal` (`AuthPrincipal`).
-    - **Action**: استعلام تجميعي موحد (Single aggregated QueryBuilder without N+1) يستخرج كافة أسماء الصلاحيات التي يمتلك المستخدم عليها قاعدة `ALLOW ALL` نشطة بدون أي قاعدة `DENY ALL`.
+    - **Action**: استعلام تجميعي موحد (Single aggregated QueryBuilder without N+1) يستخرج كافة أسماء الصلاحيات التي يمتلك المستخدم عليها قاعدة `ALLOW ALL` صالحة (`scope === null`) نشطة بدون أي قاعدة `DENY ALL` (صالحة أو تالفة).
     - **Output**: `string[]` (مثل `['system.user.view', 'system.user.create', 'system.role.view', ...]`).
   - `getApplicableAccessRules(principal: AuthPrincipal, permissionName: string): Promise<ApplicableAccessRule[]>`
     - **Input**: `principal` (`AuthPrincipal`), `permissionName` (`string`).
-    - **Action**: استرجاع كافة قواعد الوصول الفعالة (`rule.isActive = true`) المرتبطة بمنح سارية للمستخدم أو دوره لصلاحية نشطة محددة بدون تقييد نوع النطاق على `ALL` فقط، لخدمة تقييم النطاقات الديناميكية.
+    - **Action**: استرجاع كافة قواعد الوصول الفعالة (`rule.isActive = true`) المرتبطة بمنح سارية للمستخدم أو دوره لصلاحية نشطة محددة بدون تقييد نوع النطاق على `ALL` فقط، لخدمة تقييم النطاقات التشغيلية والديناميكية والمحددة.
     - **Output**: `ApplicableAccessRule[]` (`ruleId`, `grantId`, `effect`, `scopeType`, `scope`).
 
 ### `Authorization Middleware` (`src/modules/system/authorization/authorization.middleware.ts`)
