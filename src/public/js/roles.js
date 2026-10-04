@@ -146,7 +146,7 @@ document.addEventListener('DOMContentLoaded', function() {
         isActive: (document.getElementById('roleIsActiveInput') || {}).checked ?? true,
       };
 
-      fetch('/api/system/roles', {
+      window.erpFetch('/api/system/roles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(payload),
@@ -184,7 +184,7 @@ document.addEventListener('DOMContentLoaded', function() {
         isActive: (document.getElementById('roleIsActiveInput') || {}).checked ?? true,
       };
 
-      fetch('/api/system/roles/' + encodeURIComponent(roleId), {
+      window.erpFetch('/api/system/roles/' + encodeURIComponent(roleId), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(payload),
@@ -214,7 +214,7 @@ document.addEventListener('DOMContentLoaded', function() {
       var roleName = btn.getAttribute('data-role-name') || 'هذا الدور';
 
       var performDelete = function() {
-        fetch('/api/system/roles/' + encodeURIComponent(roleId), {
+        window.erpFetch('/api/system/roles/' + encodeURIComponent(roleId), {
           method: 'DELETE',
           headers: { 'Accept': 'application/json' },
         })
@@ -269,7 +269,7 @@ document.addEventListener('DOMContentLoaded', function() {
       toggle.disabled = true;
       clearPageAlert();
 
-      fetch('/api/system/roles/' + encodeURIComponent(roleId) + '/permissions/' + encodeURIComponent(permId) + '/state', {
+      window.erpFetch('/api/system/roles/' + encodeURIComponent(roleId) + '/permissions/' + encodeURIComponent(permId) + '/state', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ enabled: desiredEnabled }),
@@ -544,7 +544,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!confirm('هل أنت متأكد من رغبتك في تعطيل قاعدة الوصول هذه؟')) return;
     clearDrawerAlert();
 
-    fetch('/api/system/roles/' + encodeURIComponent(roleId) + '/permissions/' + encodeURIComponent(currentDrawerPermId) + '/access-rules/' + encodeURIComponent(ruleId), {
+    window.erpFetch('/api/system/roles/' + encodeURIComponent(roleId) + '/permissions/' + encodeURIComponent(currentDrawerPermId) + '/access-rules/' + encodeURIComponent(ruleId), {
       method: 'DELETE',
       headers: { 'Accept': 'application/json' },
     })
@@ -926,7 +926,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       var method = isEdit ? 'PUT' : 'POST';
 
-      fetch(url, {
+      window.erpFetch(url, {
         method: method,
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(payload),

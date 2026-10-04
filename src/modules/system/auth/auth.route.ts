@@ -3,11 +3,12 @@ import { validateDto } from '../../../common/middleware/validate-dto.middleware.
 import { LoginDto } from './dto/login.dto.js';
 import { authController } from './auth.controller.js';
 import { requireApiAuth } from './auth.middleware.js';
+import { loginRateLimiter } from './login-rate-limit.middleware.js';
 
 const authRouter: Router = Router();
 
 // POST /api/auth/login
-authRouter.post('/login', validateDto(LoginDto), authController.login);
+authRouter.post('/login', loginRateLimiter, validateDto(LoginDto), authController.login);
 
 // GET /api/auth/me
 authRouter.get('/me', requireApiAuth, authController.me);

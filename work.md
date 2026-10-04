@@ -3,6 +3,34 @@
 ## Current Project State
 
 تم تنفيذ مرحلة الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile) ومرحلة إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration) ومرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات (Role Management & Permission Administration) ومرحلة إدارة المستخدمين (User Management) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل:
+- **حماية CSRF المرتبطة بالجلسة (Session-Bound CSRF Protection)** (`src/modules/system/auth/csrf.service.ts`, `src/modules/system/auth/csrf.middleware.ts`, `src/modules/system/auth/auth.middleware.ts`):
+  - **نموذج أمني مشتق من الجلسة (Session-Bound HMAC Token)**:
+    - توليد رمز CSRF باستخدام HMAC-SHA256 مع مفتاح سري مستقل وإلزامي `AUTH_CSRF_SECRET` (32 حرفاً على الأقل ومختلف وجوباً عن `AUTH_JWT_SECRET`) مرتبط بمعرف الجلسة الموثقة `sessionId` (`erp-csrf-v1:${sessionId}`).
+    - الرمز غير مخزن في قاعدة البيانات ولا يحتوي على الـ JWT ولا يسمح باشتقاقه، ولا يُعرض الـ JWT للـ JavaScript إطلاقاً.
+    - التحقق من الرمز Server-side باستخدام `crypto.timingSafeEqual` بعد مطابقة الطول لمنع هجمات التوقيت (Timing Attacks).
+  - **الاستثناءات والطرائق المحمية والمدقق المركزي (Canonical Validator & Safe Methods)**:
+    - إعفاء الطرق الآمنة فقط: `GET`, `HEAD`, `OPTIONS`.
+    - استخدام مدقق مركزي وحيد `validateCsrfToken` في `src/modules/system/auth/csrf.middleware.ts` يتم تركيبه بعد المصادقة في `requireApiAuth` و `requireWebAuth`.
+    - مسار تسجيل الدخول `POST /api/auth/login` مستثنى لكونه pre-authentication ويُحمى عبر معدل الطلبات (Rate Limiting).
+    - مسار تسجيل الخروج `POST /api/auth/logout` محمي برمز CSRF.
+    - الطلبات غير الموثقة لـ endpoints محمية ترجع 401 (فشل مصادقة) أولاً قبل فحص الـ CSRF لمنع كشف حالة الـ Token.
+    - أخطاء CSRF ترجع 403 برمز `CSRF_TOKEN_MISSING` أو `CSRF_TOKEN_INVALID`.
+  - **تكامل القوالب والعميل (EJS & Client erpFetch Integration)**:
+    - وسيط `requireWebAuth` يضع `res.locals.csrfToken` للمستخدم الموثق فقط ليتم تضمينه في `<meta name="csrf-token">` داخل لوحة التحكم مع ترويسة `Cache-Control: no-store`.
+    - دالة العميل المركزية الإلزامية `window.erpFetch` في `src/public/js/app.js` تعتمد Native Fetch وتضمن حصر الرمز في نفس الـ Origin (`window.location.origin`) وتطبيع الطريقة (Trimmed Uppercase) وإرسال ترويسة `X-CSRF-Token` في الطرق غير الآمنة مع حظر الرجوع إلى raw fetch في حال غياب الـ helper (`No Fallback`).
+    - اعتماد `window.erpFetch` لكافة العمليات التعديلية في: `users.js`, `roles.js`, `user-permissions.js`, `production-departments.js`, `production-yards.js`, `production-team.js`, و `app.js` (logout).
+- **حماية معدل تسجيل الدخول والبروكسي (Login Rate Limiting & Proxy Controls)** (`src/modules/system/auth/login-rate-limit.middleware.ts`, `src/config/env.config.ts`, `src/app.ts`):
+  - **حماية مسبقة لمسار الدخول (Pre-DTO & Pre-Bcrypt Protection)**:
+    - تركيب وسيط `loginRateLimiter` على مسار `POST /api/auth/login` قبل التحقق من الـ DTO وقبل تشفير الـ Bcrypt لمنع استنزاف المعالج (CPU Exhaustion) والتخمين المتكرر.
+    - استخدام مكتبة `express-rate-limit 8.7.0` بنافذة زمنية افتراضية 15 دقيقة وحد أقصى 15 محاولة قابلة للضبط عبر المتغيرات البيئية (`AUTH_LOGIN_RATE_LIMIT_WINDOW_MINUTES`, `AUTH_LOGIN_RATE_LIMIT_MAX`) مع فحص رقمي صارم (`parseStrictIntegerEnv`) يفشل التشغيل عند تمرير قيم مشوهة.
+    - استخدام `MemoryStore` الافتراضي المحلي للعملية الحالية (process-local) المناسب للنشر الفردي الحالي، مع اشتراط الترقية إلى مخزن مشترك (Shared Store مثل Redis) مستقبلاً عند النشر المتعدد (Multi-Instance Scaling).
+    - استثناء المحاولات الناجحة من احتساب حصة الاستهلاك (`skipSuccessfulRequests: true`).
+    - تفعيل ترويسات المعيار الحديثة (`draft-7`) وإرسال ترويسة `Retry-After` بالثواني مع رمز الحالة HTTP 429 ورمز الخطأ الثابت `AUTH_LOGIN_RATE_LIMITED` الممرر عبر `TooManyRequestsError` إلى معالج الأخطاء المركزي `errorHandlerMiddleware`.
+  - **التحكم الصريح بالبروكسي الموثوق (Proxy-Aware IP Handling)**:
+    - ضبط `app.set('trust proxy', envConfig.trustProxyHops)` حصراً عند تعريف عدد قفزات موثوق موجب (`TRUST_PROXY_HOPS > 0`) لتفادي انتحال العناوين عند العمل خلف Reverse Proxy مثل Nginx (مع اشتراط حظر الوصول المباشر لمنفذ التطبيق من الإنترنت عند تفعيلها)، مع ترك الإعداد الافتراضي الآمن عند 0.
+    - الاعتماد حصراً على `req.ip` المدار عبر Express ومنع التحليل اليدوي لـ `X-Forwarded-For`.
+  - **تكامل واجهة تسجيل الدخول (Login Client Integration)**:
+    - معالجة صريحة للرمز 429 في `src/public/js/login.js` واستخراج ترويسة `Retry-After` وتحويلها لدقائق تقريبية باللغة العربية مع إعادة تفعيل زر الإرسال.
 - **الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile)** (`src/modules/system/user/portfolio/`, `src/modules/production/team/production-user-responsibility-read.service.ts`):
   - **طبقة قراءة وتجميع (Read / Composition Layer)**: توفر مركزاً إدارياً شاملاً لفهم هوية المستخدم، حالة حسابه، دوره، ملخص صلاحياته، تنبيهات الأمان، ومسؤوليته التشغيلية في تطبيق الإنتاج دون تكرار أو مساس بمنطق الأعمال للوحدات المدمجة.
   - **أقسام الملف الإداري (Portfolio Tabs)**:
