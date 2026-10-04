@@ -2,6 +2,7 @@ import { Repository, IsNull } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionDepartmentEntity } from '../department/production-department.entity.js';
 import { ProductionDepartmentEngineerEntity } from './entities/production-department-engineer.entity.js';
+import { ProductionYardEntity } from '../yard/production-yard.entity.js';
 import {
   ProductionResponsibilityResolver,
   productionResponsibilityResolver,
@@ -60,15 +61,18 @@ export function allDepartmentsAccessible(
 export class ProductionUserResponsibilityReadService {
   private readonly departmentRepository: Repository<ProductionDepartmentEntity>;
   private readonly engineerRepository: Repository<ProductionDepartmentEngineerEntity>;
+  private readonly yardRepository: Repository<ProductionYardEntity>;
   private readonly responsibilityResolver: ProductionResponsibilityResolver;
 
   constructor(
     deptRepo: Repository<ProductionDepartmentEntity> = AppDataSource.getRepository(ProductionDepartmentEntity),
     engRepo: Repository<ProductionDepartmentEngineerEntity> = AppDataSource.getRepository(ProductionDepartmentEngineerEntity),
+    yardRepo: Repository<ProductionYardEntity> = AppDataSource.getRepository(ProductionYardEntity),
     resolver: ProductionResponsibilityResolver = productionResponsibilityResolver
   ) {
     this.departmentRepository = deptRepo;
     this.engineerRepository = engRepo;
+    this.yardRepository = yardRepo;
     this.responsibilityResolver = resolver;
   }
 
@@ -212,7 +216,6 @@ export class ProductionUserResponsibilityReadService {
         .createQueryBuilder('eng')
         .leftJoinAndSelect('eng.department', 'dept')
         .leftJoinAndSelect('eng.yardMappings', 'ym')
-        .leftJoinAndSelect('ym.yard', 'yard')
         .where('eng.userId = :userId', { userId: targetUserId })
         .andWhere('eng.isActive = :isActive', { isActive: true })
         .andWhere('eng.departmentId = :departmentId', { departmentId: targetDeptId })
@@ -242,7 +245,7 @@ export class ProductionUserResponsibilityReadService {
 
       const yardMappings = engAssignment.yardMappings ?? [];
 
-      // Invariant: Active engineer must have at least 1 valid yard mapping
+      // Invariant: Active engineer must have at least 1 yard mapping
       if (yardMappings.length === 0) {
         return {
           state: 'INCONSISTENT',
@@ -251,21 +254,58 @@ export class ProductionUserResponsibilityReadService {
         };
       }
 
-      // Invariant: Revalidate all yard mappings without silent filtering
+      // Collect all referenced yard IDs from mappings
+      const rawYardIds = yardMappings.map((ym) => ym.yardId);
+      if (rawYardIds.some((id) => !id)) {
+        // Missing yardId in mapping: cannot determine department safely -> Fail Closed
+        return {
+          state: 'NOT_VISIBLE',
+          isConsistent: false,
+          canManageTeam: false,
+        };
+      }
+
+      const referencedYardIds = Array.from(new Set(rawYardIds)).sort();
+
+      // Bounded query with withDeleted() to resolve all referenced yards including soft-deleted ones
+      const resolvedYards =
+        referencedYardIds.length > 0
+          ? await this.yardRepository
+              .createQueryBuilder('yard')
+              .withDeleted()
+              .where('yard.id IN (:...yardIds)', { yardIds: referencedYardIds })
+              .getMany()
+          : [];
+
+      const yardMap = new Map<string, ProductionYardEntity>(
+        resolvedYards.map((y) => [y.id, y])
+      );
+
+      // Revalidate and classify every mapping
       let hasCorruptedMapping = false;
       let hasCrossDeptMapping = false;
       const crossDeptIds: string[] = [];
 
       for (const ym of yardMappings) {
-        if (!ym.yard || ym.yard.deletedAt !== null) {
-          hasCorruptedMapping = true;
-          break;
+        const resolvedYard = yardMap.get(ym.yardId);
+
+        // If yard cannot be found even with withDeleted -> hard-missing / unresolvable -> Fail Closed
+        if (!resolvedYard) {
+          return {
+            state: 'NOT_VISIBLE',
+            isConsistent: false,
+            canManageTeam: false,
+          };
         }
 
-        if (ym.yard.departmentId !== targetDeptId) {
+        // Check cross-department mapping (active or soft-deleted)
+        if (resolvedYard.departmentId !== targetDeptId) {
           hasCorruptedMapping = true;
           hasCrossDeptMapping = true;
-          crossDeptIds.push(ym.yard.departmentId);
+          crossDeptIds.push(resolvedYard.departmentId);
+        } else if (resolvedYard.deletedAt !== null) {
+          // Soft-deleted yard within same department
+          hasCorruptedMapping = true;
         }
       }
 
@@ -287,7 +327,7 @@ export class ProductionUserResponsibilityReadService {
       }
 
       if (hasCorruptedMapping) {
-        // Missing or soft-deleted yard within target department
+        // Soft-deleted yard within target department (which is known to be accessible)
         return {
           state: 'INCONSISTENT',
           isConsistent: false,
@@ -295,19 +335,20 @@ export class ProductionUserResponsibilityReadService {
         };
       }
 
-      // All mappings are valid: deduplicate by Yard ID and sort by name
+      // All mappings are valid, non-deleted, and belong to targetDeptId
       const uniqueYardsMap = new Map<
         string,
         { id: string; name: string; code: string; isActive: boolean }
       >();
 
       for (const ym of yardMappings) {
-        if (!uniqueYardsMap.has(ym.yard.id)) {
-          uniqueYardsMap.set(ym.yard.id, {
-            id: ym.yard.id,
-            name: ym.yard.name,
-            code: ym.yard.code,
-            isActive: ym.yard.isActive,
+        const yard = yardMap.get(ym.yardId)!;
+        if (!uniqueYardsMap.has(yard.id)) {
+          uniqueYardsMap.set(yard.id, {
+            id: yard.id,
+            name: yard.name,
+            code: yard.code,
+            isActive: yard.isActive,
           });
         }
       }
