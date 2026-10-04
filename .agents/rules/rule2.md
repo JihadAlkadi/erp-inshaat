@@ -56,7 +56,22 @@ Authorization = ماذا يستطيع؟
 - سعة الساحات تقاس بعدد الغرف (Room Count)، وكل غرفة تستهلك وحدة سعة واحدة (1 Room = 1 Capacity Unit) بغض النظر عن نوع الغرفة أو أبعادها.
 - يُمنع تخزين الإشغال الحالي (Occupancy) في قاعدة البيانات؛ بل يُحسب ديناميكياً من الغرف الفعلية الموجودة في الساحة.
 - لا يمكن تفعيل أو إنشاء ساحة تابعة لقسم إنتاج معطل أو محذوف ناعماً.
-- بروتوكول قفل سجل قسم الإنتاج (Department Lock Protocol): عمليات إنشاء الساحة، ونقل الساحة لقسم جديد، وتفعيل الساحة، وتعطيل القسم، وأرشفة القسم تتزامن جميعها عبر قفل تشاؤمي (`pessimistic_write`) على نفس سجل قسم الإنتاج (`Department row`).
+- بروتوكول قفل سجلات الإنتاج الموحد ومنع التعارضات (Production Unified Lock Protocol & Deadlock Prevention):
+  - القاعدة الصارمة: يُمنع نهائياً طلب قفل سجل قسم (`Department`) بعد حيازة قفل سجل ساحة (`Yard`). ترتيب الأقفال دائماً `Department(s) -> Yard`.
+  - لعمليات تعديل أو أرشفة الساحة (`updateYard`, `softDeleteYard`):
+    1. القراءة الاستطلاعية المسبقة للساحة (`Pre-read`) بدون قفل لمعرفة معرفات الأقسام المعنية (`sourceDepartmentId` و `targetDepartmentId`).
+    2. قفل الأقسام المعنية تشاؤمياً (`pessimistic_write`) بترتيب تصاعدي حتمي لمعرفات الأقسام (`[...new Set(deptIds)].sort()`).
+    3. قفل سجل الساحة تشاؤمياً (`Yard row` via `pessimistic_write`).
+    4. إعادة التحقق من تطابق تبعية الساحة للقسم المقفول (`Revalidate consistency`) لمنع التعديلات المتزامنة.
+    5. التحقق من القواعد التشغيلية (منع النقل أو الأرشفة في حال وجود مهندسين مسندين، واشتراط فعالية القسم عند التفعيل) ثم الحفظ.
+  - لعمليات إنشاء ساحة جديدة (`createYard`): قفل القسم التابع تشاؤمياً ثم التحقق وإنشاء الساحة.
+  - لعمليات إنشاء قسم جديد (`createDepartment`): قفل سجل المستخدم المرشح للرئاسة (`User row` via `pessimistic_write`) ثم إنشاء القسم (لا يوجد صف قسم مسبق لقفله).
+  - لعمليات فريق ومسؤولي الإنتاج (`Production Team Operations`):
+    1. قسم الإنتاج (`Department row` via `pessimistic_write`)
+    2. سجل المستخدم (`User row` via `pessimistic_write` إن وجد)
+    3. سجل تعيين المهندس (`Assignment row` via `pessimistic_write` إن وجد)
+    4. سجلات الساحات مرتبة تصاعدياً حسب المعرف (`Yards sorted ascending by ID` via `pessimistic_write` إن وجدت)
+    5. كتابة المخططات والروابط (`Mapping writes / mutations`)
 
 قواعد هيكل المسؤوليات وفريق عمل الإنتاج (Production Department Team & Engineer Assignments Invariants):
 - لكل قسم إنتاج رئيس قسم واحد (`head_user_id` في `production_department`) مع قيد فرادة في قاعدة البيانات (`UQ_production_department_head_user`).
@@ -74,12 +89,6 @@ Authorization = ماذا يستطيع؟
 - لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، ولا يُعاد تفعيل السجل إلا إذا كانت ارتباطات الساحات مساوية للصفر (Fail closed on stale mappings: `PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`).
 - المستخدمون المؤرشفون المرتبطون تاريخياً كرؤساء أقسام أو مهندسين تظل هوياتهم محفوظة وظاهرة في واجهة الفريق مع تمييز حالتهم بوسم "مؤرشف / غير متاح" ودون كشف أي بيانات حساسة.
 - فلترة المرشحين في واجهة المستخدم (UI Filtering) هي لتحسين تجربة المستخدم فقط، بينما التحقق الصارم في طبقة الخدمات والـ Transactions هو الحامي للمنطق التشغيلي وقيود قاعدة البيانات هي خط الدفاع النهائي.
-- بروتوكول قفل سجلات فريق الإنتاج (Team Lock Order Protocol):
-  1. قسم الإنتاج (`Department row` via `pessimistic_write`)
-  2. سجل المستخدم (`User row` via `pessimistic_write`)
-  3. سجل تعيين المهندس (`Assignment row` via `pessimistic_write`)
-  4. سجلات الساحات مرتبة تصاعدياً حسب المعرف (`Yards sorted ascending by ID` via `pessimistic_write`)
-  5. كتابة المخططات والروابط (`Mapping writes / mutations`)
 
 ---
 

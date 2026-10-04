@@ -170,12 +170,58 @@ export class ProductionYardService {
     return await AppDataSource.transaction(async (manager) => {
       const yardRepo = manager.getRepository(ProductionYardEntity);
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
+      const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
-      // 1. Lock Target Yard
+      // 1. Pre-read Yard without lock to discover involved department IDs
+      const unverifiedYard = await this.yardRepository.findOne({
+        where: { id, deletedAt: IsNull() },
+        select: { id: true, departmentId: true, isActive: true },
+      });
+
+      if (!unverifiedYard) {
+        throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+      }
+
+      // 2. Determine involved Departments & Lock in deterministic ascending order (Protocol step 1)
+      const involvedDeptIds = [
+        unverifiedYard.departmentId,
+        ...(dto.departmentId !== undefined && dto.departmentId !== unverifiedYard.departmentId
+          ? [dto.departmentId]
+          : []),
+      ];
+      const sortedDeptIds = [...new Set(involvedDeptIds)].sort();
+
+      const lockedDepartments = await deptRepo
+        .createQueryBuilder('dept')
+        .setLock('pessimistic_write')
+        .where('dept.id IN (:...deptIds)', { deptIds: sortedDeptIds })
+        .andWhere('dept.deletedAt IS NULL')
+        .getMany();
+
+      const sourceDepartment = lockedDepartments.find((d) => d.id === unverifiedYard.departmentId);
+      if (!sourceDepartment) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      let targetDepartment = sourceDepartment;
+      const isMovingDepartment =
+        dto.departmentId !== undefined && dto.departmentId !== unverifiedYard.departmentId;
+
+      if (isMovingDepartment) {
+        const foundTarget = lockedDepartments.find((d) => d.id === dto.departmentId);
+        if (!foundTarget || !foundTarget.isActive) {
+          throw new BusinessRuleError(
+            'قسم الإنتاج المستهدف غير موجود أو غير نشط',
+            'PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE'
+          );
+        }
+        targetDepartment = foundTarget;
+      }
+
+      // 3. Lock Target Yard (Protocol step 2)
       const yard = await yardRepo
         .createQueryBuilder('yard')
         .setLock('pessimistic_write')
-        .leftJoinAndSelect('yard.department', 'department')
         .where('yard.id = :id', { id })
         .andWhere('yard.deletedAt IS NULL')
         .getOne();
@@ -184,11 +230,16 @@ export class ProductionYardService {
         throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
       }
 
-      let currentDepartment = yard.department;
+      // Revalidate that yard's departmentId did not change concurrently from pre-read
+      if (yard.departmentId !== unverifiedYard.departmentId) {
+        throw new BusinessRuleError(
+          'تم تعديل قسم الساحة بالتوازي، يرجى إعادة المحاولة',
+          'PRODUCTION_YARD_CONCURRENTLY_CHANGED'
+        );
+      }
 
-      // 2. If moving to another department, validate & lock target department
-      if (dto.departmentId !== undefined && dto.departmentId !== yard.departmentId) {
-        const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
+      // 4. Invariant: If moving to another department, verify no assigned engineers
+      if (isMovingDepartment) {
         const assignedCount = await yardEngRepo.count({
           where: { yardId: yard.id },
         });
@@ -200,31 +251,19 @@ export class ProductionYardService {
           );
         }
 
-        currentDepartment = await this.departmentService.findAssignableDepartmentForUpdate(
-          dto.departmentId,
-          manager
-        );
-        yard.departmentId = currentDepartment.id;
-        yard.department = currentDepartment;
+        yard.departmentId = targetDepartment.id;
       }
 
-      // 3. If reactivating yard (isActive: true), ensure parent department is active
+      // 5. Invariant: If reactivating yard (isActive: true), ensure active parent department
       const willBeActive = dto.isActive !== undefined ? dto.isActive : yard.isActive;
       if (willBeActive && !yard.isActive) {
-        const parentDept = await deptRepo
-          .createQueryBuilder('dept')
-          .setLock('pessimistic_write')
-          .where('dept.id = :deptId', { deptId: yard.departmentId })
-          .andWhere('dept.deletedAt IS NULL')
-          .getOne();
-
-        if (!parentDept || !parentDept.isActive) {
+        const parentDept = targetDepartment;
+        if (!parentDept.isActive) {
           throw new BusinessRuleError(
             'لا يمكن تفعيل الساحة لأن قسم الإنتاج التابع له معطل أو غير نشط',
             'PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE'
           );
         }
-        currentDepartment = parentDept;
       }
 
       if (dto.name !== undefined) {
@@ -248,7 +287,7 @@ export class ProductionYardService {
       return {
         id: updated.id,
         departmentId: updated.departmentId,
-        departmentName: currentDepartment?.name || '',
+        departmentName: targetDepartment.name,
         name: updated.name,
         code: updated.code,
         capacity: updated.capacity,
@@ -263,8 +302,32 @@ export class ProductionYardService {
   async softDeleteYard(id: string): Promise<void> {
     await AppDataSource.transaction(async (manager) => {
       const yardRepo = manager.getRepository(ProductionYardEntity);
+      const deptRepo = manager.getRepository(ProductionDepartmentEntity);
       const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
+      // 1. Pre-read Yard without lock to discover departmentId
+      const unverifiedYard = await this.yardRepository.findOne({
+        where: { id, deletedAt: IsNull() },
+        select: { id: true, departmentId: true },
+      });
+
+      if (!unverifiedYard) {
+        throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+      }
+
+      // 2. Lock Department (Protocol step 1)
+      const department = await deptRepo
+        .createQueryBuilder('dept')
+        .setLock('pessimistic_write')
+        .where('dept.id = :deptId', { deptId: unverifiedYard.departmentId })
+        .andWhere('dept.deletedAt IS NULL')
+        .getOne();
+
+      if (!department) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      // 3. Lock Target Yard (Protocol step 2)
       const yard = await yardRepo
         .createQueryBuilder('yard')
         .setLock('pessimistic_write')
@@ -276,6 +339,15 @@ export class ProductionYardService {
         throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
       }
 
+      // Revalidate parent department consistency
+      if (yard.departmentId !== unverifiedYard.departmentId) {
+        throw new BusinessRuleError(
+          'تم تعديل قسم الساحة بالتوازي، يرجى إعادة المحاولة',
+          'PRODUCTION_YARD_CONCURRENTLY_CHANGED'
+        );
+      }
+
+      // 4. Invariant: Cannot delete yard if assigned to engineers
       const assignedCount = await yardEngRepo.count({
         where: { yardId: yard.id },
       });

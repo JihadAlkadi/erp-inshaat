@@ -2,7 +2,6 @@ import { EntityManager, IsNull, Repository } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionDepartmentEntity } from './production-department.entity.js';
 import { ProductionYardEntity } from '../yard/production-yard.entity.js';
-import { UserEntity } from '../../system/user/user.entity.js';
 import { ProductionDepartmentEngineerEntity } from '../team/entities/production-department-engineer.entity.js';
 import { CreateProductionDepartmentDto } from './dto/create-production-department.dto.js';
 import { UpdateProductionDepartmentDto } from './dto/update-production-department.dto.js';

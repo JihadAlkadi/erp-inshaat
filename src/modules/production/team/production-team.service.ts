@@ -740,9 +740,7 @@ export class ProductionTeamService {
    * - Have no active engineer assignments in any department (neither target nor other).
    * - Have no current or stale yard mappings in any department.
    */
-  async listAvailableEngineerUsers(
-    _targetDepartmentId?: string
-  ): Promise<AvailableEngineerSelectOption[]> {
+  async listAvailableEngineerUsers(): Promise<AvailableEngineerSelectOption[]> {
     const userRepo = AppDataSource.getRepository(UserEntity);
     const qb = userRepo
       .createQueryBuilder('user')

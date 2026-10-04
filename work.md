@@ -36,15 +36,15 @@
     - `getDepartmentById`: استرجاع تفاصيل قسم إنتاج محدد مع رئيس القسم وحساب عدد الساحات ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد.
     - `createDepartment`: إنشاء قسم إنتاج جديد مع تحديد رئيس القسم الإلزامي (`headUserId`)، والتحقق من نشاط المستخدم وصلاحيته، مع فحص مسبق لفرادة الرمز التقني (`code.trim().toUpperCase()`) متضمناً السجلات المحذوفة ناعماً (`withDeleted()`) والتقاط تضارب المفتاح الفريد وتحويله إلى `ConflictError` برمز `PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS` (409).
     - `updateDepartment`: تحديث بيانات القسم (الاسم، الوصف، حالة التفعيل) داخل Transaction مع قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل القسم (`Department row`)، مع ثبات الرمز التقني وعدم السماح بتعديله، وتطبيق قاعدة منع تعطيل القسم طالما يمتلك ساحات نشطة (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_YARDS`).
-    - `softDeleteDepartment`: أرشفة القسم (Soft Delete) وضبط `isActive = false` داخل Transaction مع قفل تشاؤمي على سجل القسم، وتطبيق قاعدة منع أرشفة القسم طالما يمتلك أي ساحات غير مؤرشفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`) وتطبيق قاعدة منع أرشفة القسم طالما يمتلك مهندسين نشطين (`PRODUCTION_DEPARTMENT_HAS_ENGINEERS`).
+    - `softDeleteDepartment`: أرشفة القسم (Soft Delete) وضبط `headUserId = null` و `isActive = false` و `deletedAt = new Date()` داخل Transaction مع قفل تشاؤمي على سجل القسم، وتطبيق قاعدة منع أرشفة القسم طالما يمتلك أي ساحات غير مؤرشفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`) وتطبيق قاعدة منع أرشفة القسم طالما يمتلك مهندسين نشطين (`PRODUCTION_DEPARTMENT_HAS_ENGINEERS`).
     - `findAssignableDepartmentForUpdate`: دالة مساعدة لقفل والتحقق من نشاط وصلاحية القسم قبل ربط الساحات به.
     - `listActiveDepartments`: استرجاع قائمة الأقسام النشطة للاختيار في نماذج إنشاء وتعديل الساحات.
   - **خدمة ساحات الإنتاج `ProductionYardService`** (`src/modules/production/yard/production-yard.service.ts`):
     - `listYards`: استرجاع قائمة ساحات الإنتاج مع Pagination والبحث، والفلترة الاختيارية بالقسم (`departmentId`)، وضم القسم التابع (`department`) بدون N+1.
     - `getYardById`: استرجاع تفاصيل الساحة مع قسمها التابع.
     - `createYard`: إنشاء ساحة جديدة داخل Transaction متزامنة مع قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل قسم الإنتاج التابع عبر `findAssignableDepartmentForUpdate` لضمان فعالية القسم ومنع التزامن مع تعطيله، وفحص فرادة رمز الساحة عبر `withDeleted()` والتقاط خطأ 409 برمز `PRODUCTION_YARD_CODE_ALREADY_EXISTS`.
-    - `updateYard`: تحديث بيانات الساحة (القسم، الاسم، السعة، الوصف، حالة التفعيل) داخل Transaction مع قفل تشاؤمي على الساحة، والتحقق من نشاط القسم المستهدف عند النقل، وتطبيق قاعدة منع تفعيل الساحة إذا كان قسمها التابع معطلاً (`PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE`).
-    - `softDeleteYard`: أرشفة الساحة (Soft Delete) وضبط `isActive = false` داخل Transaction مع قفل تشاؤمي.
+    - `updateYard`: تحديث بيانات الساحة (القسم، الاسم، السعة، الوصف، حالة التفعيل) داخل Transaction وفق بروتوكول القفل الموحد (`Department(s) sorted ascending -> Yard -> Mutations`): قراءة استطلاعية للساحة، قفل الأقسام المعنية تشاؤمياً بترتيب تصاعدي حتمي لمعرفاتها لمنع الـ Deadlocks، قفل الساحة تشاؤمياً، إعادة التحقق من تطابق التبعية للقسم المقفول (`PRODUCTION_YARD_CONCURRENTLY_CHANGED`)، التحقق من عدم وجود مهندسين مسندين للساحة عند نقلها لقسم آخر (`PRODUCTION_YARD_HAS_ENGINEERS`)، والتحقق من فعالية القسم التابع عند إعادة التفعيل (`PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE`)، وحفظ التعديلات.
+    - `softDeleteYard`: أرشفة الساحة (Soft Delete) وضبط `isActive = false` داخل Transaction وفق بروتوكول القفل الموحد (`Department -> Yard`): قراءة استطلاعية للساحة، قفل القسم التابع تشاؤمياً، قفل الساحة تشاؤمياً، التحقق من عدم وجود مهندسين مسندين للساحة (`PRODUCTION_YARD_HAS_ENGINEERS`)، ثم الأرشفة والتعطيل.
   - **مفهوم السعة الاستيعابية للساحات (`Yard Capacity`)**:
     - السعة الاستيعابية تمثل أقصى عدد من الغرف التي تستطيع الساحة استيعابها (`1 Room = 1 Capacity Unit`) كعدد صحيح موجب (`capacity >= 1`) بغض النظر عن نوع الغرفة أو أبعادها.
     - لا يتم تخزين الإشغال الحالي (`Occupancy`) أو السعة المتبقية كأعمدة في قاعدة البيانات؛ بل تُحسب لاحقاً عند بناء دورة حياة الغرف وحركات الإنتاج.
@@ -1140,11 +1140,14 @@ src/
     - **السعة الاستيعابية للساحات (`Yard Capacity`)**: السعة تمثل أقصى عدد من الغرف التي تستوعبها الساحة (`1 Room = 1 Capacity Unit`) كعدد صحيح موجب (`capacity >= 1`). لا يتم تخزين الإشغال الحالي أو السعة المتبقية كأعمدة في DB لتجنب تكرار البيانات.
     - **الحذف الناعم فقط**: حذف الأقسام والساحات يتم حصراً عبر الحذف الناعم (`Soft Delete` مع `deleted_at`).
     - **ثبات الرمز التقني**: الرمز التقني (`code`) لكل من القسم والساحة ثابت وغير قابل للتعديل بعد الإنشاء.
-    - **بروتوكول قفل سجل القسم (`Department Lock Protocol`)**:
-      - سجل قسم الإنتاج المستهدف في `production_department` هو نقطة التسلسل المركزية (`Serialization Point`) لكافة عمليات الساحات التابعة ودورة حياة القسم.
-      - إنشاء ساحة جديدة، أو نقل ساحة لقسم آخر، أو إعادة تفعيل ساحة معطلة، يتطلب قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل القسم والتحقق من كونه نشطاً وغير محذوف ناعماً.
+    - **بروتوكول قفل سجلات الإنتاج الموحد ومنع التعارضات (`Production Unified Lock Protocol & Deadlock Prevention`)**:
+      - القاعدة الصارمة: يُمنع نهائياً طلب قفل سجل قسم (`Department`) بعد حيازة قفل سجل ساحة (`Yard`). ترتيب الأقفال دائماً `Department(s) -> Yard`.
+      - لعمليات تعديل أو أرشفة الساحة (`updateYard`, `softDeleteYard`): قراءة استطلاعية للساحة، قفل الأقسام المعنية تشاؤمياً بترتيب تصاعدي حتمي لمعرفاتها لمنع التعارضات (`Deadlocks`)، ثم قفل سجل الساحة تشاؤمياً وإعادة التحقق من مطابقة التبعية (`PRODUCTION_YARD_CONCURRENTLY_CHANGED`).
+      - لعمليات إنشاء الساحة (`createYard`): قفل القسم التابع تشاؤمياً ثم التحقق وإنشاء الساحة.
+      - لعمليات إنشاء قسم جديد (`createDepartment`): قفل سجل المستخدم المرشح للرئاسة (`User row` via `pessimistic_write`) ثم إنشاء القسم.
+      - لعمليات فريق العمل (`Production Team Operations`): `Department -> User -> Assignment -> Yards (sorted) -> Mutations`.
       - تعطيل قسم إنتاج مشروط بعدم امتلاكه أي ساحات نشطة غير محذوفة (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_YARDS`).
-      - أرشفة قسم إنتاج مشروطة بعدم امتلاكه أي ساحات غير محذوفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`).
+      - أرشفة قسم إنتاج مشروطة بعدم امتلاكه أي ساحات غير محذوفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`) وبعدم وجود مهندسين نشطين (`PRODUCTION_DEPARTMENT_HAS_ENGINEERS`) مع تحرير رئيس القسم تلقائياً (`headUserId = null`).
 
 ---
 
