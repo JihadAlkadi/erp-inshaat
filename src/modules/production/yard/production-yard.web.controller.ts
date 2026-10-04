@@ -5,7 +5,7 @@ import { ListProductionYardsQueryDto } from './dto/list-production-yards-query.d
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { AuthPrincipal } from '../../system/auth/auth.types.js';
 import { getProductionAccessPolicy } from '../authorization/production-authorization-context.js';
-import { canAccessYard, canAccessDepartment } from '../authorization/production-access-query.helper.js';
+import { canAccessYard } from '../authorization/production-access-query.helper.js';
 
 export class ProductionYardWebController {
   private readonly yardService: ProductionYardService;
@@ -52,7 +52,8 @@ export class ProductionYardWebController {
 
       const queryDto: ListProductionYardsQueryDto = { page, limit, search, departmentId };
       const yardsData = await this.yardService.listYards(queryDto, viewPolicy);
-      const activeDepartments = await this.departmentService.listActiveDepartments();
+      const accessibleDepartments = await this.yardService.listAccessibleDepartmentOptions(viewPolicy);
+      const creatableDepartments = await this.departmentService.listActiveDepartmentsForPolicy(createPolicy);
 
       const yards = yardsData.items.map((yard) => ({
         ...yard,
@@ -69,7 +70,7 @@ export class ProductionYardWebController {
         sidebarPath: 'production/partials/sidebar',
         activeTab: 'yards',
         yards,
-        departments: activeDepartments,
+        departments: accessibleDepartments,
         selectedDepartmentId: departmentId || '',
         pagination: {
           page: yardsData.page,
@@ -78,9 +79,7 @@ export class ProductionYardWebController {
           totalPages: yardsData.totalPages,
         },
         search: search || '',
-        canCreate: createPolicy.hasAnyAccess,
-        canUpdate: updatePolicy.hasAnyAccess,
-        canDelete: deletePolicy.hasAnyAccess,
+        canCreate: creatableDepartments.length > 0,
       });
     } catch (error) {
       next(error);
@@ -96,11 +95,7 @@ export class ProductionYardWebController {
         SystemPermission.PRODUCTION_YARD_CREATE
       );
 
-      // Filter departments dropdown to only those permitted by policy for yard creation
-      const allActiveDepartments = await this.departmentService.listActiveDepartments();
-      const permittedDepartments = allActiveDepartments.filter((d) =>
-        canAccessDepartment(createPolicy, d.id)
-      );
+      const permittedDepartments = await this.departmentService.listActiveDepartmentsForPolicy(createPolicy);
 
       res.render('dashboard/production/yards/create', {
         layout: 'dashboard/production/layout',
@@ -127,14 +122,14 @@ export class ProductionYardWebController {
         SystemPermission.PRODUCTION_YARD_UPDATE
       );
       const yard = await this.yardService.getYardById(id as string, updatePolicy);
-      const activeDepartments = await this.departmentService.listActiveDepartments();
+      const permittedDepartments = await this.departmentService.listActiveDepartmentsForPolicy(updatePolicy);
 
-      // Ensure the current department is in the list even if it was deactivated
-      const hasCurrentDept = activeDepartments.some((d) => d.id === yard.departmentId);
+      // Ensure the current department is in the list even if user does not have department-level access to it
+      const hasCurrentDept = permittedDepartments.some((d) => d.id === yard.departmentId);
       if (!hasCurrentDept && yard.departmentId) {
-        activeDepartments.push({
+        permittedDepartments.push({
           id: yard.departmentId,
-          name: `${yard.departmentName} (معطل)`,
+          name: yard.departmentName,
           code: '',
         });
       }
@@ -148,7 +143,7 @@ export class ProductionYardWebController {
         sidebarPath: 'production/partials/sidebar',
         activeTab: 'yards',
         yard,
-        departments: activeDepartments,
+        departments: permittedDepartments,
       });
     } catch (error) {
       next(error);

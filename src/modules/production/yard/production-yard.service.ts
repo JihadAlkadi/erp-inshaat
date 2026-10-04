@@ -250,29 +250,7 @@ export class ProductionYardService {
 
       const sourceDepartment = lockedDepartments.get(sourceDepartmentId);
       if (!sourceDepartment) {
-        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
-      }
-
-      const isMovingDepartment = targetDepartmentId !== undefined;
-      let targetDepartment = sourceDepartment;
-
-      if (isMovingDepartment) {
-        const foundTarget = lockedDepartments.get(targetDepartmentId);
-        if (!foundTarget || !foundTarget.isActive) {
-          throw new BusinessRuleError(
-            'قسم الإنتاج المستهدف غير موجود أو غير نشط',
-            'PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE'
-          );
-        }
-        targetDepartment = foundTarget;
-
-        // Verify user has department-level access to the target department
-        if (!canAccessDepartment(policy, targetDepartment.id)) {
-          throw new ForbiddenError(
-            'ليس لديك صلاحية لنقل الساحة إلى قسم الإنتاج المستهدف',
-            'ACCESS_SCOPE_DENIED'
-          );
-        }
+        throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
       }
 
       // 3. Lock Target Yard (Protocol step 2)
@@ -295,13 +273,33 @@ export class ProductionYardService {
         );
       }
 
-      // 4. Enforce row-level authorization on current yard
+      // 4. Enforce row-level authorization on source yard before evaluating target department
       if (!canAccessYard(policy, { id: yard.id, departmentId: yard.departmentId })) {
         throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
       }
 
-      // 5. Invariant: If moving to another department, verify no assigned engineers
+      // 5. After source yard is authorized, validate target department if moving
+      const isMovingDepartment = targetDepartmentId !== undefined;
+      let targetDepartment = sourceDepartment;
+
       if (isMovingDepartment) {
+        const foundTarget = lockedDepartments.get(targetDepartmentId);
+        if (!foundTarget || !foundTarget.isActive) {
+          throw new BusinessRuleError(
+            'قسم الإنتاج المستهدف غير موجود أو غير نشط',
+            'PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE'
+          );
+        }
+
+        // Verify user has department-level access to the target department
+        if (!canAccessDepartment(policy, foundTarget.id)) {
+          throw new ForbiddenError(
+            'ليس لديك صلاحية لنقل الساحة إلى قسم الإنتاج المستهدف',
+            'ACCESS_SCOPE_DENIED'
+          );
+        }
+
+        // Invariant: If moving to another department, verify no assigned engineers
         const assignedCount = await yardEngRepo.count({
           where: { yardId: yard.id },
         });
@@ -313,6 +311,7 @@ export class ProductionYardService {
           );
         }
 
+        targetDepartment = foundTarget;
         yard.departmentId = targetDepartment.id;
       }
 
@@ -433,6 +432,36 @@ export class ProductionYardService {
       yard.isActive = false;
       await yardRepo.save(yard);
     });
+  }
+
+  /**
+   * Retrieves distinct department options derived strictly from accessible yards within the user's yard view policy.
+   * Prevents leaking department metadata that the user has no visibility over.
+   */
+  async listAccessibleDepartmentOptions(
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<Array<{ id: string; name: string; code: string }>> {
+    const qb = this.yardRepository
+      .createQueryBuilder('yard')
+      .innerJoin('yard.department', 'department')
+      .where('yard.deletedAt IS NULL')
+      .andWhere('department.deletedAt IS NULL');
+
+    applyYardAccessScope(qb, policy, 'yard');
+
+    qb.select('department.id', 'id')
+      .addSelect('department.name', 'name')
+      .addSelect('department.code', 'code')
+      .distinct(true)
+      .orderBy('department.name', 'ASC');
+
+    const rows = await qb.getRawMany<{ id: string; name: string; code: string }>();
+
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      code: r.code,
+    }));
   }
 }
 

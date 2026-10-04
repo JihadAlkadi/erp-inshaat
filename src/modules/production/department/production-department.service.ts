@@ -436,17 +436,29 @@ export class ProductionDepartmentService {
     return department;
   }
 
-  async listActiveDepartments(
-    policy?: ResolvedProductionAccessPolicy
+  async listActiveDepartments(): Promise<{ id: string; name: string; code: string }[]> {
+    const depts = await this.departmentRepository.find({
+      where: { isActive: true, deletedAt: IsNull() },
+      order: { name: 'ASC' },
+      select: { id: true, name: true, code: true },
+    });
+
+    return depts.map((d) => ({
+      id: d.id,
+      name: d.name,
+      code: d.code,
+    }));
+  }
+
+  async listActiveDepartmentsForPolicy(
+    policy: ResolvedProductionAccessPolicy
   ): Promise<{ id: string; name: string; code: string }[]> {
     const qb = this.departmentRepository
       .createQueryBuilder('dept')
       .where('dept.isActive = :isActive', { isActive: true })
       .andWhere('dept.deletedAt IS NULL');
 
-    if (policy) {
-      applyDepartmentAccessScope(qb, policy, 'dept');
-    }
+    applyDepartmentAccessScope(qb, policy, 'dept');
 
     qb.orderBy('dept.name', 'ASC')
       .select(['dept.id', 'dept.name', 'dept.code']);

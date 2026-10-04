@@ -19,10 +19,17 @@ export class ProductionTeamWebController {
       const managePolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE);
 
       const teamData = await this.teamService.getDepartmentTeam(departmentId as string, viewPolicy);
-      const activeUsers = await this.teamService.listAvailableDepartmentHeadUsers();
-      const departmentYards = await this.teamService.listDepartmentActiveYards(departmentId as string);
-
       const canManage = canAccessDepartment(managePolicy, departmentId as string);
+
+      let activeUsers: Array<{ id: string; fullName: string; phone: string }> = [];
+      let departmentYards: Array<{ id: string; name: string; code: string }> = [];
+
+      if (canManage) {
+        [activeUsers, departmentYards] = await Promise.all([
+          this.teamService.listAvailableDepartmentHeadUsers(),
+          this.teamService.listDepartmentActiveYards(departmentId as string),
+        ]);
+      }
 
       res.render('dashboard/production/team/index', {
         layout: 'dashboard/production/layout',
@@ -52,10 +59,11 @@ export class ProductionTeamWebController {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
-      const viewPolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_VIEW);
-      const teamData = await this.teamService.getDepartmentTeam(departmentId as string, viewPolicy);
-      const activeUsers = await this.teamService.listAvailableEngineerUsers();
-      const departmentYards = await this.teamService.listDepartmentActiveYards(departmentId as string);
+      const teamData = await this.teamService.getDepartmentTeam(departmentId as string, managePolicy);
+      const [activeUsers, departmentYards] = await Promise.all([
+        this.teamService.listAvailableEngineerUsers(),
+        this.teamService.listDepartmentActiveYards(departmentId as string),
+      ]);
 
       res.render('dashboard/production/team/create-engineer', {
         layout: 'dashboard/production/layout',
@@ -82,8 +90,7 @@ export class ProductionTeamWebController {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
-      const viewPolicy = await getProductionAccessPolicy(req, req.user!, SystemPermission.PRODUCTION_ASSIGNMENT_VIEW);
-      const teamData = await this.teamService.getDepartmentTeam(departmentId as string, viewPolicy);
+      const teamData = await this.teamService.getDepartmentTeam(departmentId as string, managePolicy);
       const engineer = teamData.engineers.find((e) => e.assignmentId === assignmentId);
 
       if (!engineer) {

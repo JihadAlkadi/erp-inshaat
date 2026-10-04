@@ -98,6 +98,13 @@ Authorization = ماذا يستطيع؟
 - يُمنع نهائياً تخزين أسماء أعمدة أو شروط SQL داخل `AccessRule.scope` JSON؛ المترجمات (`Resource-Specific Translators`) الصريحة فقط هي المسؤولة عن بناء شروط SQL عبر `TypeORM parameters`.
 - تفوق الرفض (`DENY wins`): أي قاعدة حظر متطابقة تتفوق على أي منح.
 - انغلاق الأمان (Fail Closed): قواعد المنح (`ALLOW`) غير المعروفة أو غير الصالحة لا تمنح شيئاً، وقواعد الحظر (`DENY`) غير المعروفة أو غير الصالحة تؤدي للرفض التام (`denyAll = true`). في حال وجود تعارض أو فساد في الحالة التشغيلية للمستخدم (`isConsistent = false`)، يتم إبطال النطاقات الديناميكية تلقائياً.
+- Dynamic responsibility resolver must fail closed on inconsistent Department/Yard mappings.
+- Engineer Yard scope must only resolve yards belonging to the engineer's current Production Department.
+- Soft-deleted Department/Yard relationships in a current assignment are inconsistent state.
+- Scope JSON payloads are exact-shape contracts; extra keys are invalid.
+- Authorization-protected lookup metadata such as dropdown/filter options must also be scoped at DB query level (`listActiveDepartmentsForPolicy`, `listAccessibleDepartmentOptions`).
+- UI dropdown data is subject to authorization like normal business rows; no post-fetch filtering.
+- Target-specific errors must not be revealed before current resource scope authorization (`updateYard` verifies source yard access before target errors).
 - كاش الصلاحيات والمسؤوليات تشغيلي على مستوى الطلب فقط (`Request-level cache via WeakMap`)؛ يُمنع استخدام Redis أو تخزين النطاقات داخل JWT أو Session.
 - الدلالة الأمنية للاستجابات: عند عدم وجود وصول فعال للعملية يُرجع `403 (ACCESS_SCOPE_DENIED)`، وعند طلب سجل محدد خارج نطاق الوصول يُرجع `404 (RESOURCE_NOT_FOUND)` لمنع كشف وجود البيانات (`Prevent Information Leakage`).
 

@@ -3,27 +3,24 @@ import { AppDataSource } from '../../../database/data-source.js';
 import { AuthPrincipal } from '../../system/auth/auth.types.js';
 import { ProductionDepartmentEntity } from '../department/production-department.entity.js';
 import { ProductionDepartmentEngineerEntity } from '../team/entities/production-department-engineer.entity.js';
-import { ProductionYardEngineerEntity } from '../team/entities/production-yard-engineer.entity.js';
 import { ProductionResponsibility } from './production-access-policy.types.js';
 
 export class ProductionResponsibilityResolver {
   private readonly departmentRepository: Repository<ProductionDepartmentEntity>;
   private readonly engineerRepository: Repository<ProductionDepartmentEngineerEntity>;
-  private readonly yardEngineerRepository: Repository<ProductionYardEngineerEntity>;
 
   constructor(
     deptRepo: Repository<ProductionDepartmentEntity> = AppDataSource.getRepository(ProductionDepartmentEntity),
-    engRepo: Repository<ProductionDepartmentEngineerEntity> = AppDataSource.getRepository(ProductionDepartmentEngineerEntity),
-    yardEngRepo: Repository<ProductionYardEngineerEntity> = AppDataSource.getRepository(ProductionYardEngineerEntity)
+    engRepo: Repository<ProductionDepartmentEngineerEntity> = AppDataSource.getRepository(ProductionDepartmentEngineerEntity)
   ) {
     this.departmentRepository = deptRepo;
     this.engineerRepository = engRepo;
-    this.yardEngineerRepository = yardEngRepo;
   }
 
   /**
    * Resolves the current production responsibilities of the authenticated principal directly from the database.
-   * Runs exactly 2 targeted queries (Head query + Engineer/Yards query) without N+1.
+   * Runs exactly 2 targeted queries (Head query + Engineer joined query) without N+1.
+   * Fails closed on any corrupted department/yard mappings or soft-deleted relationships.
    */
   async resolve(principal: AuthPrincipal): Promise<ProductionResponsibility> {
     if (!principal || !principal.id) {
@@ -43,31 +40,58 @@ export class ProductionResponsibilityResolver {
 
     const headDepartmentId = headDept ? headDept.id : null;
 
-    // 2. Resolve Active Engineer assignment and assigned non-deleted yards
-    const engineerAssignment = await this.engineerRepository.findOne({
-      where: { userId: principal.id, isActive: true },
-      select: { id: true, departmentId: true },
-    });
+    // 2. Resolve Active Engineer assignment and joined department and yard mappings in a single query
+    const engineerAssignment = await this.engineerRepository
+      .createQueryBuilder('eng')
+      .leftJoinAndSelect('eng.department', 'department')
+      .leftJoinAndSelect('eng.yardMappings', 'yardMapping')
+      .leftJoinAndSelect('yardMapping.yard', 'yard')
+      .where('eng.userId = :userId', { userId: principal.id })
+      .andWhere('eng.isActive = :isActive', { isActive: true })
+      .getOne();
 
     let engineerDepartmentId: string | null = null;
     let engineerYardIds: string[] = [];
+    let isConsistent = true;
 
     if (engineerAssignment) {
       engineerDepartmentId = engineerAssignment.departmentId;
 
-      const yardMappings = await this.yardEngineerRepository
-        .createQueryBuilder('ye')
-        .innerJoin('ye.yard', 'yard')
-        .where('ye.departmentEngineerId = :assignmentId', { assignmentId: engineerAssignment.id })
-        .andWhere('yard.deletedAt IS NULL')
-        .select('ye.yardId', 'yardId')
-        .getRawMany<{ yardId: string }>();
+      let hasMappingCorruption = false;
 
-      engineerYardIds = Array.from(new Set(yardMappings.map((m) => m.yardId))).sort();
+      // Invariant: Engineer department must exist and not be soft-deleted
+      if (!engineerAssignment.department || engineerAssignment.department.deletedAt !== null) {
+        hasMappingCorruption = true;
+      }
+
+      // Invariant: Every yard mapping must exist, be non-deleted, and belong to the engineer's department
+      if (!hasMappingCorruption && engineerAssignment.yardMappings) {
+        for (const ym of engineerAssignment.yardMappings) {
+          if (
+            !ym.yard ||
+            ym.yard.deletedAt !== null ||
+            ym.yard.departmentId !== engineerAssignment.departmentId
+          ) {
+            hasMappingCorruption = true;
+            break;
+          }
+        }
+      }
+
+      if (hasMappingCorruption) {
+        isConsistent = false;
+        engineerYardIds = [];
+      } else if (engineerAssignment.yardMappings) {
+        engineerYardIds = Array.from(
+          new Set(engineerAssignment.yardMappings.map((m) => m.yard.id))
+        ).sort();
+      }
     }
 
     // 3. Mutual exclusivity invariant validation (Fail-closed on corrupted data)
-    const isConsistent = !(headDepartmentId !== null && engineerDepartmentId !== null);
+    if (headDepartmentId !== null && engineerDepartmentId !== null) {
+      isConsistent = false;
+    }
 
     return {
       headDepartmentId,

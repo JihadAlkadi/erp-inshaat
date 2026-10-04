@@ -81,10 +81,6 @@ export class ProductionDepartmentWebController {
         },
         search: search || '',
         canCreate,
-        canUpdate: updatePolicy.hasAnyAccess,
-        canDelete: deletePolicy.hasAnyAccess,
-        canViewTeam: viewTeamPolicy.hasAnyAccess,
-        canManageTeam: manageTeamPolicy.hasAnyAccess,
       });
     } catch (error) {
       next(error);
