@@ -151,72 +151,102 @@ export class ProductionDepartmentService {
   async createDepartment(dto: CreateProductionDepartmentDto): Promise<SafeProductionDepartmentOutput> {
     const normalizedCode = dto.code.trim().toUpperCase();
 
-    // 1. Check uniqueness including soft-deleted departments
-    const existingCode = await this.departmentRepository
-      .createQueryBuilder('dept')
-      .withDeleted()
-      .where('dept.code = :code', { code: normalizedCode })
-      .getOne();
+    return await AppDataSource.transaction(async (manager) => {
+      const deptRepo = manager.getRepository(ProductionDepartmentEntity);
+      const userRepo = manager.getRepository(UserEntity);
 
-    if (existingCode) {
-      throw new ConflictError(
-        'رمز قسم الإنتاج مستخدم مسبقاً',
-        'PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS'
-      );
-    }
+      // 1. Lock & Validate Head User (Protocol step: lock user row)
+      const headUser = await userRepo
+        .createQueryBuilder('user')
+        .setLock('pessimistic_write')
+        .where('user.id = :id', { id: dto.headUserId })
+        .andWhere('user.deletedAt IS NULL')
+        .getOne();
 
-    // 2. Validate Head User exists, active and non-deleted
-    const userRepo = AppDataSource.getRepository(UserEntity);
-    const headUser = await userRepo.findOne({
-      where: { id: dto.headUserId, deletedAt: IsNull() },
-    });
+      if (!headUser || !headUser.isActive) {
+        throw new BusinessRuleError(
+          'المستخدم المحدد غير موجود أو غير متاح لتعيينه رئيساً للقسم',
+          'PRODUCTION_DEPARTMENT_HEAD_USER_NOT_AVAILABLE'
+        );
+      }
 
-    if (!headUser || !headUser.isActive) {
-      throw new BusinessRuleError(
-        'المستخدم المحدد غير موجود أو غير متاح لتعيينه رئيساً للقسم',
-        'PRODUCTION_DEPARTMENT_HEAD_USER_NOT_AVAILABLE'
-      );
-    }
+      // 2. Check if user is already head of another non-deleted department
+      const existingHeadDept = await deptRepo
+        .createQueryBuilder('dept')
+        .where('dept.headUserId = :headUserId', { headUserId: headUser.id })
+        .andWhere('dept.deletedAt IS NULL')
+        .getOne();
 
-    try {
-      const department = this.departmentRepository.create({
-        name: dto.name.trim(),
-        code: normalizedCode,
-        description: dto.description ?? null,
-        isActive: dto.isActive ?? true,
-        headUserId: headUser.id,
-      });
+      if (existingHeadDept) {
+        throw new ConflictError(
+          'المستخدم المحدد هو رئيس قسم إنتاج آخر ولا يمكن تعيينه رئيساً لأكثر من قسم',
+          'PRODUCTION_USER_ALREADY_DEPARTMENT_HEAD'
+        );
+      }
 
-      const saved = await this.departmentRepository.save(department);
+      // 3. Check code uniqueness including soft-deleted departments
+      const existingCode = await deptRepo
+        .createQueryBuilder('dept')
+        .withDeleted()
+        .where('dept.code = :code', { code: normalizedCode })
+        .getOne();
 
-      return {
-        id: saved.id,
-        name: saved.name,
-        code: saved.code,
-        description: saved.description,
-        isActive: saved.isActive,
-        headUserId: saved.headUserId,
-        headUserName: headUser.fullName,
-        yardCount: 0,
-        activeYardCount: 0,
-        createdAt: saved.createdAt,
-        updatedAt: saved.updatedAt,
-      };
-    } catch (err: unknown) {
-      if (
-        typeof err === 'object' &&
-        err !== null &&
-        'code' in err &&
-        ((err as { code: string }).code === 'ER_DUP_ENTRY' ||
-          ('errno' in err && (err as { errno: number }).errno === 1062))
-      ) {
+      if (existingCode) {
         throw new ConflictError(
           'رمز قسم الإنتاج مستخدم مسبقاً',
           'PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS'
         );
       }
-      throw err;
-    }
+
+      try {
+        const department = deptRepo.create({
+          name: dto.name.trim(),
+          code: normalizedCode,
+          description: dto.description ?? null,
+          isActive: dto.isActive ?? true,
+          headUserId: headUser.id,
+        });
+
+        const saved = await deptRepo.save(department);
+
+        return {
+          id: saved.id,
+          name: saved.name,
+          code: saved.code,
+          description: saved.description,
+          isActive: saved.isActive,
+          headUserId: saved.headUserId,
+          headUserName: headUser.fullName,
+          yardCount: 0,
+          activeYardCount: 0,
+          createdAt: saved.createdAt,
+          updatedAt: saved.updatedAt,
+        };
+      } catch (err: unknown) {
+        if (
+          typeof err === 'object' &&
+          err !== null &&
+          'code' in err &&
+          ((err as { code: string }).code === 'ER_DUP_ENTRY' ||
+            ('errno' in err && (err as { errno: number }).errno === 1062))
+        ) {
+          const errMsg = 'message' in err && typeof (err as { message: string }).message === 'string'
+            ? (err as { message: string }).message
+            : '';
+          if (errMsg.includes('UQ_production_department_head_user') || errMsg.includes('head_user_id')) {
+            throw new ConflictError(
+              'المستخدم المحدد هو رئيس قسم إنتاج آخر ولا يمكن تعيينه رئيساً لأكثر من قسم',
+              'PRODUCTION_USER_ALREADY_DEPARTMENT_HEAD'
+            );
+          }
+          throw new ConflictError(
+            'رمز قسم الإنتاج مستخدم مسبقاً',
+            'PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS'
+          );
+        }
+        throw err;
+      }
+    });
   }
 
   async updateDepartment(

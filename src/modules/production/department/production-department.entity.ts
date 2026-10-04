@@ -26,7 +26,7 @@ export class ProductionDepartmentEntity {
   @Column({ type: 'varchar', length: 50 })
   code!: string;
 
-  @Index('IDX_production_department_head_user_id')
+  @Index('UQ_production_department_head_user', { unique: true })
   @Column({ name: 'head_user_id', type: 'varchar', length: 36, nullable: true })
   headUserId!: string | null;
 

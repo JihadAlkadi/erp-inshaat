@@ -3,6 +3,7 @@ export interface SafeHeadUserOutput {
   fullName: string;
   phone: string;
   isActive: boolean;
+  isArchived: boolean;
 }
 
 export interface SafeEngineerYardOutput {
@@ -19,6 +20,7 @@ export interface SafeEngineerAssignmentOutput {
   fullName: string;
   phone: string;
   userIsActive: boolean;
+  userIsArchived: boolean;
   assignmentIsActive: boolean;
   yards: SafeEngineerYardOutput[];
   createdAt: Date;
@@ -37,7 +39,13 @@ export interface DepartmentTeamOutput {
   engineers: SafeEngineerAssignmentOutput[];
 }
 
-export interface ActiveUserSelectOption {
+export interface AvailableHeadUserSelectOption {
+  id: string;
+  fullName: string;
+  phone: string;
+}
+
+export interface AvailableEngineerSelectOption {
   id: string;
   fullName: string;
   phone: string;

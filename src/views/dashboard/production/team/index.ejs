@@ -59,7 +59,11 @@
               <span class="badge bg-primary-subtle text-primary border border-primary-subtle">
                 <i class="fa-solid fa-shield-halved me-1"></i> مسؤول تلقائياً عن جميع ساحات القسم
               </span>
-              <% if (head && head.isActive) { %>
+              <% if (head && head.isArchived) { %>
+                <span class="badge bg-secondary-subtle text-secondary border">
+                  <i class="fa-solid fa-box-archive me-1"></i> مؤرشف / غير متاح
+                </span>
+              <% } else if (head && head.isActive) { %>
                 <span class="badge bg-success-subtle text-success">
                   <i class="fa-solid fa-circle-check me-1"></i> حساب نشط
                 </span>
@@ -143,6 +147,9 @@
                           <i class="fa-solid fa-warehouse text-muted small"></i>
                           <span><%= yard.name %></span>
                           <code class="text-muted small ms-1">(<%= yard.code %>)</code>
+                          <% if (!yard.isActive) { %>
+                            <span class="badge bg-danger-subtle text-danger ms-1">معطلة</span>
+                          <% } %>
                         </span>
                       <% }); %>
                     </div>
@@ -151,7 +158,11 @@
                   <% } %>
                 </td>
                 <td class="text-center">
-                  <% if (eng.userIsActive) { %>
+                  <% if (eng.userIsArchived) { %>
+                    <span class="badge bg-secondary-subtle text-secondary border px-3 py-1 rounded-pill">
+                      <i class="fa-solid fa-box-archive me-1"></i> مؤرشف / غير متاح
+                    </span>
+                  <% } else if (eng.userIsActive) { %>
                     <span class="badge bg-success-subtle text-success px-3 py-1 rounded-pill">
                       <i class="fa-solid fa-circle-check me-1"></i> نشط
                     </span>
@@ -223,24 +234,32 @@
 
             <div class="mb-3">
               <label for="headSelectUserId" class="form-label fw-bold">اختر رئيس القسم الجديد <span class="text-danger">*</span></label>
-              <select class="form-select" id="headSelectUserId" name="userId" required>
-                <option value="" disabled selected>-- اختر من المستخدمين النشطين --</option>
+              <select class="form-select" id="headSelectUserId" name="userId" required <%= !activeUsers || activeUsers.length === 0 ? 'disabled' : '' %>>
                 <% if (activeUsers && activeUsers.length > 0) { %>
+                  <option value="" disabled selected>-- اختر من المستخدمين النشطين المتاحين --</option>
                   <% activeUsers.forEach(function(u) { %>
                     <option value="<%= u.id %>" <%= head && head.id === u.id ? 'selected' : '' %>>
                       <%= u.fullName %> (<%= u.phone %>)
                     </option>
                   <% }); %>
+                <% } else { %>
+                  <option value="" disabled selected>لا يوجد مستخدمون متاحون للتعيين حالياً</option>
                 <% } %>
               </select>
             </div>
+            <% if (!activeUsers || activeUsers.length === 0) { %>
+              <div class="alert alert-warning py-2 px-3 small" role="alert">
+                <i class="fa-solid fa-triangle-exclamation me-1"></i>
+                لا يوجد مستخدمون متاحون لتولي رئاسة هذا القسم (المستخدم يمكن أن يكون رئيساً لقسم واحد فقط).
+              </div>
+            <% } %>
             <div class="form-text text-muted small">
               رئيس القسم يكون مسؤولاً تلقائياً عن جميع ساحات القسم الحالية والمستقبلية دون الحاجة لإسناده لساحات فردية.
             </div>
           </div>
           <div class="modal-footer bg-light">
             <button type="button" class="btn btn-light" data-bs-dismiss="modal">إلغاء</button>
-            <button type="submit" id="saveHeadBtn" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background-color: #0984E3; border-color: #0984E3;">
+            <button type="submit" id="saveHeadBtn" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background-color: #0984E3; border-color: #0984E3;" <%= !activeUsers || activeUsers.length === 0 ? 'disabled' : '' %>>
               <span class="spinner-border spinner-border-sm d-none" role="status"></span>
               <i class="fa-solid fa-floppy-disk"></i>
               <span>حفظ رئيس القسم</span>

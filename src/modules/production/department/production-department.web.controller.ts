@@ -60,7 +60,7 @@ export class ProductionDepartmentWebController {
 
   renderCreateDepartmentForm = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const activeUsers = await productionTeamService.listActiveUsersForAssignment();
+      const activeUsers = await productionTeamService.listAvailableDepartmentHeadUsers();
 
       res.render('dashboard/production/departments/create', {
         layout: 'dashboard/production/layout',

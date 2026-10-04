@@ -1,4 +1,4 @@
-import { EntityManager, In, IsNull } from 'typeorm';
+import { EntityManager, IsNull } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionDepartmentEntity } from '../department/production-department.entity.js';
 import { ProductionYardEntity } from '../yard/production-yard.entity.js';
@@ -9,7 +9,8 @@ import {
   DepartmentTeamOutput,
   SafeEngineerAssignmentOutput,
   SafeHeadUserOutput,
-  ActiveUserSelectOption,
+  AvailableHeadUserSelectOption,
+  AvailableEngineerSelectOption,
 } from './production-team.types.js';
 import { CreateProductionEngineerAssignmentDto } from './dto/create-production-engineer-assignment.dto.js';
 import { UpdateProductionEngineerYardsDto } from './dto/update-production-engineer-yards.dto.js';
@@ -20,13 +21,14 @@ import { BusinessRuleError } from '../../../common/errors/business-rule.error.js
 export class ProductionTeamService {
   /**
    * Retrieves the department team details (Head + Engineers + Yards) in an optimized batched query without N+1.
+   * Soft-deleted (archived) users remain visible with appropriate flags and identities.
    */
   async getDepartmentTeam(departmentId: string): Promise<DepartmentTeamOutput> {
     const deptRepo = AppDataSource.getRepository(ProductionDepartmentEntity);
+    const userRepo = AppDataSource.getRepository(UserEntity);
 
     const department = await deptRepo
       .createQueryBuilder('dept')
-      .leftJoinAndSelect('dept.headUser', 'headUser')
       .where('dept.id = :departmentId', { departmentId })
       .andWhere('dept.deletedAt IS NULL')
       .getOne();
@@ -36,51 +38,79 @@ export class ProductionTeamService {
     }
 
     let head: SafeHeadUserOutput | null = null;
-    if (department.headUser) {
-      head = {
-        id: department.headUser.id,
-        fullName: department.headUser.fullName,
-        phone: department.headUser.phone,
-        isActive: department.headUser.isActive && !department.headUser.deletedAt,
-      };
+    if (department.headUserId) {
+      const headUser = await userRepo
+        .createQueryBuilder('u')
+        .withDeleted()
+        .where('u.id = :id', { id: department.headUserId })
+        .select(['u.id', 'u.fullName', 'u.phone', 'u.isActive', 'u.deletedAt'])
+        .getOne();
+
+      if (headUser) {
+        head = {
+          id: headUser.id,
+          fullName: headUser.fullName,
+          phone: headUser.phone,
+          isActive: Boolean(headUser.isActive && !headUser.deletedAt),
+          isArchived: Boolean(headUser.deletedAt),
+        };
+      }
     }
 
-    // Fetch active engineer assignments with their user and yard mappings in a single joined query
+    // Fetch active engineer assignments with yard mappings in a joined query
     const engRepo = AppDataSource.getRepository(ProductionDepartmentEngineerEntity);
     const engineerRows = await engRepo
       .createQueryBuilder('deptEng')
-      .leftJoinAndSelect('deptEng.user', 'user')
       .leftJoinAndSelect('deptEng.yardMappings', 'yardMapping')
       .leftJoinAndSelect('yardMapping.yard', 'yard')
       .where('deptEng.departmentId = :departmentId', { departmentId })
       .andWhere('deptEng.isActive = :isActive', { isActive: true })
-      .orderBy('user.fullName', 'ASC')
       .getMany();
 
-    const engineers: SafeEngineerAssignmentOutput[] = engineerRows.map((eng) => {
-      const yards = (eng.yardMappings || [])
-        .filter((ym) => ym.yard && ym.yard.deletedAt === null)
-        .map((ym) => ({
-          id: ym.yard.id,
-          name: ym.yard.name,
-          code: ym.yard.code,
-          capacity: ym.yard.capacity,
-          isActive: ym.yard.isActive,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+    // Fetch related users including soft-deleted ones in a single batched query without N+1
+    const userIds = [...new Set(engineerRows.map((e) => e.userId))];
+    const userMap = new Map<string, UserEntity>();
+    if (userIds.length > 0) {
+      const users = await userRepo
+        .createQueryBuilder('u')
+        .withDeleted()
+        .where('u.id IN (:...userIds)', { userIds })
+        .select(['u.id', 'u.fullName', 'u.phone', 'u.isActive', 'u.deletedAt'])
+        .getMany();
 
-      return {
-        assignmentId: eng.id,
-        userId: eng.userId,
-        fullName: eng.user?.fullName || 'مستخدم غير معروف',
-        phone: eng.user?.phone || '',
-        userIsActive: Boolean(eng.user?.isActive && !eng.user?.deletedAt),
-        assignmentIsActive: eng.isActive,
-        yards,
-        createdAt: eng.createdAt,
-        updatedAt: eng.updatedAt,
-      };
-    });
+      for (const u of users) {
+        userMap.set(u.id, u);
+      }
+    }
+
+    const engineers: SafeEngineerAssignmentOutput[] = engineerRows
+      .map((eng) => {
+        const user = userMap.get(eng.userId);
+        const yards = (eng.yardMappings || [])
+          .filter((ym) => ym.yard && ym.yard.deletedAt === null)
+          .map((ym) => ({
+            id: ym.yard.id,
+            name: ym.yard.name,
+            code: ym.yard.code,
+            capacity: ym.yard.capacity,
+            isActive: ym.yard.isActive,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+
+        return {
+          assignmentId: eng.id,
+          userId: eng.userId,
+          fullName: user?.fullName || 'مستخدم غير معروف',
+          phone: user?.phone || '',
+          userIsActive: Boolean(user?.isActive && !user?.deletedAt),
+          userIsArchived: Boolean(user?.deletedAt),
+          assignmentIsActive: eng.isActive,
+          yards,
+          createdAt: eng.createdAt,
+          updatedAt: eng.updatedAt,
+        };
+      })
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'ar'));
 
     return {
       department: {
@@ -97,6 +127,7 @@ export class ProductionTeamService {
 
   /**
    * Sets or changes the department head atomically with pessimistic locking.
+   * Enforces that a user can head at most one non-deleted Production Department.
    */
   async setDepartmentHead(
     departmentId: string,
@@ -106,7 +137,7 @@ export class ProductionTeamService {
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
       const userRepo = manager.getRepository(UserEntity);
 
-      // 1. Lock Department
+      // 1. Lock Department (Protocol step 1)
       const department = await deptRepo
         .createQueryBuilder('dept')
         .setLock('pessimistic_write')
@@ -118,7 +149,7 @@ export class ProductionTeamService {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
-      // 2. Lock User
+      // 2. Lock User (Protocol step 2)
       const user = await userRepo
         .createQueryBuilder('user')
         .setLock('pessimistic_write')
@@ -133,24 +164,72 @@ export class ProductionTeamService {
         );
       }
 
-      department.headUserId = user.id;
-      await deptRepo.save(department);
+      // 3. Verify user is not head of another non-deleted department
+      const otherHeadDept = await deptRepo
+        .createQueryBuilder('dept')
+        .where('dept.headUserId = :userId', { userId: user.id })
+        .andWhere('dept.id != :departmentId', { departmentId })
+        .andWhere('dept.deletedAt IS NULL')
+        .getOne();
 
-      return {
-        success: true,
-        message: 'تم تعيين رئيس قسم الإنتاج بنجاح',
-        head: {
-          id: user.id,
-          fullName: user.fullName,
-          phone: user.phone,
-          isActive: user.isActive,
-        },
-      };
+      if (otherHeadDept) {
+        throw new ConflictError(
+          'المستخدم المحدد هو رئيس قسم إنتاج آخر ولا يمكن تعيينه رئيساً لأكثر من قسم',
+          'PRODUCTION_USER_ALREADY_DEPARTMENT_HEAD'
+        );
+      }
+
+      // If already head of current department, return idempotently
+      if (department.headUserId === user.id) {
+        return {
+          success: true,
+          message: 'تم تعيين رئيس قسم الإنتاج بنجاح',
+          head: {
+            id: user.id,
+            fullName: user.fullName,
+            phone: user.phone,
+            isActive: user.isActive,
+            isArchived: false,
+          },
+        };
+      }
+
+      try {
+        department.headUserId = user.id;
+        await deptRepo.save(department);
+
+        return {
+          success: true,
+          message: 'تم تعيين رئيس قسم الإنتاج بنجاح',
+          head: {
+            id: user.id,
+            fullName: user.fullName,
+            phone: user.phone,
+            isActive: user.isActive,
+            isArchived: false,
+          },
+        };
+      } catch (err: unknown) {
+        if (
+          typeof err === 'object' &&
+          err !== null &&
+          'code' in err &&
+          ((err as { code: string }).code === 'ER_DUP_ENTRY' ||
+            ('errno' in err && (err as { errno: number }).errno === 1062))
+        ) {
+          throw new ConflictError(
+            'المستخدم المحدد هو رئيس قسم إنتاج آخر ولا يمكن تعيينه رئيساً لأكثر من قسم',
+            'PRODUCTION_USER_ALREADY_DEPARTMENT_HEAD'
+          );
+        }
+        throw err;
+      }
     });
   }
 
   /**
    * Adds an engineer assignment to the department with all yard mappings in a single transaction.
+   * Enforces candidate rules: active, non-deleted, not a department head, no active engineer assignment, no existing mappings.
    */
   async addEngineerToDepartment(
     departmentId: string,
@@ -163,7 +242,7 @@ export class ProductionTeamService {
       const yardRepo = manager.getRepository(ProductionYardEntity);
       const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
-      // 1. Lock Department
+      // 1. Lock Department (Protocol step 1)
       const department = await deptRepo
         .createQueryBuilder('dept')
         .setLock('pessimistic_write')
@@ -182,7 +261,7 @@ export class ProductionTeamService {
         );
       }
 
-      // 2. Lock User (Serialization point for multi-department conflict prevention)
+      // 2. Lock User (Protocol step 2)
       const user = await userRepo
         .createQueryBuilder('user')
         .setLock('pessimistic_write')
@@ -197,7 +276,21 @@ export class ProductionTeamService {
         );
       }
 
-      // 3. Check existing engineer record across all production departments
+      // Invariant: Department head cannot be assigned as an engineer
+      const isHead = await deptRepo
+        .createQueryBuilder('dept')
+        .where('dept.headUserId = :userId', { userId: user.id })
+        .andWhere('dept.deletedAt IS NULL')
+        .getOne();
+
+      if (isHead) {
+        throw new BusinessRuleError(
+          'لا يمكن إسناد رئيس قسم إنتاج كمهندس ساحات',
+          'PRODUCTION_DEPARTMENT_HEAD_CANNOT_BE_ENGINEER'
+        );
+      }
+
+      // 3. Lock & check existing engineer record across all production departments (Protocol step 3)
       const existingAssignment = await engRepo
         .createQueryBuilder('eng')
         .setLock('pessimistic_write')
@@ -219,7 +312,19 @@ export class ProductionTeamService {
           );
         }
       } else if (existingAssignment && !existingAssignment.isActive) {
-        // Reuse existing assignment record
+        // Check for unexpected stale yard mappings
+        const staleMappingsCount = await yardEngRepo.count({
+          where: { departmentEngineerId: existingAssignment.id },
+        });
+
+        if (staleMappingsCount > 0) {
+          throw new BusinessRuleError(
+            'يوجد ارتباطات ساحات سابقة غير معالجة لهذا المهندس، تعذر إعادة الإسناد',
+            'PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS'
+          );
+        }
+
+        // Clean reuse of existing assignment record
         existingAssignment.departmentId = department.id;
         existingAssignment.isActive = true;
         assignment = existingAssignment;
@@ -232,7 +337,7 @@ export class ProductionTeamService {
         });
       }
 
-      // 4. Validate & Lock Target Yards (Sorted IDs to prevent deadlocks)
+      // 4. Validate & Lock Target Yards (Protocol step 4: Sorted IDs to prevent deadlocks)
       const sortedYardIds = [...new Set(dto.yardIds)].sort();
       if (sortedYardIds.length === 0) {
         throw new BusinessRuleError(
@@ -267,7 +372,7 @@ export class ProductionTeamService {
       try {
         const savedAssignment = await engRepo.save(assignment);
 
-        // Delete any stale mappings (if reused assignment)
+        // Delete any stale mappings (safety guard)
         await yardEngRepo.delete({ departmentEngineerId: savedAssignment.id });
 
         // Insert new yard mappings
@@ -285,6 +390,7 @@ export class ProductionTeamService {
           fullName: user.fullName,
           phone: user.phone,
           userIsActive: user.isActive,
+          userIsArchived: false,
           assignmentIsActive: savedAssignment.isActive,
           yards: yards.map((y) => ({
             id: y.id,
@@ -316,6 +422,7 @@ export class ProductionTeamService {
 
   /**
    * Updates an engineer's assigned yards inside the same department atomically.
+   * Follows the lock protocol: Department -> Assignment -> User -> Yards (sorted).
    */
   async updateEngineerYards(
     departmentId: string,
@@ -323,11 +430,25 @@ export class ProductionTeamService {
     dto: UpdateProductionEngineerYardsDto
   ): Promise<SafeEngineerAssignmentOutput> {
     return await AppDataSource.transaction(async (manager: EntityManager) => {
+      const deptRepo = manager.getRepository(ProductionDepartmentEntity);
+      const userRepo = manager.getRepository(UserEntity);
       const engRepo = manager.getRepository(ProductionDepartmentEngineerEntity);
       const yardRepo = manager.getRepository(ProductionYardEntity);
       const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
-      // 1. Lock Assignment
+      // 1. Lock Department (Protocol step 1)
+      const department = await deptRepo
+        .createQueryBuilder('dept')
+        .setLock('pessimistic_write')
+        .where('dept.id = :departmentId', { departmentId })
+        .andWhere('dept.deletedAt IS NULL')
+        .getOne();
+
+      if (!department) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      // 2. Lock Assignment (Protocol step 2)
       const assignment = await engRepo
         .createQueryBuilder('eng')
         .setLock('pessimistic_write')
@@ -344,7 +465,14 @@ export class ProductionTeamService {
         );
       }
 
-      // 2. Validate & Lock Target Yards
+      // 3. Lock User (Protocol step 3)
+      const user = await userRepo
+        .createQueryBuilder('user')
+        .setLock('pessimistic_write')
+        .where('user.id = :userId', { userId: assignment.userId })
+        .getOne();
+
+      // 4. Validate & Lock Target Yards (Protocol step 4: Sorted IDs)
       const sortedYardIds = [...new Set(dto.yardIds)].sort();
       if (sortedYardIds.length === 0) {
         throw new BusinessRuleError(
@@ -390,12 +518,15 @@ export class ProductionTeamService {
       assignment.updatedAt = new Date();
       await engRepo.save(assignment);
 
+      const resolvedUser = user || assignment.user;
+
       return {
         assignmentId: assignment.id,
         userId: assignment.userId,
-        fullName: assignment.user?.fullName || '',
-        phone: assignment.user?.phone || '',
-        userIsActive: Boolean(assignment.user?.isActive && !assignment.user?.deletedAt),
+        fullName: resolvedUser?.fullName || '',
+        phone: resolvedUser?.phone || '',
+        userIsActive: Boolean(resolvedUser?.isActive && !resolvedUser?.deletedAt),
+        userIsArchived: Boolean(resolvedUser?.deletedAt),
         assignmentIsActive: assignment.isActive,
         yards: yards.map((y) => ({
           id: y.id,
@@ -412,15 +543,31 @@ export class ProductionTeamService {
 
   /**
    * Removes an engineer from the department (sets isActive = false and deletes yard mappings).
+   * Follows the lock protocol: Department -> Assignment -> User.
    */
   async removeEngineerFromDepartment(
     departmentId: string,
     assignmentId: string
   ): Promise<{ success: boolean; message: string }> {
     return await AppDataSource.transaction(async (manager: EntityManager) => {
+      const deptRepo = manager.getRepository(ProductionDepartmentEntity);
+      const userRepo = manager.getRepository(UserEntity);
       const engRepo = manager.getRepository(ProductionDepartmentEngineerEntity);
       const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
+      // 1. Lock Department
+      const department = await deptRepo
+        .createQueryBuilder('dept')
+        .setLock('pessimistic_write')
+        .where('dept.id = :departmentId', { departmentId })
+        .andWhere('dept.deletedAt IS NULL')
+        .getOne();
+
+      if (!department) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      // 2. Lock Assignment
       const assignment = await engRepo
         .createQueryBuilder('eng')
         .setLock('pessimistic_write')
@@ -434,6 +581,13 @@ export class ProductionTeamService {
           'PRODUCTION_ENGINEER_ASSIGNMENT_NOT_FOUND'
         );
       }
+
+      // 3. Lock User
+      await userRepo
+        .createQueryBuilder('user')
+        .setLock('pessimistic_write')
+        .where('user.id = :userId', { userId: assignment.userId })
+        .getOne();
 
       // Delete yard mappings
       await yardEngRepo.delete({ departmentEngineerId: assignment.id });
@@ -450,15 +604,89 @@ export class ProductionTeamService {
   }
 
   /**
-   * Lists active, non-deleted users for assignment selection (without passwords or secrets).
+   * Lists available users for Department Head selection.
+   * Returns active, non-deleted users who are not currently head of any non-deleted department.
+   * (Optionally excludes currentDepartmentId so that the existing head does not appear in candidate list).
    */
-  async listActiveUsersForAssignment(): Promise<ActiveUserSelectOption[]> {
+  async listAvailableDepartmentHeadUsers(
+    currentDepartmentId?: string
+  ): Promise<AvailableHeadUserSelectOption[]> {
     const userRepo = AppDataSource.getRepository(UserEntity);
-    const users = await userRepo.find({
-      where: { isActive: true, deletedAt: IsNull() },
-      order: { fullName: 'ASC' },
-      select: { id: true, fullName: true, phone: true },
-    });
+    const qb = userRepo
+      .createQueryBuilder('user')
+      .where('user.isActive = :isActive', { isActive: true })
+      .andWhere('user.deletedAt IS NULL');
+
+    if (currentDepartmentId) {
+      qb.andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM production_department pd
+          WHERE pd.head_user_id = user.id
+            AND pd.deleted_at IS NULL
+            AND pd.id != :currentDepartmentId
+        )`,
+        { currentDepartmentId }
+      );
+    } else {
+      qb.andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM production_department pd
+          WHERE pd.head_user_id = user.id
+            AND pd.deleted_at IS NULL
+        )`
+      );
+    }
+
+    qb.orderBy('user.fullName', 'ASC')
+      .select(['user.id', 'user.fullName', 'user.phone']);
+
+    const users = await qb.getMany();
+
+    return users.map((u) => ({
+      id: u.id,
+      fullName: u.fullName,
+      phone: u.phone,
+    }));
+  }
+
+  /**
+   * Lists available users for Engineer assignment.
+   * Returns active, non-deleted users who:
+   * - Are not Department Heads of any non-deleted department.
+   * - Have no active engineer assignments in any department.
+   * - Have no current yard mappings in any department.
+   */
+  async listAvailableEngineerUsers(): Promise<AvailableEngineerSelectOption[]> {
+    const userRepo = AppDataSource.getRepository(UserEntity);
+    const qb = userRepo
+      .createQueryBuilder('user')
+      .where('user.isActive = :isActive', { isActive: true })
+      .andWhere('user.deletedAt IS NULL')
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM production_department pd
+          WHERE pd.head_user_id = user.id
+            AND pd.deleted_at IS NULL
+        )`
+      )
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM production_department_engineer pde
+          WHERE pde.user_id = user.id
+            AND pde.is_active = 1
+        )`
+      )
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM production_yard_engineer pye
+          INNER JOIN production_department_engineer pde2 ON pye.department_engineer_id = pde2.id
+          WHERE pde2.user_id = user.id
+        )`
+      )
+      .orderBy('user.fullName', 'ASC')
+      .select(['user.id', 'user.fullName', 'user.phone']);
+
+    const users = await qb.getMany();
 
     return users.map((u) => ({
       id: u.id,

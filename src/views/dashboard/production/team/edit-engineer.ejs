@@ -60,7 +60,15 @@
 
             <% 
               const assignedYardIds = (engineer.yards || []).map(y => y.id);
+              const inactiveAssignedYards = (engineer.yards || []).filter(y => !y.isActive);
             %>
+
+            <% if (inactiveAssignedYards.length > 0) { %>
+              <div class="alert alert-warning py-2 px-3 mb-3 small" role="alert">
+                <i class="fa-solid fa-triangle-exclamation me-1"></i>
+                <strong>تنبيه:</strong> المهندس مرتبط حالياً بساحة معطلة (<%= inactiveAssignedYards.map(y => y.name).join('، ') %>). الساحات المعطلة لا تظهر في قائمة الاختيار وسيتم استبعادها عند حفظ التعديلات.
+              </div>
+            <% } %>
 
             <% if (departmentYards && departmentYards.length > 0) { %>
               <div class="border rounded p-3 bg-light" style="max-height: 250px; overflow-y: auto;">

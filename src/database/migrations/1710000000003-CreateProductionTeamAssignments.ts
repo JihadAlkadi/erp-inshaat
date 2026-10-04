@@ -25,8 +25,9 @@ export class CreateProductionTeamAssignments1710000000003 implements MigrationIn
     await queryRunner.createIndex(
       'production_department',
       new TableIndex({
-        name: 'IDX_production_department_head_user_id',
+        name: 'UQ_production_department_head_user',
         columnNames: ['head_user_id'],
+        isUnique: true,
       }),
     );
 
@@ -226,7 +227,9 @@ export class CreateProductionTeamAssignments1710000000003 implements MigrationIn
         await queryRunner.dropForeignKey('production_department', headFk);
       }
       const headIdx = deptTable.indices.find(
-        (idx) => idx.name === 'IDX_production_department_head_user_id',
+        (idx) =>
+          idx.name === 'UQ_production_department_head_user' ||
+          idx.name === 'IDX_production_department_head_user_id',
       );
       if (headIdx) {
         await queryRunner.dropIndex('production_department', headIdx);

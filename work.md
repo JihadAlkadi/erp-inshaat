@@ -21,7 +21,7 @@
     - `getDepartmentById`: استرجاع تفاصيل قسم إنتاج محدد مع رئيس القسم وحساب عدد الساحات ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد.
     - `createDepartment`: إنشاء قسم إنتاج جديد مع تحديد رئيس القسم الإلزامي (`headUserId`)، والتحقق من نشاط المستخدم وصلاحيته، مع فحص مسبق لفرادة الرمز التقني (`code.trim().toUpperCase()`) متضمناً السجلات المحذوفة ناعماً (`withDeleted()`) والتقاط تضارب المفتاح الفريد وتحويله إلى `ConflictError` برمز `PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS` (409).
     - `updateDepartment`: تحديث بيانات القسم (الاسم، الوصف، حالة التفعيل) داخل Transaction مع قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل القسم (`Department row`)، مع ثبات الرمز التقني وعدم السماح بتعديله، وتطبيق قاعدة منع تعطيل القسم طالما يمتلك ساحات نشطة (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_YARDS`).
-    - `softDeleteDepartment`: أرشفة القسم (Soft Delete) وضبط `isActive = false` داخل Transaction مع قفل تشاؤمي على سجل القسم، وتطبيق قاعدة منع أرشفة القسم طالما يمتلك أي ساحات غير مؤرشفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`) وتطبيق قاعدة منع أرشفة القسم طالما يمتلك مهندسين نشطين (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_ENGINEERS`).
+    - `softDeleteDepartment`: أرشفة القسم (Soft Delete) وضبط `isActive = false` داخل Transaction مع قفل تشاؤمي على سجل القسم، وتطبيق قاعدة منع أرشفة القسم طالما يمتلك أي ساحات غير مؤرشفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`) وتطبيق قاعدة منع أرشفة القسم طالما يمتلك مهندسين نشطين (`PRODUCTION_DEPARTMENT_HAS_ENGINEERS`).
     - `findAssignableDepartmentForUpdate`: دالة مساعدة لقفل والتحقق من نشاط وصلاحية القسم قبل ربط الساحات به.
     - `listActiveDepartments`: استرجاع قائمة الأقسام النشطة للاختيار في نماذج إنشاء وتعديل الساحات.
   - **خدمة ساحات الإنتاج `ProductionYardService`** (`src/modules/production/yard/production-yard.service.ts`):
@@ -936,7 +936,7 @@ src/
   - `id`: varchar(36) UUID, Primary Key
   - `name`: varchar(100), NOT NULL
   - `code`: varchar(50), NOT NULL, UNIQUE (`UQ_production_department_code`), Immutable
-  - `head_user_id`: varchar(36) UUID, NULL, FK $\rightarrow$ `system_user.id` (Department Head)
+  - `head_user_id`: varchar(36) UUID, NULL, UNIQUE (`UQ_production_department_head_user`), FK $\rightarrow$ `system_user.id` (Department Head)
   - `description`: text, NULL
   - `is_active`: tinyint(1), NOT NULL, default: 1
   - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
@@ -948,7 +948,7 @@ src/
   - `engineers`: OneToMany $\rightarrow$ `ProductionDepartmentEngineerEntity` (`eager: false`, `cascade: false`)
 - **Constraints / Indexes**:
   - `UQ_production_department_code`: UNIQUE(`code`)
-  - `IDX_production_department_head_user_id`: INDEX(`head_user_id`)
+  - `UQ_production_department_head_user`: UNIQUE(`head_user_id`)
   - `IDX_production_department_is_active`: INDEX(`is_active`)
   - `IDX_production_department_deleted_at`: INDEX(`deleted_at`)
   - `FK_production_department_head_user_id`: FOREIGN KEY (`head_user_id`) REFERENCES `system_user`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
@@ -988,7 +988,7 @@ src/
 - **Fields**:
   - `id`: varchar(36) UUID, Primary Key
   - `department_id`: varchar(36) UUID, NOT NULL, FK $\rightarrow$ `production_department.id`
-  - `user_id`: varchar(36) UUID, NOT NULL, UNIQUE (`UQ_production_department_engineer_user_id`), FK $\rightarrow$ `system_user.id`
+  - `user_id`: varchar(36) UUID, NOT NULL, UNIQUE (`UQ_production_department_engineer_user`), FK $\rightarrow$ `system_user.id`
   - `is_active`: tinyint(1), NOT NULL, default: 1
   - `created_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6)
   - `updated_at`: datetime(6), NOT NULL, default: CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
@@ -997,12 +997,11 @@ src/
   - `user`: ManyToOne $\rightarrow$ `UserEntity` (`user_id`, `onDelete: RESTRICT`, `onUpdate: CASCADE`, `eager: false`)
   - `yardMappings`: OneToMany $\rightarrow$ `ProductionYardEngineerEntity` (`eager: false`, `cascade: false`)
 - **Constraints / Indexes**:
-  - `UQ_production_department_engineer_user_id`: UNIQUE(`user_id`)
-  - `IDX_production_dept_engineer_department_id`: INDEX(`department_id`)
-  - `IDX_production_dept_engineer_user_id`: INDEX(`user_id`)
-  - `IDX_production_dept_engineer_is_active`: INDEX(`is_active`)
-  - `FK_production_dept_engineer_department_id`: FOREIGN KEY (`department_id`) REFERENCES `production_department`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
-  - `FK_production_dept_engineer_user_id`: FOREIGN KEY (`user_id`) REFERENCES `system_user`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+  - `UQ_production_department_engineer_user`: UNIQUE(`user_id`)
+  - `IDX_production_department_engineer_dept_id`: INDEX(`department_id`)
+  - `IDX_production_department_engineer_is_active`: INDEX(`is_active`)
+  - `FK_production_department_engineer_dept_id`: FOREIGN KEY (`department_id`) REFERENCES `production_department`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+  - `FK_production_department_engineer_user_id`: FOREIGN KEY (`user_id`) REFERENCES `system_user`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 
 ---
 

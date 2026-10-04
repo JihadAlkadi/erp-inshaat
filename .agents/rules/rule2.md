@@ -43,6 +43,13 @@ Authorization = ماذا يستطيع؟
 - بروتوكول قفل سجل المستخدم (User Lock Protocol): تعديل الصلاحيات المباشرة للمستخدم وتعديل بيانات المستخدم وحذفه ناعماً تتزامن جميعها عبر قفل تشاؤمي (`pessimistic_write`) على نفس سجل المستخدم (`User row`).
 - بروتوكول قفل سجل الدور لصلاحيات الدور (Role Permission Lock Protocol): تعديل صلاحيات الدور وعمليات دورة حياة الدور وإسناد الدور للمستخدم تتزامن جميعها عبر قفل تشاؤمي (`pessimistic_write`) على نفس سجل الدور (`Role row`).
 
+سياسة حماية القواعد والنزاهة المنطقية (Business Invariant Policy):
+- Business invariants must be enforced at the backend transaction boundary, not only by UI filtering.
+- Where an invariant can be safely represented by a database constraint, use one as the final integrity barrier.
+- Concurrency-sensitive invariants must use a consistent serialization/locking point.
+- Do not duplicate derived state when it can be calculated safely.
+- Do not silently repair contradictory business state; reject unsafe requests (Fail Closed).
+
 قواعد الهيكل التشغيلي للإنتاج (Production Departments & Yards Invariants):
 - أقسام وساحات الإنتاج بيانات تشغيلية تخص تطبيق الإنتاج (Production Application) حصراً، ومستقلة تماماً عن الهيكل التنظيمي للموارد البشرية (HR Structure).
 - بيانات الأقسام والساحات ديناميكية بالكامل وتُدار عبر قاعدة البيانات ويُمنع تعريفها كـ Enums.
@@ -52,15 +59,25 @@ Authorization = ماذا يستطيع؟
 - بروتوكول قفل سجل قسم الإنتاج (Department Lock Protocol): عمليات إنشاء الساحة، ونقل الساحة لقسم جديد، وتفعيل الساحة، وتعطيل القسم، وأرشفة القسم تتزامن جميعها عبر قفل تشاؤمي (`pessimistic_write`) على نفس سجل قسم الإنتاج (`Department row`).
 
 قواعد هيكل المسؤوليات وفريق عمل الإنتاج (Production Department Team & Engineer Assignments Invariants):
-- لكل قسم إنتاج رئيس قسم واحد (`head_user_id` في `production_department`).
+- لكل قسم إنتاج رئيس قسم واحد (`head_user_id` في `production_department`) مع قيد فرادة في قاعدة البيانات (`UQ_production_department_head_user`).
+- المستخدم الواحد يمكن أن يكون رئيساً لقسم إنتاج واحد فقط غير مؤرشف (A user may head at most one non-deleted production department).
+- مرشح رئاسة القسم يجب أن يكون مستخدماً نشطاً، غير مؤرشف/محذوف ناعماً، وليس رئيساً لأي قسم إنتاج آخر غير مؤرشف (المهندسون النشطون مؤهلون للترشح لرئاسة القسم).
 - رئيس القسم مسؤول تلقائياً عن جميع ساحات القسم الحالية والمستقبلية دون الحاجة لصفوف إسناد منفصلة.
-- المهندس الواحد ينتمي لقسم إنتاج واحد فقط (`userId` فريد في `production_department_engineer`).
-- المهندس يُسند لساحة واحدة أو أكثر تتبع لنفس قسمه (`production_yard_engineer`).
+- مرشح وظيفة المهندس يجب أن يكون مستخدماً نشطاً، غير مؤرشف، وليس رئيساً لقسم إنتاج، وليس لديه إسناد مهندس نشط، ولا يملك أي ارتباطات حالية بساحات إنتاج.
+- المهندس الواحد ينتمي لقسم إنتاج واحد فقط (`userId` فريد في `production_department_engineer` عبر `UQ_production_department_engineer_user`).
+- المهندس يُسند لساحة واحدة أو أكثر تتبع لنفس قسمه (`production_yard_engineer` مع قيد فرادة الزوج `UQ_production_yard_engineer_assignment`).
 - يمكن للساحة الواحدة أن تضم أكثر من مهندس مسؤول عنها.
 - يُمنع إسناد مهندس لساحات تتبع قسماً آخر (`PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH`).
 - يُمنع نقل أو أرشفة ساحة مسندة لمهندسين حالياً (`PRODUCTION_YARD_HAS_ENGINEERS`).
-- لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، وعند إعادة تعيينه يُعاد تفعيل نفس السجل لمنع تكرار الـ ID.
-- بروتوكول قفل سجل المستخدم للتعيينات (User Assignment Lock Protocol): إسناد المهندس لقسم، وتعديل ساحاته، وتغيير رئيس القسم تتزامن جميعها عبر قفل تشاؤمي (`pessimistic_write`) على سجل المستخدم وسجل القسم لمنع تعارضات التزامن عبر الأقسام.
+- لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، ولا يُعاد تفعيل السجل إلا إذا كانت ارتباطات الساحات مساوية للصفر (Fail closed on stale mappings: `PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`).
+- المستخدمون المؤرشفون المرتبطون تاريخياً كرؤساء أقسام أو مهندسين تظل هوياتهم محفوظة وظاهرة في واجهة الفريق مع تمييز حالتهم بوسم "مؤرشف / غير متاح" ودون كشف أي بيانات حساسة.
+- فلترة المرشحين في واجهة المستخدم (UI Filtering) لا تغني إطلاقاً عن التحقق الصارم في طبقة الخدمات والـ APIs.
+- بروتوكول قفل سجلات فريق الإنتاج (Team Lock Order Protocol):
+  1. قسم الإنتاج (`Department row` via `pessimistic_write`)
+  2. سجل المستخدم (`User row` via `pessimistic_write`)
+  3. سجل تعيين المهندس (`Assignment row` via `pessimistic_write`)
+  4. سجلات الساحات مرتبة تصاعدياً حسب المعرف (`Yards sorted by ID` via `pessimistic_write`)
+  5. كتابة المخططات والروابط (`Mapping writes / mutations`)
 
 ---
 

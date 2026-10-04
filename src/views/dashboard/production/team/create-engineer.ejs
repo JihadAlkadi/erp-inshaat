@@ -33,15 +33,23 @@
             <label for="userId" class="form-label fw-bold">اختر المهندس <span class="text-danger">*</span></label>
             <div class="input-group">
               <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-helmet-safety"></i></span>
-              <select class="form-select" id="userId" name="userId" required>
-                <option value="" disabled selected>-- اختر المهندس من المستخدمين النشطين --</option>
+              <select class="form-select" id="userId" name="userId" required <%= !activeUsers || activeUsers.length === 0 ? 'disabled' : '' %>>
                 <% if (activeUsers && activeUsers.length > 0) { %>
+                  <option value="" disabled selected>-- اختر المهندس من المستخدمين النشطين المتاحين --</option>
                   <% activeUsers.forEach(function(u) { %>
                     <option value="<%= u.id %>"><%= u.fullName %> (<%= u.phone %>)</option>
                   <% }); %>
+                <% } else { %>
+                  <option value="" disabled selected>لا يوجد مستخدمون متاحون للتعيين حالياً</option>
                 <% } %>
               </select>
             </div>
+            <% if (!activeUsers || activeUsers.length === 0) { %>
+              <div class="alert alert-warning py-2 px-3 mt-2 mb-0 small" role="alert">
+                <i class="fa-solid fa-triangle-exclamation me-1"></i>
+                لا يوجد مستخدمون متاحون للإسناد كمهندسين حالياً (المستخدم المعين كمهندس نشط أو رئيس قسم لا يمكن إسناده مجدداً).
+              </div>
+            <% } %>
             <div class="form-text small text-muted">
               ملاحظة: المهندس يمكن أن ينتمي لقسم إنتاج واحد فقط في نفس الوقت.
             </div>
