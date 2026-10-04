@@ -125,10 +125,12 @@
         }),
       })
         .then(function(res) {
-          return res.json().then(function(data) {
+          var retryAfterHeader = res.headers.get('Retry-After');
+          return res.json().catch(function() { return {}; }).then(function(data) {
             return {
               ok: res.ok,
               status: res.status,
+              retryAfter: retryAfterHeader,
               body: data,
             };
           });
@@ -138,6 +140,21 @@
             window.location.href = '/';
           } else {
             var errorMsg = (result.body && result.body.message) || 'حدث خطأ أثناء تسجيل الدخول';
+
+            if (result.status === 429) {
+              if (result.retryAfter) {
+                var seconds = parseInt(result.retryAfter, 10);
+                if (!isNaN(seconds) && seconds > 0) {
+                  var minutes = Math.ceil(seconds / 60);
+                  if (minutes <= 1) {
+                    errorMsg = 'تم تجاوز عدد محاولات تسجيل الدخول المسموح بها. حاول مرة أخرى بعد حوالي دقيقة واحدة.';
+                  } else {
+                    errorMsg = 'تم تجاوز عدد محاولات تسجيل الدخول المسموح بها. حاول مرة أخرى بعد حوالي ' + minutes + ' دقائق.';
+                  }
+                }
+              }
+            }
+
             if (errorAlert) {
               errorAlert.textContent = errorMsg;
               errorAlert.classList.remove('d-none');

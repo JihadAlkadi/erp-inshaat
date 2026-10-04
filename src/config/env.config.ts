@@ -18,7 +18,11 @@ export interface EnvConfig {
     csrfSecret: string;
     sessionTtlDays: number;
     sessionTtlMs: number;
+    loginRateLimitWindowMinutes: number;
+    loginRateLimitWindowMs: number;
+    loginRateLimitMax: number;
   };
+  trustProxyHops: number;
 }
 
 function validateEnv(): EnvConfig {
@@ -66,6 +70,27 @@ function validateEnv(): EnvConfig {
   const validSessionTtlDays = Number.isNaN(sessionTtlDays) || sessionTtlDays <= 0 ? 30 : sessionTtlDays;
   const sessionTtlMs = validSessionTtlDays * 24 * 60 * 60 * 1000;
 
+  // Login Rate Limiting Config
+  const rateLimitWindowMinutesStr = process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_MINUTES || '15';
+  const rateLimitWindowMinutes = parseInt(rateLimitWindowMinutesStr, 10);
+  if (Number.isNaN(rateLimitWindowMinutes) || rateLimitWindowMinutes <= 0 || rateLimitWindowMinutes > 1440) {
+    throw new Error('AUTH_LOGIN_RATE_LIMIT_WINDOW_MINUTES must be a positive integer between 1 and 1440.');
+  }
+  const rateLimitWindowMs = rateLimitWindowMinutes * 60 * 1000;
+
+  const rateLimitMaxStr = process.env.AUTH_LOGIN_RATE_LIMIT_MAX || '15';
+  const rateLimitMax = parseInt(rateLimitMaxStr, 10);
+  if (Number.isNaN(rateLimitMax) || rateLimitMax <= 0 || rateLimitMax > 10000) {
+    throw new Error('AUTH_LOGIN_RATE_LIMIT_MAX must be a positive integer between 1 and 10000.');
+  }
+
+  // Trust Proxy Hops Config
+  const trustProxyHopsStr = process.env.TRUST_PROXY_HOPS || '0';
+  const trustProxyHops = parseInt(trustProxyHopsStr, 10);
+  if (Number.isNaN(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 20) {
+    throw new Error('TRUST_PROXY_HOPS must be an integer between 0 and 20.');
+  }
+
   return {
     nodeEnv,
     isProduction,
@@ -82,7 +107,11 @@ function validateEnv(): EnvConfig {
       csrfSecret: authCsrfSecret!,
       sessionTtlDays: validSessionTtlDays,
       sessionTtlMs,
+      loginRateLimitWindowMinutes: rateLimitWindowMinutes,
+      loginRateLimitWindowMs: rateLimitWindowMs,
+      loginRateLimitMax: rateLimitMax,
     },
+    trustProxyHops,
   };
 }
 

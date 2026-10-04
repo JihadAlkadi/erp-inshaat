@@ -18,7 +18,17 @@
   - **تكامل القوالب والعميل (EJS & Client erpFetch Integration)**:
     - وسيط `requireWebAuth` يضع `res.locals.csrfToken` للمستخدم الموثق فقط ليتم تضمينه في `<meta name="csrf-token">` داخل لوحة التحكم.
     - دالة العميل المركزية `window.erpFetch` في `src/public/js/app.js` تعتمد Native Fetch وتضمن حصر الرمز في نفس الـ Origin (`window.location.origin`) وإرساله عبر ترويسة `X-CSRF-Token` في الطرق غير الآمنة مع الحفاظ على الترويسات الأخرى والتعامل الآمن مع تسجيل الخروج.
-    - تحديث كافة نصوص العميل للعمليات التعديلية (`users.js`, `roles.js`, `user-permissions.js`, `production-departments.js`, `production-yards.js`, `production-team.js`) لاستخدام `window.erpFetch`.
+- **حماية معدل تسجيل الدخول والبروكسي (Login Rate Limiting & Proxy Controls)** (`src/modules/system/auth/login-rate-limit.middleware.ts`, `src/config/env.config.ts`, `src/app.ts`):
+  - **حماية مسبقة لمسار الدخول (Pre-DTO & Pre-Bcrypt Protection)**:
+    - تركيب وسيط `loginRateLimiter` على مسار `POST /api/auth/login` قبل التحقق من الـ DTO وقبل تشفير الـ Bcrypt لمنع استنزاف المعالج (CPU Exhaustion) والتخمين المتكرر.
+    - استخدام مكتبة `express-rate-limit` بنافذة زمنية افتراضية 15 دقيقة وحد أقصى 15 محاولة قابلة للضبط عبر المتغيرات البيئية (`AUTH_LOGIN_RATE_LIMIT_WINDOW_MINUTES`, `AUTH_LOGIN_RATE_LIMIT_MAX`).
+    - استثناء المحاولات الناجحة من احتساب حصة الاستهلاك (`skipSuccessfulRequests: true`).
+    - تفعيل ترويسات المعيار الحديثة (`draft-7`) وإرسال ترويسة `Retry-After` بالثواني مع رمز الحالة HTTP 429 ورمز الخطأ الثابت `AUTH_LOGIN_RATE_LIMITED`.
+  - **التحكم الصريح بالبروكسي الموثوق (Proxy-Aware IP Handling)**:
+    - ضبط `app.set('trust proxy', envConfig.trustProxyHops)` حصراً عند تعريف عدد قفزات موثوق موجب (`TRUST_PROXY_HOPS > 0`) لتفادي انتحال العناوين عند العمل خلف Reverse Proxy مثل Nginx، مع ترك الإعداد الافتراضي الآمن عند 0.
+    - الاعتماد حصراً على `req.ip` المدار عبر Express ومنع التحليل اليدوي لـ `X-Forwarded-For`.
+  - **تكامل واجهة تسجيل الدخول (Login Client Integration)**:
+    - معالجة صريحة للرمز 429 في `src/public/js/login.js` واستخراج ترويسة `Retry-After` وتحويلها لدقائق تقريبية باللغة العربية مع إعادة تفعيل زر الإرسال.
 - **الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile)** (`src/modules/system/user/portfolio/`, `src/modules/production/team/production-user-responsibility-read.service.ts`):
   - **طبقة قراءة وتجميع (Read / Composition Layer)**: توفر مركزاً إدارياً شاملاً لفهم هوية المستخدم، حالة حسابه، دوره، ملخص صلاحياته، تنبيهات الأمان، ومسؤوليته التشغيلية في تطبيق الإنتاج دون تكرار أو مساس بمنطق الأعمال للوحدات المدمجة.
   - **أقسام الملف الإداري (Portfolio Tabs)**:
