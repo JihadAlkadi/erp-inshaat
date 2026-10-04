@@ -7,23 +7,31 @@ import {
   authorizationService,
 } from '../authorization/authorization.service.js';
 import { SystemPermission } from '../permission/constants/system-permission.enum.js';
+import { getProductionAccessPolicy } from '../../production/authorization/production-authorization-context.js';
+import {
+  ProductionUserResponsibilityReadService,
+  productionUserResponsibilityReadService,
+} from '../../production/team/production-user-responsibility-read.service.js';
 
 export class UserWebController {
   private readonly userService: UserService;
   private readonly userPermissionService: UserPermissionService;
   private readonly roleService: RoleService;
   private readonly authorizationService: AuthorizationService;
+  private readonly productionResponsibilityReadService: ProductionUserResponsibilityReadService;
 
   constructor(
     uService: UserService = userService,
     upService: UserPermissionService = userPermissionService,
     rService: RoleService = roleService,
-    authzService: AuthorizationService = authorizationService
+    authzService: AuthorizationService = authorizationService,
+    prodReadService: ProductionUserResponsibilityReadService = productionUserResponsibilityReadService
   ) {
     this.userService = uService;
     this.userPermissionService = upService;
     this.roleService = rService;
     this.authorizationService = authzService;
+    this.productionResponsibilityReadService = prodReadService;
   }
 
   renderUsersList = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -114,7 +122,32 @@ export class UserWebController {
       const effectivePerms = await this.authorizationService.getEffectivePermissions(req.user!);
 
       const isSelf = permStates.isSelf;
+      const canUpdate = effectivePerms.includes(SystemPermission.USER_UPDATE);
+      const canDelete = !isSelf && effectivePerms.includes(SystemPermission.USER_DELETE);
       const canManagePermissions = !isSelf && effectivePerms.includes(SystemPermission.USER_PERMISSION_MANAGE);
+
+      // Check production assignment view policy to show context strip if authorized
+      const viewPolicy = await getProductionAccessPolicy(
+        req,
+        req.user!,
+        SystemPermission.PRODUCTION_ASSIGNMENT_VIEW
+      );
+      const managePolicy = await getProductionAccessPolicy(
+        req,
+        req.user!,
+        SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE
+      );
+      const canViewProduction = Boolean(viewPolicy.hasAnyAccess);
+
+      let productionResponsibility;
+      if (canViewProduction) {
+        productionResponsibility =
+          await this.productionResponsibilityReadService.getUserResponsibility(
+            id as string,
+            viewPolicy,
+            managePolicy
+          );
+      }
 
       res.render('dashboard/system/users/permissions', {
         layout: 'dashboard/system/layout',
@@ -124,10 +157,15 @@ export class UserWebController {
         hasSidebar: true,
         sidebarPath: 'system/partials/sidebar',
         activeTab: 'users',
+        activePortfolioTab: 'permissions',
         targetUser: permStates.user,
         permissions: permStates.permissions,
         isSelf,
+        canUpdate,
+        canDelete,
         canManagePermissions,
+        canViewProduction,
+        productionResponsibility,
       });
     } catch (error) {
       next(error);
@@ -136,3 +174,4 @@ export class UserWebController {
 }
 
 export const userWebController = new UserWebController();
+

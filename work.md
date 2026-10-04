@@ -2,7 +2,26 @@
 
 ## Current Project State
 
-تم تنفيذ مرحلة إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration) ومرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات (Role Management & Permission Administration) ومرحلة إدارة المستخدمين (User Management) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل:
+تم تنفيذ مرحلة الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile) ومرحلة إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration) ومرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات (Role Management & Permission Administration) ومرحلة إدارة المستخدمين (User Management) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل:
+- **الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile)** (`src/modules/system/user/portfolio/`, `src/modules/production/team/production-user-responsibility-read.service.ts`):
+  - **طبقة قراءة وتجميع (Read / Composition Layer)**: توفر مركزاً إدارياً شاملاً لفهم هوية المستخدم، حالة حسابه، دوره، ملخص صلاحياته، تنبيهات الأمان، ومسؤوليته التشغيلية في تطبيق الإنتاج دون تكرار أو مساس بمنطق الأعمال للوحدات المدمجة.
+  - **أقسام الملف الإداري (Portfolio Tabs)**:
+    - `نظرة عامة (Overview)`: ملخص حالة الحساب، الدور، عدد الصلاحيات الموروثة والمباشرة، التنبيهات الأمنية والتشغيلية المجمعة، وملخص المسؤولية التشغيلية للإنتاج.
+    - `الحساب (Account)`: عرض تفاصيل الحساب للقراءة فقط (الاسم، الهاتف، الدور، الحالة، التواريخ) مع زر تعديل مشروط بصلاحية `USER_UPDATE`.
+    - `الصلاحيات والوصول (Permissions)`: دمج واجهة إدارة الصلاحيات وقواعد الوصول الحالية داخل إطار الملف الإداري مع شريط السياق التشغيلي.
+    - `المسؤولية التشغيلية (Production Responsibility)`: عرض القسم والساحات المسندة للمستخدم في تطبيق الإنتاج مع التحقق من نطاق الوصول وحظر تسريب البيانات.
+  - **خدمة استعلام المسؤولية التشغيلية الآمنة `ProductionUserResponsibilityReadService`**:
+    - ترجع حالة المسؤولية (`VISIBLE` | `NONE` | `NOT_VISIBLE` | `INCONSISTENT`) بالاعتماد على `ProductionResponsibilityResolver.resolveByUserId`.
+    - تفرض التحقق من نطاق القسم المستهدف عبر `canAccessDepartment(viewPolicy, targetDeptId)`.
+    - تخفي بيانات الأقسام والساحات وتعيد `NOT_VISIBLE` في حال كان القسم خارج نطاق وصول الفاعل لمنع تسريب المعلومات.
+    - تفحص إمكانية إدارة الفريق عبر `canAccessDepartment(managePolicy, targetDeptId)` لعرض زر إدارة الفريق المشروط.
+  - **تجميع التنبيهات الذكي (`Smart Derived Warnings`)**:
+    - اشتقاق تنبيهات فورية غير مخزنة في قاعدة البيانات لحالات الحساب المعطل، الصلاحيات المفعلة بدون منح، القواعد غير الصالحة، وعدم اتساق المسؤولية التشغيلية.
+  - **مسارات الويب المعتمدة**:
+    - `GET /system/users/:id` (نظرة عامة - محمي بـ `USER_VIEW`).
+    - `GET /system/users/:id/account` (بيانات الحساب - محمي بـ `USER_VIEW`).
+    - `GET /system/users/:id/permissions` (الصلاحيات - محمي بـ `USER_VIEW`).
+    - `GET /system/users/:id/production` (المسؤولية التشغيلية - محمي بـ `USER_VIEW` و `PRODUCTION_ASSIGNMENT_VIEW`).
 - **إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration)** (`src/modules/system/authorization/access-administration/`, `src/modules/system/role/`, `src/modules/system/user/`):
   - **فصل دلالة التفعيل (Checkbox Semantics)**:
     - خانة الاختيار بجانب الصلاحية تعني حصراً: هل توجد منحة نشطة (`PermissionGrant.isActive = true`) لهذا الدور أو المستخدم؟

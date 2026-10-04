@@ -18,12 +18,12 @@ export class ProductionResponsibilityResolver {
   }
 
   /**
-   * Resolves the current production responsibilities of the authenticated principal directly from the database.
+   * Resolves the current production responsibilities of a user by their user ID directly from the database.
    * Runs exactly 2 targeted queries (Head query + Engineer joined query) without N+1.
    * Fails closed on any corrupted department/yard mappings or soft-deleted relationships.
    */
-  async resolve(principal: AuthPrincipal): Promise<ProductionResponsibility> {
-    if (!principal || !principal.id) {
+  async resolveByUserId(userId: string): Promise<ProductionResponsibility> {
+    if (!userId) {
       return {
         headDepartmentId: null,
         engineerDepartmentId: null,
@@ -32,9 +32,9 @@ export class ProductionResponsibilityResolver {
       };
     }
 
-    // 1. Resolve Department Head responsibility (non-deleted department where head_user_id = principal.id)
+    // 1. Resolve Department Head responsibility (non-deleted department where head_user_id = userId)
     const headDept = await this.departmentRepository.findOne({
-      where: { headUserId: principal.id, deletedAt: IsNull() },
+      where: { headUserId: userId, deletedAt: IsNull() },
       select: { id: true },
     });
 
@@ -46,7 +46,7 @@ export class ProductionResponsibilityResolver {
       .leftJoinAndSelect('eng.department', 'department')
       .leftJoinAndSelect('eng.yardMappings', 'yardMapping')
       .leftJoinAndSelect('yardMapping.yard', 'yard')
-      .where('eng.userId = :userId', { userId: principal.id })
+      .where('eng.userId = :userId', { userId })
       .andWhere('eng.isActive = :isActive', { isActive: true })
       .getOne();
 
@@ -110,6 +110,13 @@ export class ProductionResponsibilityResolver {
       engineerYardIds,
       isConsistent,
     };
+  }
+
+  /**
+   * Resolves the current production responsibilities of the authenticated principal directly from the database.
+   */
+  async resolve(principal: AuthPrincipal): Promise<ProductionResponsibility> {
+    return this.resolveByUserId(principal?.id);
   }
 }
 
