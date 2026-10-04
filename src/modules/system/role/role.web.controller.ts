@@ -99,13 +99,12 @@ export class RoleWebController {
   renderRolePermissionsForm = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { id } = req.params;
-      const role = await this.roleService.getRoleById(id as string);
-      const permStates = await this.rolePermissionService.getRoleGlobalPermissionStates(id as string);
+      const permStates = await this.rolePermissionService.getRolePermissionsState(id as string);
       const effectivePerms = await this.authorizationService.getEffectivePermissions(req.user!);
 
       res.render('dashboard/system/roles/permissions', {
         layout: 'dashboard/system/layout',
-        title: `صلاحيات الدور: ${role.name} | إدارة النظام`,
+        title: `صلاحيات الدور: ${permStates.role.name} | إدارة النظام`,
         appName: 'إدارة النظام',
         themeColor: '#714B67',
         hasSidebar: true,
@@ -113,7 +112,7 @@ export class RoleWebController {
         activeTab: 'roles',
         role: permStates.role,
         permissions: permStates.permissions,
-        isSystemAdmin: role.code === SystemRole.SYSTEM_ADMIN,
+        isSystemAdmin: permStates.isSystemAdmin,
         canManagePermissions: effectivePerms.includes(SystemPermission.ROLE_PERMISSION_MANAGE),
       });
     } catch (error) {

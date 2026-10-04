@@ -1,22 +1,33 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserService, userService } from './user.service.js';
 import { UserPermissionService, userPermissionService } from './user-permission.service.js';
+import {
+  ProductionAdminLookupService,
+  productionAdminLookupService,
+} from '../../production/authorization/production-admin-lookup.service.js';
 import { ApiResponse } from '../../../common/responses/api-response.js';
 import { ListUsersQueryDto } from './dto/list-users-query.dto.js';
+import { ListProductionDepartmentAdminLookupQueryDto } from '../../production/authorization/dto/list-production-department-admin-lookup-query.dto.js';
+import { ListProductionYardAdminLookupQueryDto } from '../../production/authorization/dto/list-production-yard-admin-lookup-query.dto.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
-import { SetUserGlobalPermissionsDto } from './dto/set-user-global-permissions.dto.js';
+import { SetPermissionStateDto } from '../permission-grant/dto/set-permission-state.dto.js';
+import { CreateAccessRuleDto } from '../access-rule/dto/create-access-rule.dto.js';
+import { UpdateAccessRuleDto } from '../access-rule/dto/update-access-rule.dto.js';
 
 export class UserController {
   private readonly userService: UserService;
   private readonly userPermissionService: UserPermissionService;
+  private readonly adminLookupService: ProductionAdminLookupService;
 
   constructor(
     uService: UserService = userService,
-    upService: UserPermissionService = userPermissionService
+    upService: UserPermissionService = userPermissionService,
+    lookupService: ProductionAdminLookupService = productionAdminLookupService
   ) {
     this.userService = uService;
     this.userPermissionService = upService;
+    this.adminLookupService = lookupService;
   }
 
   listUsers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -73,23 +84,66 @@ export class UserController {
     }
   };
 
-  getGlobalPermissions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  listDepartmentsLookup = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { id } = req.params;
-      const result = await this.userPermissionService.getUserGlobalPermissionStates(id as string);
+      if (!req.validatedQuery) {
+        throw new Error('Validated query parameters not found on request context');
+      }
+      const query = req.validatedQuery as ListProductionDepartmentAdminLookupQueryDto;
+      const result = await this.adminLookupService.listDepartmentsForLookup(query.search, query.limit);
       res.status(200).json(ApiResponse.success(result));
     } catch (error) {
       next(error);
     }
   };
 
-  setGlobalPermissions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  listYardsLookup = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.validatedQuery) {
+        throw new Error('Validated query parameters not found on request context');
+      }
+      const query = req.validatedQuery as ListProductionYardAdminLookupQueryDto;
+      const result = await this.adminLookupService.listYardsForLookup(query.search, query.departmentId, query.limit);
+      res.status(200).json(ApiResponse.success(result));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getPermissionsState = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { id } = req.params;
-      const dto = req.body as SetUserGlobalPermissionsDto;
-      const result = await this.userPermissionService.setUserGlobalPermissions(
+      const result = await this.userPermissionService.getUserPermissionsState(
         id as string,
-        dto.permissionIds,
+        req.user?.id
+      );
+      res.status(200).json(ApiResponse.success(result));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getPermissionAccessRules = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, permissionId } = req.params;
+      const result = await this.userPermissionService.getUserPermissionAccessRules(
+        id as string,
+        permissionId as string
+      );
+      res.status(200).json(ApiResponse.success(result));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  setPermissionState = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, permissionId } = req.params;
+      const dto = req.body as SetPermissionStateDto;
+      const result = await this.userPermissionService.setUserPermissionState(
+        id as string,
+        permissionId as string,
+        dto.enabled,
         req.user!
       );
       res.status(200).json(ApiResponse.success(result, result.message));
@@ -97,7 +151,54 @@ export class UserController {
       next(error);
     }
   };
+
+  createAccessRule = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, permissionId } = req.params;
+      const dto = req.body as CreateAccessRuleDto;
+      const result = await this.userPermissionService.createUserAccessRule(
+        id as string,
+        permissionId as string,
+        dto,
+        req.user!
+      );
+      res.status(201).json(ApiResponse.success(result, 'تمت إضافة قاعدة الوصول بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateAccessRule = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, permissionId, ruleId } = req.params;
+      const dto = req.body as UpdateAccessRuleDto;
+      const result = await this.userPermissionService.updateUserAccessRule(
+        id as string,
+        permissionId as string,
+        ruleId as string,
+        dto,
+        req.user!
+      );
+      res.status(200).json(ApiResponse.success(result, 'تم تحديث قاعدة الوصول بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteAccessRule = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, permissionId, ruleId } = req.params;
+      const result = await this.userPermissionService.deleteUserAccessRule(
+        id as string,
+        permissionId as string,
+        ruleId as string,
+        req.user!
+      );
+      res.status(200).json(ApiResponse.success(null, result.message));
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const userController = new UserController();
-
