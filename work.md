@@ -19,6 +19,13 @@
     - وسيط `requireWebAuth` يضع `res.locals.csrfToken` للمستخدم الموثق فقط ليتم تضمينه في `<meta name="csrf-token">` داخل لوحة التحكم مع ترويسة `Cache-Control: no-store`.
     - دالة العميل المركزية الإلزامية `window.erpFetch` في `src/public/js/app.js` تعتمد Native Fetch وتضمن حصر الرمز في نفس الـ Origin (`window.location.origin`) وتطبيع الطريقة (Trimmed Uppercase) وإرسال ترويسة `X-CSRF-Token` في الطرق غير الآمنة مع حظر الرجوع إلى raw fetch في حال غياب الـ helper (`No Fallback`).
     - اعتماد `window.erpFetch` لكافة العمليات التعديلية في: `users.js`, `roles.js`, `user-permissions.js`, `production-departments.js`, `production-yards.js`, `production-team.js`, و `app.js` (logout).
+- **حماية تسجيل الدخول من التزوير (Login CSRF Protection)** (`src/modules/system/auth/login-json-content-type.middleware.ts`, `src/common/errors/unsupported-media-type.error.ts`):
+  - **حصر مسار تسجيل الدخول في طلبات JSON حصراً (JSON-Only Invariant)**:
+    - مسار `POST /api/auth/login` يقبل فقط `Content-Type: application/json` (بما فيها الصيغ الطبيعية كـ `application/json; charset=utf-8`).
+    - يتم رفض الطلبات بصيغة `application/x-www-form-urlencoded` و `multipart/form-data` و `text/plain` وغياب الترويسة برمز HTTP 415 ورمز الخطأ الثابت `AUTH_LOGIN_JSON_REQUIRED` عبر `UnsupportedMediaTypeError` ومعالج الأخطاء المركزي `errorHandlerMiddleware`.
+    - إغلاق سيناريو الـ Login CSRF عبر النماذج الخارجية (Cross-Origin HTML Form Submissions) التي لا تستطيع إرسال طلبات JSON من المتصفح دون CORS Preflight.
+    - ترتيب وسائط المسار الصارم: محدد المعدل `loginRateLimiter` أولاً (لتضمين كافة المحاولات في الحصة) -> مدقق نوع المحتوى `requireLoginJsonContentType` ثانياً -> التحقق من الـ DTO `validateDto(LoginDto)` ثالثاً -> وحدة التحكم `authController.login` وخدمة التشفير `bcrypt` أخيراً.
+    - يبقى مسار تسجيل الدخول محلياً لنفس النطاق (Same-Origin) مع استمرار استخدام `fetch` المباشر لعدم وجود جلسة موثقة بعد، مع حظر كشف مسارات المصادقة عبر سياسات CORS متساهلة اعتمادية مستقبلاً.
 - **حماية معدل تسجيل الدخول والبروكسي (Login Rate Limiting & Proxy Controls)** (`src/modules/system/auth/login-rate-limit.middleware.ts`, `src/config/env.config.ts`, `src/app.ts`):
   - **حماية مسبقة لمسار الدخول (Pre-DTO & Pre-Bcrypt Protection)**:
     - تركيب وسيط `loginRateLimiter` على مسار `POST /api/auth/login` قبل التحقق من الـ DTO وقبل تشفير الـ Bcrypt لمنع استنزاف المعالج (CPU Exhaustion) والتخمين المتكرر.
@@ -1393,8 +1400,6 @@ src/
    - منع استخدام `any` في تعريفات التحقق والـ Types.
 
 10. **Known Follow-ups & Security Hardening**:
-    - تعزيز حماية CSRF على الـ State-changing APIs قبل التوسع في بناء موديولات الأعمال.
-    - تطبيق Rate Limiting على نقطة تسجيل الدخول لحماية الحسابات من هجمات التخمين (Brute-force).
     - بناء محرك التفويض وتفويض الصلاحيات (Delegation Engine & canDelegate evaluation).
     - بناء واجهات إدارة الأجهزة والجلسات وخيار تسجيل الخروج من كافة الأجهزة (Logout all devices).
 

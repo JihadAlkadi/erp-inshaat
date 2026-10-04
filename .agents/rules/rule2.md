@@ -25,6 +25,12 @@ Authorization = ماذا يستطيع؟
   - تخضع جميع الطرق غير الآمنة (`POST`, `PUT`, `PATCH`, `DELETE`, etc.) للتحقق الإلزامي من ترويسة `X-CSRF-Token` في الطلبات الموثقة، وتعتمد واجهات العميل حصراً على `window.erpFetch` دون أي Fallback إلى raw fetch.
   - الطرق الآمنة والقراءة فقط (`GET`, `HEAD`, `OPTIONS`) معفاة من فحص الـ CSRF.
   - مسار تسجيل الدخول (`POST /api/auth/login`) معفى من رمز الـ CSRF لكونه غير موثق بعد، بينما مسار تسجيل الخروج (`POST /api/auth/logout`) محمي برمز CSRF الجلسة.
+  - حماية تسجيل الدخول من التزوير (Login CSRF Protection):
+    - مسار تسجيل الدخول يقبل حصراً طلبات JSON (`Content-Type: application/json` بما فيها الصيغ التي تحتوي charset).
+    - يتم رفض كافة أنواع الوسائط الأخرى (`application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`، وغياب الترويسة) برمز الحالة HTTP 415 ورمز الخطأ الثابت `AUTH_LOGIN_JSON_REQUIRED`.
+    - مسار تسجيل الدخول محمي بالترتيب الصارم: محدد المعدل (`loginRateLimiter`) أولاً -> مدقق نوع المحتوى (`requireLoginJsonContentType`) ثانياً -> التحقق من الـ DTO ثالثاً -> وحدة التحكم والتشفير (`bcrypt`) أخيراً.
+    - يبقى مسار تسجيل الدخول مساراً محلياً لنفس النطاق (same-origin)، ويُحظر نهائياً كشفه عبر سياسات CORS متساهلة أو اعتمادية (`permissive credentialed CORS`).
+    - في حال إضافة CORS مستقبلاً، يجب قصر مسارات المصادقة على سياسة قائمة بيضاء صريحة وموثوقة (`explicit trusted-origin allowlist`).
   - فحص الـ CSRF يتم حصراً بعد نجاح التحقق من المصادقة (Authentication First)؛ والطلبات غير الموثقة تفشل برمز 401 دون تسريب أخطاء CSRF.
   - خاصية `SameSite=Lax` تبقى خط دفاع إضافي (Defense in Depth).
   - مقارنة رموز الـ CSRF تتم حصراً عبر دوال التوقيت الآمن (`crypto.timingSafeEqual`).
