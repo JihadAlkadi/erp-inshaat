@@ -10,6 +10,8 @@ import { productionDepartmentWebController } from '../modules/production/departm
 import { productionYardWebController } from '../modules/production/yard/production-yard.web.controller.js';
 import { productionTeamWebController } from '../modules/production/team/production-team.web.controller.js';
 
+import { userPortfolioWebController } from '../modules/system/user/portfolio/user-portfolio.web.controller.js';
+
 const webRouter: Router = Router();
 
 // GET / - Home Applications Launcher Page (Protected)
@@ -52,7 +54,7 @@ webRouter.get(
   userWebController.renderUsersList
 );
 
-// GET /system/users/create - Create User Page (Protected)
+// GET /system/users/create - Create User Page (Protected) - Must precede :id routes
 webRouter.get(
   '/system/users/create',
   requireWebAuth,
@@ -60,13 +62,22 @@ webRouter.get(
   userWebController.renderCreateUserForm
 );
 
-// GET /system/users/:id/edit - Edit User Page (Protected)
+// GET /system/users/:id - User Portfolio Overview (Protected)
 webRouter.get(
-  '/system/users/:id/edit',
+  '/system/users/:id',
   requireWebAuth,
-  requirePermission(SystemPermission.USER_UPDATE),
+  requirePermission(SystemPermission.USER_VIEW),
   validateUuidParam('id'),
-  userWebController.renderEditUserForm
+  userPortfolioWebController.renderOverview
+);
+
+// GET /system/users/:id/account - User Portfolio Account Details (Protected)
+webRouter.get(
+  '/system/users/:id/account',
+  requireWebAuth,
+  requirePermission(SystemPermission.USER_VIEW),
+  validateUuidParam('id'),
+  userPortfolioWebController.renderAccount
 );
 
 // GET /system/users/:id/permissions - User Permissions Page (Protected)
@@ -76,6 +87,25 @@ webRouter.get(
   requirePermission(SystemPermission.USER_VIEW),
   validateUuidParam('id'),
   userWebController.renderUserPermissionsForm
+);
+
+// GET /system/users/:id/production - User Production Responsibility (Protected)
+webRouter.get(
+  '/system/users/:id/production',
+  requireWebAuth,
+  requirePermission(SystemPermission.USER_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_ASSIGNMENT_VIEW),
+  validateUuidParam('id'),
+  userPortfolioWebController.renderProduction
+);
+
+// GET /system/users/:id/edit - Edit User Page (Protected)
+webRouter.get(
+  '/system/users/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.USER_UPDATE),
+  validateUuidParam('id'),
+  userWebController.renderEditUserForm
 );
 
 // GET /system/roles - System Roles List (Protected)

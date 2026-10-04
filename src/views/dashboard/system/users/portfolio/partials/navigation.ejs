@@ -1,0 +1,39 @@
+<!-- Navigation Tabs -->
+<div class="user-portfolio-nav-scroll">
+  <nav class="user-portfolio-nav" aria-label="أقسام الملف الإداري للمستخدم">
+    <a
+      href="/system/users/<%= targetUser.id %>"
+      class="user-portfolio-tab-link <%= activePortfolioTab === 'overview' ? 'active' : '' %>"
+      <%= activePortfolioTab === 'overview' ? 'aria-current="page"' : '' %>
+    >
+      <i class="fa-solid fa-chart-pie"></i>
+      <span>نظرة عامة</span>
+    </a>
+    <a
+      href="/system/users/<%= targetUser.id %>/account"
+      class="user-portfolio-tab-link <%= activePortfolioTab === 'account' ? 'active' : '' %>"
+      <%= activePortfolioTab === 'account' ? 'aria-current="page"' : '' %>
+    >
+      <i class="fa-solid fa-id-card"></i>
+      <span>بيانات الحساب</span>
+    </a>
+    <a
+      href="/system/users/<%= targetUser.id %>/permissions"
+      class="user-portfolio-tab-link <%= activePortfolioTab === 'permissions' ? 'active' : '' %>"
+      <%= activePortfolioTab === 'permissions' ? 'aria-current="page"' : '' %>
+    >
+      <i class="fa-solid fa-key"></i>
+      <span>الصلاحيات والوصول</span>
+    </a>
+    <% if (typeof canViewProduction !== 'undefined' && canViewProduction) { %>
+      <a
+        href="/system/users/<%= targetUser.id %>/production"
+        class="user-portfolio-tab-link <%= activePortfolioTab === 'production' ? 'active' : '' %>"
+        <%= activePortfolioTab === 'production' ? 'aria-current="page"' : '' %>
+      >
+        <i class="fa-solid fa-industry"></i>
+        <span>المسؤولية التشغيلية</span>
+      </a>
+    <% } %>
+  </nav>
+</div>

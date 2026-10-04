@@ -1,0 +1,75 @@
+<link rel="stylesheet" href="/css/user-portfolio.css">
+
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="/system" class="text-decoration-none text-muted">إدارة النظام</a></li>
+    <li class="breadcrumb-item"><a href="/system/users" class="text-decoration-none text-muted">المستخدمون</a></li>
+    <li class="breadcrumb-item active text-dark fw-semibold" aria-current="page"><%= targetUser.fullName %></li>
+  </ol>
+</nav>
+
+<!-- Hero Header Card -->
+<div class="user-portfolio-hero">
+  <div class="d-flex justify-content-between align-items-center user-portfolio-header-flex gap-3">
+    <!-- User Identity & Badges -->
+    <div class="d-flex align-items-center gap-3">
+      <div class="user-portfolio-avatar">
+        <%= targetUser.fullName ? targetUser.fullName.trim().charAt(0) : 'U' %>
+      </div>
+      <div class="user-portfolio-identity">
+        <div class="d-flex align-items-center flex-wrap gap-2">
+          <h2 class="user-portfolio-name"><%= targetUser.fullName %></h2>
+          <% if (isSelf) { %>
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-2.5 py-1 small">
+              <i class="fa-solid fa-user-check me-1"></i> حسابك الحالي
+            </span>
+          <% } %>
+        </div>
+        <div class="user-portfolio-meta">
+          <span dir="ltr" class="font-monospace text-dark"><i class="fa-solid fa-phone me-1 text-muted"></i><%= targetUser.phone %></span>
+          <span class="text-muted">•</span>
+          <span class="badge bg-secondary-subtle text-secondary-emphasis px-2 py-1 rounded-pill">
+            <i class="fa-solid fa-shield-halved me-1 small"></i><%= targetUser.roleName || 'بدون دور' %>
+          </span>
+          <span class="text-muted">•</span>
+          <% if (targetUser.isActive) { %>
+            <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1 rounded-pill">
+              <i class="fa-solid fa-circle-check me-1"></i> نشط
+            </span>
+          <% } else { %>
+            <span class="badge bg-danger-subtle text-danger border border-danger-subtle px-2 py-1 rounded-pill">
+              <i class="fa-solid fa-circle-xmark me-1"></i> معطل
+            </span>
+          <% } %>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Action Buttons -->
+    <div class="user-portfolio-actions">
+      <% if (canUpdate) { %>
+        <a href="/system/users/<%= targetUser.id %>/edit" class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1.5 px-3 py-2">
+          <i class="fa-solid fa-pen-to-square"></i>
+          <span>تعديل الحساب</span>
+        </a>
+      <% } %>
+      <% if (canManagePermissions && !isSelf) { %>
+        <a href="/system/users/<%= targetUser.id %>/permissions" class="btn btn-outline-primary btn-sm d-inline-flex align-items-center gap-1.5 px-3 py-2">
+          <i class="fa-solid fa-key"></i>
+          <span>إدارة الصلاحيات</span>
+        </a>
+      <% } %>
+      <% if (typeof productionResponsibility !== 'undefined' && productionResponsibility && productionResponsibility.canManageTeam && productionResponsibility.department) { %>
+        <a href="/production/departments/<%= productionResponsibility.department.id %>/team" class="btn btn-outline-info btn-sm d-inline-flex align-items-center gap-1.5 px-3 py-2">
+          <i class="fa-solid fa-users-gear"></i>
+          <span>إدارة فريق القسم</span>
+        </a>
+      <% } %>
+      <a href="/system/users" class="btn btn-light btn-sm d-inline-flex align-items-center gap-1.5 px-3 py-2 border text-muted">
+        <i class="fa-solid fa-arrow-right"></i>
+        <span>قائمة المستخدمين</span>
+      </a>
+    </div>
+  </div>
+</div>

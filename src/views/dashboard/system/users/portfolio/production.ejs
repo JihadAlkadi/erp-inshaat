@@ -1,0 +1,127 @@
+<div class="user-portfolio-container">
+  <!-- Header & Navigation -->
+  <%- include('./partials/header') %>
+  <%- include('./partials/navigation') %>
+
+  <!-- Production Responsibility Main Card -->
+  <% if (productionResponsibility.state === 'VISIBLE') { %>
+    <div class="user-portfolio-card">
+      <div class="user-portfolio-card-header">
+        <h5 class="user-portfolio-card-title text-dark">
+          <i class="fa-solid fa-industry text-primary"></i>
+          <span>المسؤولية التشغيلية في تطبيق الإنتاج</span>
+        </h5>
+        <% if (productionResponsibility.canManageTeam && productionResponsibility.department) { %>
+          <a href="/production/departments/<%= productionResponsibility.department.id %>/team" class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1.5">
+            <i class="fa-solid fa-users-gear"></i>
+            <span>إدارة فريق القسم</span>
+          </a>
+        <% } %>
+      </div>
+      <div class="user-portfolio-card-body">
+        <!-- Responsibility Type & Department Header -->
+        <div class="p-3 bg-light-subtle rounded-3 border mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
+          <div class="d-flex align-items-center gap-3">
+            <div class="user-portfolio-avatar" style="background-color: #0984E3; box-shadow: 0 2px 6px rgba(9, 132, 227, 0.25);">
+              <i class="fa-solid <%= productionResponsibility.kind === 'HEAD' ? 'fa-user-tie' : 'fa-helmet-safety' %>"></i>
+            </div>
+            <div>
+              <div class="small text-muted mb-0.5">نوع المسؤولية التشغيلية</div>
+              <h5 class="fw-bold mb-0 text-dark">
+                <%= productionResponsibility.kind === 'HEAD' ? 'رئيس قسم إنتاج' : 'مهندس ساحات إنتاج' %>
+              </h5>
+            </div>
+          </div>
+          <% if (productionResponsibility.department) { %>
+            <div class="text-start">
+              <div class="small text-muted mb-0.5">القسم التابع له</div>
+              <strong class="text-dark fs-6"><%= productionResponsibility.department.name %></strong>
+              <span class="badge bg-light text-secondary border font-monospace ms-1.5"><%= productionResponsibility.department.code %></span>
+            </div>
+          <% } %>
+        </div>
+
+        <!-- Details based on Kind -->
+        <% if (productionResponsibility.kind === 'HEAD') { %>
+          <div class="card border-0 bg-light p-3 rounded-3 mb-3">
+            <h6 class="fw-bold text-dark mb-1">
+              <i class="fa-solid fa-sitemap text-primary me-1.5"></i>
+              نطاق المسؤولية القيادية
+            </h6>
+            <p class="text-muted small mb-0">
+              بصفته رئيساً للقسم، يمتلك المستخدم مسؤولية تشغيلية وإشرافية على كافة ساحات القسم الحالية والمستقبلية تلقائياً.
+            </p>
+          </div>
+        <% } else if (productionResponsibility.kind === 'ENGINEER') { %>
+          <div>
+            <h6 class="fw-bold text-dark mb-3 d-flex align-items-center justify-content-between">
+              <span>
+                <i class="fa-solid fa-vector-square text-primary me-1.5"></i>
+                الساحات المسندة للمهندس
+              </span>
+              <span class="badge bg-secondary-subtle text-secondary-emphasis rounded-pill">
+                <%= (productionResponsibility.yards || []).length %> ساحة
+              </span>
+            </h6>
+
+            <% if (productionResponsibility.yards && productionResponsibility.yards.length > 0) { %>
+              <div class="row g-3">
+                <% productionResponsibility.yards.forEach(function(y) { %>
+                  <div class="col-12 col-md-6 col-lg-4">
+                    <div class="p-3 rounded-3 border bg-white shadow-sm h-100 d-flex flex-column justify-content-between">
+                      <div>
+                        <div class="d-flex justify-content-between align-items-start mb-1.5">
+                          <strong class="text-dark"><%= y.name %></strong>
+                          <% if (y.isActive) { %>
+                            <span class="badge bg-success-subtle text-success small">نشطة</span>
+                          <% } else { %>
+                            <span class="badge bg-danger-subtle text-danger small">معطلة</span>
+                          <% } %>
+                        </div>
+                        <code class="text-muted small font-monospace"><%= y.code %></code>
+                      </div>
+                    </div>
+                  </div>
+                <% }); %>
+              </div>
+            <% } else { %>
+              <div class="text-muted small p-3 bg-light rounded text-center">لا توجد ساحات مسندة حالياً.</div>
+            <% } %>
+          </div>
+        <% } %>
+
+        <hr class="my-4 text-muted opacity-25">
+        <div class="alert alert-light border d-flex align-items-center gap-2.5 mb-0 p-2.5 small text-muted">
+          <i class="fa-solid fa-circle-info text-primary fs-5 flex-shrink-0"></i>
+          <div>المسؤولية التشغيلية لا تمنح صلاحيات النظام تلقائياً؛ الوصول الفعلي تحدده قواعد الصلاحيات في النظام.</div>
+        </div>
+      </div>
+    </div>
+  <% } else if (productionResponsibility.state === 'INCONSISTENT') { %>
+    <div class="user-portfolio-card">
+      <div class="user-portfolio-card-body p-4 text-center">
+        <i class="fa-solid fa-triangle-exclamation text-danger fs-1 mb-3 d-block"></i>
+        <h5 class="fw-bold text-danger mb-2">حالة تشغيلية غير متسقة</h5>
+        <p class="text-muted small max-w-md mx-auto mb-3" style="max-width: 500px;">
+          هناك تناقض في بيانات الإسناد التشغيلي للمستخدم داخل تطبيق الإنتاج (مثل إسناد متزامن لرئاسة قسم ومهندس، أو ساحات تتبع أقساماً أخرى). يتطلب ذلك معالجة إدارية من صفحة إدارة فريق القسم.
+        </p>
+      </div>
+    </div>
+  <% } else if (productionResponsibility.state === 'NONE') { %>
+    <div class="user-portfolio-card">
+      <div class="user-portfolio-card-body p-5 text-center text-muted">
+        <i class="fa-solid fa-industry fs-1 mb-3 d-block opacity-40"></i>
+        <h5 class="fw-bold text-dark mb-1">لا توجد مسؤولية تشغيلية</h5>
+        <p class="small mb-0">هذا المستخدم غير مسند حالياً كرئيس قسم أو مهندس ساحات في تطبيق الإنتاج.</p>
+      </div>
+    </div>
+  <% } else { %>
+    <div class="user-portfolio-card">
+      <div class="user-portfolio-card-body p-5 text-center text-muted">
+        <i class="fa-solid fa-lock fs-1 mb-3 d-block opacity-40"></i>
+        <h5 class="fw-bold text-dark mb-1">بيانات تشغيلية غير متاحة</h5>
+        <p class="small mb-0">لا توجد بيانات تشغيلية متاحة ضمن نطاق وصولك الحالي.</p>
+      </div>
+    </div>
+  <% } %>
+</div>
