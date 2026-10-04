@@ -9,10 +9,27 @@ import { validateUuidParam } from '../../../common/middleware/validate-uuid-para
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { ListUsersQueryDto } from './dto/list-users-query.dto.js';
-import { SetUserGlobalPermissionsDto } from './dto/set-user-global-permissions.dto.js';
+import { SetPermissionStateDto } from '../permission-grant/dto/set-permission-state.dto.js';
+import { CreateAccessRuleDto } from '../access-rule/dto/create-access-rule.dto.js';
+import { UpdateAccessRuleDto } from '../access-rule/dto/update-access-rule.dto.js';
 import { validateUserUpdatePayload } from './user.middleware.js';
 
 const userApiRouter: Router = Router();
+
+// Lookups for User Access Rule administration
+userApiRouter.get(
+  '/lookups/departments',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_PERMISSION_MANAGE),
+  userController.listDepartmentsLookup
+);
+
+userApiRouter.get(
+  '/lookups/yards',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_PERMISSION_MANAGE),
+  userController.listYardsLookup
+);
 
 // GET /api/system/users - List users (Paginated, Search)
 userApiRouter.get(
@@ -21,25 +38,6 @@ userApiRouter.get(
   requirePermission(SystemPermission.USER_VIEW),
   validateQueryDto(ListUsersQueryDto),
   userController.listUsers
-);
-
-// GET /api/system/users/:id/global-permissions - Get direct user global permission states
-userApiRouter.get(
-  '/:id/global-permissions',
-  requireApiAuth,
-  requirePermission(SystemPermission.USER_VIEW),
-  validateUuidParam('id'),
-  userController.getGlobalPermissions
-);
-
-// PUT /api/system/users/:id/global-permissions - Set direct user global permissions
-userApiRouter.put(
-  '/:id/global-permissions',
-  requireApiAuth,
-  requirePermission(SystemPermission.USER_PERMISSION_MANAGE),
-  validateUuidParam('id'),
-  validateDto(SetUserGlobalPermissionsDto),
-  userController.setGlobalPermissions
 );
 
 // GET /api/system/users/:id - Get specific user
@@ -78,6 +76,70 @@ userApiRouter.delete(
   requirePermission(SystemPermission.USER_DELETE),
   validateUuidParam('id'),
   userController.deleteUser
+);
+
+// GET /api/system/users/:id/permissions - Get direct user permissions administration state
+userApiRouter.get(
+  '/:id/permissions',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_VIEW),
+  validateUuidParam('id'),
+  userController.getPermissionsState
+);
+
+// GET /api/system/users/:id/permissions/:permissionId/access-rules - Get access rules for user permission
+userApiRouter.get(
+  '/:id/permissions/:permissionId/access-rules',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_VIEW),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  userController.getPermissionAccessRules
+);
+
+// PUT /api/system/users/:id/permissions/:permissionId/state - Set direct user permission enabled state
+userApiRouter.put(
+  '/:id/permissions/:permissionId/state',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_PERMISSION_MANAGE),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  validateDto(SetPermissionStateDto),
+  userController.setPermissionState
+);
+
+// POST /api/system/users/:id/permissions/:permissionId/access-rules - Add access rule to user permission
+userApiRouter.post(
+  '/:id/permissions/:permissionId/access-rules',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_PERMISSION_MANAGE),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  validateDto(CreateAccessRuleDto),
+  userController.createAccessRule
+);
+
+// PUT /api/system/users/:id/permissions/:permissionId/access-rules/:ruleId - Update access rule for user permission
+userApiRouter.put(
+  '/:id/permissions/:permissionId/access-rules/:ruleId',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_PERMISSION_MANAGE),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  validateUuidParam('ruleId'),
+  validateDto(UpdateAccessRuleDto),
+  userController.updateAccessRule
+);
+
+// DELETE /api/system/users/:id/permissions/:permissionId/access-rules/:ruleId - Soft delete access rule for user permission
+userApiRouter.delete(
+  '/:id/permissions/:permissionId/access-rules/:ruleId',
+  requireApiAuth,
+  requirePermission(SystemPermission.USER_PERMISSION_MANAGE),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  validateUuidParam('ruleId'),
+  userController.deleteAccessRule
 );
 
 export { userApiRouter };

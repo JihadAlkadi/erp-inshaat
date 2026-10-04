@@ -9,10 +9,27 @@ import { validateUuidParam } from '../../../common/middleware/validate-uuid-para
 import { CreateRoleDto } from './dto/create-role.dto.js';
 import { UpdateRoleDto } from './dto/update-role.dto.js';
 import { ListRolesQueryDto } from './dto/list-roles-query.dto.js';
-import { SetRoleGlobalPermissionsDto } from './dto/set-role-global-permissions.dto.js';
+import { SetPermissionStateDto } from '../permission-grant/dto/set-permission-state.dto.js';
+import { CreateAccessRuleDto } from '../access-rule/dto/create-access-rule.dto.js';
+import { UpdateAccessRuleDto } from '../access-rule/dto/update-access-rule.dto.js';
 import { validateRoleUpdatePayload } from './role.middleware.js';
 
 const roleApiRouter: Router = Router();
+
+// Lookups for Role Access Rule administration
+roleApiRouter.get(
+  '/lookups/departments',
+  requireApiAuth,
+  requirePermission(SystemPermission.ROLE_PERMISSION_MANAGE),
+  roleController.listDepartmentsLookup
+);
+
+roleApiRouter.get(
+  '/lookups/yards',
+  requireApiAuth,
+  requirePermission(SystemPermission.ROLE_PERMISSION_MANAGE),
+  roleController.listYardsLookup
+);
 
 // GET /api/system/roles - List roles (Paginated, Search)
 roleApiRouter.get(
@@ -61,23 +78,68 @@ roleApiRouter.delete(
   roleController.deleteRole
 );
 
-// GET /api/system/roles/:id/global-permissions - Get role global permission states
+// GET /api/system/roles/:id/permissions - Get role permissions administration state
 roleApiRouter.get(
-  '/:id/global-permissions',
+  '/:id/permissions',
   requireApiAuth,
   requirePermission(SystemPermission.ROLE_VIEW),
   validateUuidParam('id'),
-  roleController.getGlobalPermissions
+  roleController.getPermissionsState
 );
 
-// PUT /api/system/roles/:id/global-permissions - Set role global permissions
+// GET /api/system/roles/:id/permissions/:permissionId/access-rules - Get access rules for role permission
+roleApiRouter.get(
+  '/:id/permissions/:permissionId/access-rules',
+  requireApiAuth,
+  requirePermission(SystemPermission.ROLE_VIEW),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  roleController.getPermissionAccessRules
+);
+
+// PUT /api/system/roles/:id/permissions/:permissionId/state - Set role permission enabled state
 roleApiRouter.put(
-  '/:id/global-permissions',
+  '/:id/permissions/:permissionId/state',
   requireApiAuth,
   requirePermission(SystemPermission.ROLE_PERMISSION_MANAGE),
   validateUuidParam('id'),
-  validateDto(SetRoleGlobalPermissionsDto),
-  roleController.setGlobalPermissions
+  validateUuidParam('permissionId'),
+  validateDto(SetPermissionStateDto),
+  roleController.setPermissionState
+);
+
+// POST /api/system/roles/:id/permissions/:permissionId/access-rules - Add access rule to role permission
+roleApiRouter.post(
+  '/:id/permissions/:permissionId/access-rules',
+  requireApiAuth,
+  requirePermission(SystemPermission.ROLE_PERMISSION_MANAGE),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  validateDto(CreateAccessRuleDto),
+  roleController.createAccessRule
+);
+
+// PUT /api/system/roles/:id/permissions/:permissionId/access-rules/:ruleId - Update access rule for role permission
+roleApiRouter.put(
+  '/:id/permissions/:permissionId/access-rules/:ruleId',
+  requireApiAuth,
+  requirePermission(SystemPermission.ROLE_PERMISSION_MANAGE),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  validateUuidParam('ruleId'),
+  validateDto(UpdateAccessRuleDto),
+  roleController.updateAccessRule
+);
+
+// DELETE /api/system/roles/:id/permissions/:permissionId/access-rules/:ruleId - Soft delete access rule for role permission
+roleApiRouter.delete(
+  '/:id/permissions/:permissionId/access-rules/:ruleId',
+  requireApiAuth,
+  requirePermission(SystemPermission.ROLE_PERMISSION_MANAGE),
+  validateUuidParam('id'),
+  validateUuidParam('permissionId'),
+  validateUuidParam('ruleId'),
+  roleController.deleteAccessRule
 );
 
 export { roleApiRouter };

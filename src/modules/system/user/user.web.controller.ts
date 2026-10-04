@@ -107,10 +107,13 @@ export class UserWebController {
   renderUserPermissionsForm = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { id } = req.params;
-      const permStates = await this.userPermissionService.getUserGlobalPermissionStates(id as string);
+      const permStates = await this.userPermissionService.getUserPermissionsState(
+        id as string,
+        req.user?.id
+      );
       const effectivePerms = await this.authorizationService.getEffectivePermissions(req.user!);
 
-      const isSelf = req.user!.id === id;
+      const isSelf = permStates.isSelf;
       const canManagePermissions = !isSelf && effectivePerms.includes(SystemPermission.USER_PERMISSION_MANAGE);
 
       res.render('dashboard/system/users/permissions', {

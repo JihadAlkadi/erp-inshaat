@@ -5,4 +5,5 @@ export const ProductionAccessScopeType = {
 
 export const ProductionAccessScopeSource = {
   CURRENT_RESPONSIBILITY: 'CURRENT_PRODUCTION_RESPONSIBILITY',
+  SPECIFIC_IDS: 'SPECIFIC_IDS',
 } as const;
