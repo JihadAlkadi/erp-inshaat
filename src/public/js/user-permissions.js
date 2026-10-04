@@ -132,7 +132,7 @@ document.addEventListener('DOMContentLoaded', function() {
       toggle.disabled = true;
       clearPageAlert();
 
-      (window.erpFetch || fetch)('/api/system/users/' + encodeURIComponent(userId) + '/permissions/' + encodeURIComponent(permId) + '/state', {
+      window.erpFetch('/api/system/users/' + encodeURIComponent(userId) + '/permissions/' + encodeURIComponent(permId) + '/state', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ enabled: desiredEnabled }),
@@ -454,7 +454,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!confirm('هل أنت متأكد من رغبتك في تعطيل قاعدة الوصول المباشرة هذه؟')) return;
     clearDrawerAlert();
 
-    (window.erpFetch || fetch)('/api/system/users/' + encodeURIComponent(userId) + '/permissions/' + encodeURIComponent(currentDrawerPermId) + '/access-rules/' + encodeURIComponent(ruleId), {
+    window.erpFetch('/api/system/users/' + encodeURIComponent(userId) + '/permissions/' + encodeURIComponent(currentDrawerPermId) + '/access-rules/' + encodeURIComponent(ruleId), {
       method: 'DELETE',
       headers: { 'Accept': 'application/json' },
     })
@@ -839,7 +839,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       var method = isEdit ? 'PUT' : 'POST';
 
-      (window.erpFetch || fetch)(url, {
+      window.erpFetch(url, {
         method: method,
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(payload),

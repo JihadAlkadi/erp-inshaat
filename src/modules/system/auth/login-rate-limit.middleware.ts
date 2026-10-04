@@ -1,7 +1,11 @@
-import rateLimit from 'express-rate-limit';
-import { Request, Response } from 'express';
+import rateLimit, { type RateLimitInfo } from 'express-rate-limit';
+import { Request, Response, NextFunction } from 'express';
 import { envConfig } from '../../../config/env.config.js';
-import { ApiResponse } from '../../../common/responses/api-response.js';
+import { TooManyRequestsError } from '../../../common/errors/too-many-requests.error.js';
+
+type LoginRateLimitRequest = Request & {
+  rateLimit?: RateLimitInfo;
+};
 
 export const loginRateLimiter = rateLimit({
   windowMs: envConfig.auth.loginRateLimitWindowMs,
@@ -9,9 +13,9 @@ export const loginRateLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  handler: (req: Request, res: Response): void => {
-    // Calculate Retry-After in seconds
-    const resetTime = (req as any).rateLimit?.resetTime;
+  handler: (req: Request, res: Response, next: NextFunction): void => {
+    const rateLimitInfo = (req as LoginRateLimitRequest).rateLimit;
+    const resetTime = rateLimitInfo?.resetTime;
     let retryAfterSeconds: number;
 
     if (resetTime instanceof Date) {
@@ -21,8 +25,8 @@ export const loginRateLimiter = rateLimit({
     }
 
     res.setHeader('Retry-After', retryAfterSeconds.toString());
-    res.status(429).json(
-      ApiResponse.error(
+    return next(
+      new TooManyRequestsError(
         'تم تجاوز عدد محاولات تسجيل الدخول المسموح بها. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.',
         'AUTH_LOGIN_RATE_LIMITED'
       )

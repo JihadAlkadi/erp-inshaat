@@ -131,7 +131,7 @@ function handleStatusToggle(userId, newStatus, userName) {
 }
 
 function performStatusToggle(userId, newStatus) {
-  (window.erpFetch || fetch)('/api/system/users/' + encodeURIComponent(userId), {
+  window.erpFetch('/api/system/users/' + encodeURIComponent(userId), {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
@@ -206,7 +206,7 @@ function handleSoftDelete(userId, userName) {
 }
 
 function performSoftDelete(userId) {
-  (window.erpFetch || fetch)('/api/system/users/' + encodeURIComponent(userId), {
+  window.erpFetch('/api/system/users/' + encodeURIComponent(userId), {
     method: 'DELETE',
     headers: {
       'Accept': 'application/json',
@@ -317,7 +317,7 @@ document.addEventListener('DOMContentLoaded', function() {
         isActive: isActiveCheck ? isActiveCheck.checked : true,
       };
 
-      (window.erpFetch || fetch)('/api/system/users', {
+      window.erpFetch('/api/system/users', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -385,7 +385,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (roleIdSelect && !roleIdSelect.disabled) payload.roleId = roleIdSelect.value;
       if (isActiveCheck && !isActiveCheck.disabled) payload.isActive = isActiveCheck.checked;
 
-      (window.erpFetch || fetch)('/api/system/users/' + encodeURIComponent(userId), {
+      window.erpFetch('/api/system/users/' + encodeURIComponent(userId), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

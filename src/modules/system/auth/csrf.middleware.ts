@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { csrfService } from './csrf.service.js';
 import { ForbiddenError } from '../../../common/errors/forbidden.error.js';
+import { UnauthorizedError } from '../../../common/errors/unauthorized.error.js';
 
 /**
  * Validates session-bound CSRF token on unsafe HTTP methods for authenticated requests.
@@ -13,7 +14,7 @@ export function validateCsrfToken(req: Request, res: Response, next: NextFunctio
 
   const sessionId = req.user?.sessionId;
   if (!sessionId) {
-    return next(new ForbiddenError('رمز الحماية ضد التزوير مفقود', 'CSRF_TOKEN_MISSING'));
+    return next(new UnauthorizedError('يرجى تسجيل الدخول أولاً'));
   }
 
   const candidateToken = req.headers['x-csrf-token'];

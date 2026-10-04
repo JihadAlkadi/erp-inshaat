@@ -10,7 +10,7 @@
  */
 window.erpFetch = function(url, options) {
   options = options || {};
-  var method = (options.method || 'GET').toUpperCase();
+  var method = String((options && options.method) || 'GET').trim().toUpperCase();
   var isSafe = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
 
   var headers = options.headers ? new Headers(options.headers) : new Headers();
