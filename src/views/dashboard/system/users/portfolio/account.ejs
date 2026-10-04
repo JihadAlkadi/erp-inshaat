@@ -1,0 +1,73 @@
+<div class="user-portfolio-container">
+  <!-- Header & Navigation -->
+  <%- include('./partials/header') %>
+  <%- include('./partials/navigation') %>
+
+  <!-- Account Details Card -->
+  <div class="user-portfolio-card">
+    <div class="user-portfolio-card-header">
+      <h5 class="user-portfolio-card-title text-dark">
+        <i class="fa-solid fa-id-card text-primary"></i>
+        <span>بيانات الحساب الأساسية</span>
+      </h5>
+      <% if (canUpdate) { %>
+        <a href="/system/users/<%= targetUser.id %>/edit" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1.5">
+          <i class="fa-solid fa-pen-to-square"></i>
+          <span>تعديل البيانات</span>
+        </a>
+      <% } %>
+    </div>
+    <div class="user-portfolio-card-body">
+      <dl class="user-portfolio-dl">
+        <div class="user-portfolio-di">
+          <dt class="user-portfolio-dt">الاسم الكامل</dt>
+          <dd class="user-portfolio-dd"><%= accountDetails.fullName %></dd>
+        </div>
+
+        <div class="user-portfolio-di">
+          <dt class="user-portfolio-dt">رقم الهاتف</dt>
+          <dd class="user-portfolio-dd font-monospace" dir="ltr" style="text-align: right;"><%= accountDetails.phone %></dd>
+        </div>
+
+        <div class="user-portfolio-di">
+          <dt class="user-portfolio-dt">الدور الأساسي</dt>
+          <dd class="user-portfolio-dd">
+            <span class="badge bg-secondary-subtle text-secondary-emphasis px-2.5 py-1 rounded-pill">
+              <i class="fa-solid fa-shield-halved me-1 small"></i>
+              <%= accountDetails.roleName %>
+            </span>
+          </dd>
+        </div>
+
+        <div class="user-portfolio-di">
+          <dt class="user-portfolio-dt">حالة الحساب</dt>
+          <dd class="user-portfolio-dd">
+            <% if (accountDetails.isActive) { %>
+              <span class="badge bg-success-subtle text-success px-2.5 py-1 rounded-pill">
+                <i class="fa-solid fa-circle-check me-1"></i> نشط
+              </span>
+            <% } else { %>
+              <span class="badge bg-danger-subtle text-danger px-2.5 py-1 rounded-pill">
+                <i class="fa-solid fa-circle-xmark me-1"></i> معطل
+              </span>
+            <% } %>
+          </dd>
+        </div>
+
+        <div class="user-portfolio-di">
+          <dt class="user-portfolio-dt">تاريخ إنشاء الحساب</dt>
+          <dd class="user-portfolio-dd text-muted">
+            <%= new Date(accountDetails.createdAt).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) %>
+          </dd>
+        </div>
+
+        <div class="user-portfolio-di">
+          <dt class="user-portfolio-dt">آخر تحديث</dt>
+          <dd class="user-portfolio-dd text-muted">
+            <%= new Date(accountDetails.updatedAt).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) %>
+          </dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+</div>

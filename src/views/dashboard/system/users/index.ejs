@@ -53,11 +53,15 @@
             <tr>
               <td class="py-3 px-4">
                 <div class="d-flex align-items-center gap-3">
-                  <div class="rounded-circle d-flex justify-content-center align-items-center text-white fw-bold" style="width: 40px; height: 40px; background-color: #714B67; font-size: 0.95rem;">
+                  <a href="/system/users/<%= u.id %>" class="rounded-circle d-flex justify-content-center align-items-center text-white fw-bold text-decoration-none" style="width: 40px; height: 40px; background-color: #714B67; font-size: 0.95rem;">
                     <%= u.fullName ? u.fullName.charAt(0) : 'U' %>
-                  </div>
+                  </a>
                   <div>
-                    <div class="fw-bold text-dark"><%= u.fullName %></div>
+                    <div>
+                      <a href="/system/users/<%= u.id %>" class="fw-bold text-dark text-decoration-none">
+                        <%= u.fullName %>
+                      </a>
+                    </div>
                     <% if (u.id === currentUserId) { %>
                       <span class="badge bg-info-subtle text-info-emphasis small" style="font-size: 0.7rem;">حسابك الحالي</span>
                     <% } %>
@@ -86,6 +90,10 @@
               </td>
               <td class="py-3 text-center px-4">
                 <div class="d-inline-flex gap-1">
+                  <a href="/system/users/<%= u.id %>" class="btn btn-sm btn-outline-info" title="عرض الملف الإداري">
+                    <i class="fa-solid fa-id-card"></i>
+                  </a>
+
                   <% if (typeof canUpdate !== 'undefined' && canUpdate) { %>
                     <a href="/system/users/<%= u.id %>/edit" class="btn btn-sm btn-outline-primary" title="تعديل">
                       <i class="fa-solid fa-pen-to-square"></i>

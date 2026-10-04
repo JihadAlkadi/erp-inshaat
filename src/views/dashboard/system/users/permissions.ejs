@@ -1,65 +1,46 @@
-<div class="row justify-content-center">
-  <div class="col-12 col-xl-11">
-    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
-      <div>
-        <h3 class="fw-bold mb-1" style="color: #1F2937;">
-          صلاحيات المستخدم: <%= targetUser.fullName %>
-          <i class="fa-solid fa-key text-muted fs-5 ms-2"></i>
-        </h3>
-        <p class="text-muted mb-0 small">
-          إدارة الصلاحيات المباشرة للمستخدم واستعراض الصلاحيات الموروثة من الدور
-        </p>
+<div class="user-portfolio-container">
+  <!-- Header & Navigation -->
+  <%- include('./portfolio/partials/header') %>
+  <%- include('./portfolio/partials/navigation') %>
+
+  <!-- Context Strip -->
+  <% if (typeof productionResponsibility !== 'undefined' && productionResponsibility && productionResponsibility.state === 'VISIBLE') { %>
+    <div class="user-portfolio-context-strip">
+      <div class="d-flex align-items-center flex-wrap gap-2">
+        <i class="fa-solid fa-industry text-primary"></i>
+        <strong class="text-dark small">السياق التشغيلي الحالي:</strong>
+        <span class="badge <%= productionResponsibility.kind === 'HEAD' ? 'bg-primary' : 'bg-info-subtle text-info-emphasis' %> rounded-pill px-2 py-0.5 small">
+          <%= productionResponsibility.kind === 'HEAD' ? 'رئيس قسم' : 'مهندس إنتاج' %>
+        </span>
+        <% if (productionResponsibility.department) { %>
+          <span class="text-muted small">•</span>
+          <span class="text-dark small fw-semibold"><%= productionResponsibility.department.name %></span>
+        <% } %>
+        <% if (productionResponsibility.kind === 'ENGINEER' && productionResponsibility.yards && productionResponsibility.yards.length > 0) { %>
+          <span class="text-muted small">•</span>
+          <span class="text-muted small">الساحات: <%= productionResponsibility.yards.map(y => y.name).join('، ') %></span>
+        <% } %>
       </div>
-      <a href="/system/users" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2">
-        <i class="fa-solid fa-arrow-right"></i>
-        <span>العودة للمستخدمين</span>
+      <a href="/system/users/<%= targetUser.id %>/production" class="small text-decoration-none fw-semibold">
+        تفاصيل المسؤولية <i class="fa-solid fa-chevron-left small"></i>
       </a>
     </div>
+  <% } %>
 
-    <!-- User Summary Card -->
-    <div class="card border-0 shadow-sm mb-4" style="border-radius: 12px;">
-      <div class="card-body p-3 d-flex flex-wrap align-items-center justify-content-between gap-3">
-        <div class="d-flex align-items-center gap-3">
-          <div class="rounded-circle d-flex justify-content-center align-items-center text-white fw-bold" style="width: 44px; height: 44px; background-color: #714B67; font-size: 1.1rem;">
-            <%= targetUser.fullName ? targetUser.fullName.charAt(0) : 'U' %>
-          </div>
-          <div>
-            <div class="fw-bold text-dark fs-5"><%= targetUser.fullName %></div>
-            <div class="text-muted small">
-              الهاتف: <code class="bg-light text-dark px-2 py-0.5 rounded border" dir="ltr"><%= targetUser.phone %></code>
-              <span class="mx-2">•</span>
-              الدور الأساسي: <span class="badge bg-secondary-subtle text-secondary-emphasis"><%= targetUser.roleName || 'غير محدد' %></span>
-            </div>
-          </div>
-        </div>
-        <div>
-          <% if (targetUser.isActive) { %>
-            <span class="badge bg-success-subtle text-success px-3 py-2 rounded-pill">
-              <i class="fa-solid fa-circle-check me-1"></i> نشط
-            </span>
-          <% } else { %>
-            <span class="badge bg-danger-subtle text-danger px-3 py-2 rounded-pill">
-              <i class="fa-solid fa-circle-xmark me-1"></i> معطل
-            </span>
-          <% } %>
-        </div>
+  <% if (isSelf) { %>
+    <div class="alert alert-warning d-flex align-items-center mb-4" role="alert">
+      <i class="fa-solid fa-shield-halved fs-4 me-3 flex-shrink-0"></i>
+      <div>
+        <strong>حماية الحساب الشخصي:</strong>
+        <div class="small mt-1">لا يمكنك تعديل صلاحيات حسابك المباشرة بنفسك. يتم عرض الصلاحيات في وضع القراءة فقط.</div>
       </div>
     </div>
+  <% } %>
 
-    <% if (isSelf) { %>
-      <div class="alert alert-warning d-flex align-items-center mb-4" role="alert">
-        <i class="fa-solid fa-shield-halved fs-4 me-3 flex-shrink-0"></i>
-        <div>
-          <strong>حماية الحساب الشخصي:</strong>
-          <div class="small mt-1">لا يمكنك تعديل صلاحيات حسابك المباشرة بنفسك. يتم عرض الصلاحيات في وضع القراءة فقط.</div>
-        </div>
-      </div>
-    <% } %>
+  <div id="pageAlert" class="alert alert-danger d-none mb-4" role="alert"></div>
 
-    <div id="pageAlert" class="alert alert-danger d-none mb-4" role="alert"></div>
-
-    <!-- Permissions Container -->
-    <div id="userPermissionsContainer" data-user-id="<%= targetUser.id %>" data-is-self="<%= isSelf ? 'true' : 'false' %>" data-can-manage="<%= canManagePermissions ? 'true' : 'false' %>">
+  <!-- Permissions Container -->
+  <div id="userPermissionsContainer" data-user-id="<%= targetUser.id %>" data-is-self="<%= isSelf ? 'true' : 'false' %>" data-can-manage="<%= canManagePermissions ? 'true' : 'false' %>">
       <% 
         const groups = {};
         if (typeof permissions !== 'undefined' && permissions.length > 0) {
@@ -359,6 +340,7 @@
       <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="offcanvas">إغلاق</button>
     </div>
   </div>
+</div>
 </div>
 
 <script src="/js/user-permissions.js"></script>

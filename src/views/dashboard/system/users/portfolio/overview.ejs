@@ -1,0 +1,152 @@
+<div class="user-portfolio-container">
+  <!-- Header & Navigation -->
+  <%- include('./partials/header') %>
+  <%- include('./partials/navigation') %>
+
+  <!-- KPI Summary Cards Row -->
+  <div class="row g-3 mb-4">
+    <!-- Account Status KPI -->
+    <div class="col-12 col-sm-6 col-lg-3">
+      <div class="user-portfolio-kpi-card">
+        <div class="user-portfolio-kpi-icon bg-<%= targetUser.isActive ? 'success' : 'danger' %>-subtle text-<%= targetUser.isActive ? 'success' : 'danger' %>">
+          <i class="fa-solid fa-<%= targetUser.isActive ? 'circle-check' : 'circle-xmark' %>"></i>
+        </div>
+        <div class="user-portfolio-kpi-info">
+          <span class="user-portfolio-kpi-label">حالة الحساب</span>
+          <h4 class="user-portfolio-kpi-value text-<%= targetUser.isActive ? 'success' : 'danger' %>">
+            <%= targetUser.isActive ? 'نشط' : 'معطل' %>
+          </h4>
+        </div>
+      </div>
+    </div>
+
+    <!-- Role KPI -->
+    <div class="col-12 col-sm-6 col-lg-3">
+      <div class="user-portfolio-kpi-card">
+        <div class="user-portfolio-kpi-icon bg-primary-subtle text-primary">
+          <i class="fa-solid fa-shield-halved"></i>
+        </div>
+        <div class="user-portfolio-kpi-info">
+          <span class="user-portfolio-kpi-label">الدور الأساسي</span>
+          <h4 class="user-portfolio-kpi-value text-truncate" title="<%= targetUser.roleName || 'بدون دور' %>">
+            <%= targetUser.roleName || 'بدون دور' %>
+          </h4>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inherited Permissions KPI -->
+    <div class="col-12 col-sm-6 col-lg-3">
+      <div class="user-portfolio-kpi-card">
+        <div class="user-portfolio-kpi-icon bg-info-subtle text-info">
+          <i class="fa-solid fa-network-wired"></i>
+        </div>
+        <div class="user-portfolio-kpi-info">
+          <span class="user-portfolio-kpi-label">صلاحيات الدور الموروثة</span>
+          <h4 class="user-portfolio-kpi-value">
+            <%= permissionSummary.inheritedCount %> <span class="fs-6 fw-normal text-muted">مفعلة</span>
+          </h4>
+        </div>
+      </div>
+    </div>
+
+    <!-- Direct Permissions KPI -->
+    <div class="col-12 col-sm-6 col-lg-3">
+      <div class="user-portfolio-kpi-card">
+        <div class="user-portfolio-kpi-icon bg-warning-subtle text-warning">
+          <i class="fa-solid fa-key"></i>
+        </div>
+        <div class="user-portfolio-kpi-info">
+          <span class="user-portfolio-kpi-label">الصلاحيات المباشرة</span>
+          <h4 class="user-portfolio-kpi-value">
+            <%= permissionSummary.directCount %> <span class="fs-6 fw-normal text-muted">مفعلة</span>
+          </h4>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Content Grid -->
+  <div class="row g-4">
+    <!-- Warnings & Diagnostics Section -->
+    <div class="col-12 <%= canViewProduction ? 'col-lg-8' : 'col-lg-12' %>">
+      <%- include('./partials/warning-list') %>
+    </div>
+
+    <!-- Production Responsibility Summary Section -->
+    <% if (canViewProduction && typeof productionResponsibility !== 'undefined') { %>
+      <div class="col-12 col-lg-4">
+        <div class="user-portfolio-card h-100">
+          <div class="user-portfolio-card-header">
+            <h5 class="user-portfolio-card-title text-dark">
+              <i class="fa-solid fa-industry text-primary"></i>
+              <span>المسؤولية التشغيلية</span>
+            </h5>
+            <a href="/system/users/<%= targetUser.id %>/production" class="small text-decoration-none fw-semibold">
+              التفاصيل <i class="fa-solid fa-chevron-left small"></i>
+            </a>
+          </div>
+          <div class="user-portfolio-card-body">
+            <% if (productionResponsibility.state === 'VISIBLE') { %>
+              <div class="mb-3">
+                <span class="text-muted small d-block mb-1">نوع المسؤولية</span>
+                <span class="badge <%= productionResponsibility.kind === 'HEAD' ? 'bg-primary' : 'bg-info-subtle text-info-emphasis' %> px-2.5 py-1.5 rounded-pill fs-6">
+                  <i class="fa-solid <%= productionResponsibility.kind === 'HEAD' ? 'fa-user-tie' : 'fa-helmet-safety' %> me-1"></i>
+                  <%= productionResponsibility.kind === 'HEAD' ? 'رئيس قسم' : 'مهندس إنتاج' %>
+                </span>
+              </div>
+
+              <% if (productionResponsibility.department) { %>
+                <div class="mb-3 p-2.5 bg-light rounded-3 border">
+                  <span class="text-muted small d-block">قسم الإنتاج</span>
+                  <strong class="text-dark"><%= productionResponsibility.department.name %></strong>
+                  <code class="text-muted small d-block font-monospace"><%= productionResponsibility.department.code %></code>
+                </div>
+              <% } %>
+
+              <% if (productionResponsibility.kind === 'ENGINEER' && productionResponsibility.yards) { %>
+                <div class="mb-3">
+                  <span class="text-muted small d-block mb-2">الساحات المسندة (<%= productionResponsibility.yards.length %>)</span>
+                  <div class="user-portfolio-yard-chips">
+                    <% productionResponsibility.yards.slice(0, 3).forEach(function(y) { %>
+                      <span class="user-portfolio-yard-chip">
+                        <i class="fa-solid fa-vector-square small"></i>
+                        <span><%= y.name %></span>
+                      </span>
+                    <% }); %>
+                    <% if (productionResponsibility.yards.length > 3) { %>
+                      <span class="badge bg-secondary-subtle text-secondary-emphasis align-self-center px-2 py-1.5">
+                        + <%= productionResponsibility.yards.length - 3 %> أخرى
+                      </span>
+                    <% } %>
+                  </div>
+                </div>
+              <% } %>
+            <% } else if (productionResponsibility.state === 'INCONSISTENT') { %>
+              <div class="alert alert-danger p-3 rounded-3 mb-0">
+                <div class="fw-bold mb-1"><i class="fa-solid fa-triangle-exclamation me-1"></i> حالة تشغيلية غير متسقة</div>
+                <div class="small">هناك تناقض في بيانات الإسناد التشغيلي للمستخدم يتطلب مراجعة إدارة القسم.</div>
+              </div>
+            <% } else if (productionResponsibility.state === 'NONE') { %>
+              <div class="text-center py-3 text-muted">
+                <i class="fa-solid fa-layer-group fs-3 mb-2 d-block opacity-50"></i>
+                <p class="small mb-0">لا توجد مسؤولية تشغيلية حالية لهذا المستخدم.</p>
+              </div>
+            <% } else { %>
+              <div class="text-center py-3 text-muted">
+                <i class="fa-solid fa-lock fs-3 mb-2 d-block opacity-50"></i>
+                <p class="small mb-0">لا توجد بيانات تشغيلية متاحة ضمن نطاق وصولك.</p>
+              </div>
+            <% } %>
+
+            <hr class="my-3 text-muted opacity-25">
+            <p class="text-muted small mb-0" style="font-size: 0.775rem;">
+              <i class="fa-solid fa-circle-info me-1"></i>
+              المسؤولية التشغيلية لا تمنح صلاحيات النظام تلقائياً؛ الوصول الفعلي تحدده قواعد الصلاحيات.
+            </p>
+          </div>
+        </div>
+      </div>
+    <% } %>
+  </div>
+</div>
