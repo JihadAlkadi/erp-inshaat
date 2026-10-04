@@ -61,9 +61,11 @@ Authorization = ماذا يستطيع؟
 قواعد هيكل المسؤوليات وفريق عمل الإنتاج (Production Department Team & Engineer Assignments Invariants):
 - لكل قسم إنتاج رئيس قسم واحد (`head_user_id` في `production_department`) مع قيد فرادة في قاعدة البيانات (`UQ_production_department_head_user`).
 - المستخدم الواحد يمكن أن يكون رئيساً لقسم إنتاج واحد فقط غير مؤرشف (A user may head at most one non-deleted production department).
-- مرشح رئاسة القسم يجب أن يكون مستخدماً نشطاً، غير مؤرشف/محذوف ناعماً، وليس رئيساً لأي قسم إنتاج آخر غير مؤرشف (المهندسون النشطون مؤهلون للترشح لرئاسة القسم).
+- تعارض الأدوار التشغيلية (Mutual Exclusivity): لا يجوز للمستخدم في نفس الوقت أن يكون رئيساً لأي قسم إنتاج ومهندساً مسنداً لساحات إنتاج (A user cannot simultaneously hold a current Production Department Head responsibility and a current Yard Engineer assignment).
+- مرشح رئاسة القسم (Department Head Candidate): يجب أن يكون مستخدماً نشطاً، غير مؤرشف/محذوف ناعماً، ليس رئيساً لأي قسم إنتاج غير مؤرشف (بما في ذلك القسم الحالي في واجهة الاختيار)، ليس مهندساً نشطاً في أي قسم إنتاج (`PRODUCTION_ENGINEER_CANNOT_BE_DEPARTMENT_HEAD`)، وليس لديه أي ارتباطات بساحات إنتاج (`PRODUCTION_USER_HAS_EXISTING_YARD_ASSIGNMENTS`).
 - رئيس القسم مسؤول تلقائياً عن جميع ساحات القسم الحالية والمستقبلية دون الحاجة لصفوف إسناد منفصلة.
-- مرشح وظيفة المهندس يجب أن يكون مستخدماً نشطاً، غير مؤرشف، وليس رئيساً لقسم إنتاج، وليس لديه إسناد مهندس نشط، ولا يملك أي ارتباطات حالية بساحات إنتاج.
+- عند أرشفة قسم الإنتاج (`softDeleteDepartment`)، يتم تحرير رئيس القسم تلقائياً بجعل `head_user_id = null` مع ضبط `deleted_at` وتعيين `is_active = false` لإتاحة إسناده لقسم آخر دون تعارض مع قيد الفرادة.
+- مرشح وظيفة المهندس (Engineer Candidate): يجب أن يكون مستخدماً نشطاً، غير مؤرشف، ليس رئيساً لأي قسم إنتاج (`PRODUCTION_DEPARTMENT_HEAD_CANNOT_BE_ENGINEER`)، ليس مهندساً نشطاً في القسم المستهدف (`PRODUCTION_ENGINEER_ALREADY_ASSIGNED`) ولا في أي قسم إنتاج آخر (`PRODUCTION_ENGINEER_ASSIGNED_TO_OTHER_DEPARTMENT`)، ولا يملك ارتباطات ساحات متعارضة أو قديمة (`PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`). السجل التاريخي المعطل النظيف (0 ارتباطات) مؤهل لإعادة الاستخدام.
 - المهندس الواحد ينتمي لقسم إنتاج واحد فقط (`userId` فريد في `production_department_engineer` عبر `UQ_production_department_engineer_user`).
 - المهندس يُسند لساحة واحدة أو أكثر تتبع لنفس قسمه (`production_yard_engineer` مع قيد فرادة الزوج `UQ_production_yard_engineer_assignment`).
 - يمكن للساحة الواحدة أن تضم أكثر من مهندس مسؤول عنها.
@@ -71,12 +73,12 @@ Authorization = ماذا يستطيع؟
 - يُمنع نقل أو أرشفة ساحة مسندة لمهندسين حالياً (`PRODUCTION_YARD_HAS_ENGINEERS`).
 - لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، ولا يُعاد تفعيل السجل إلا إذا كانت ارتباطات الساحات مساوية للصفر (Fail closed on stale mappings: `PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`).
 - المستخدمون المؤرشفون المرتبطون تاريخياً كرؤساء أقسام أو مهندسين تظل هوياتهم محفوظة وظاهرة في واجهة الفريق مع تمييز حالتهم بوسم "مؤرشف / غير متاح" ودون كشف أي بيانات حساسة.
-- فلترة المرشحين في واجهة المستخدم (UI Filtering) لا تغني إطلاقاً عن التحقق الصارم في طبقة الخدمات والـ APIs.
+- فلترة المرشحين في واجهة المستخدم (UI Filtering) هي لتحسين تجربة المستخدم فقط، بينما التحقق الصارم في طبقة الخدمات والـ Transactions هو الحامي للمنطق التشغيلي وقيود قاعدة البيانات هي خط الدفاع النهائي.
 - بروتوكول قفل سجلات فريق الإنتاج (Team Lock Order Protocol):
   1. قسم الإنتاج (`Department row` via `pessimistic_write`)
   2. سجل المستخدم (`User row` via `pessimistic_write`)
   3. سجل تعيين المهندس (`Assignment row` via `pessimistic_write`)
-  4. سجلات الساحات مرتبة تصاعدياً حسب المعرف (`Yards sorted by ID` via `pessimistic_write`)
+  4. سجلات الساحات مرتبة تصاعدياً حسب المعرف (`Yards sorted ascending by ID` via `pessimistic_write`)
   5. كتابة المخططات والروابط (`Mapping writes / mutations`)
 
 ---

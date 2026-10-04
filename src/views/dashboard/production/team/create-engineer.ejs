@@ -40,7 +40,7 @@
                     <option value="<%= u.id %>"><%= u.fullName %> (<%= u.phone %>)</option>
                   <% }); %>
                 <% } else { %>
-                  <option value="" disabled selected>لا يوجد مستخدمون متاحون للتعيين حالياً</option>
+                  <option value="" disabled selected>لا يوجد مستخدمون متاحون للإسناد كمهندسين حالياً</option>
                 <% } %>
               </select>
             </div>
@@ -103,7 +103,7 @@
               id="submitBtn"
               class="btn btn-primary d-inline-flex align-items-center gap-2 px-4"
               style="background-color: #0984E3; border-color: #0984E3;"
-              <%= !departmentYards || departmentYards.length === 0 ? 'disabled' : '' %>
+              <%= !departmentYards || departmentYards.length === 0 || !activeUsers || activeUsers.length === 0 ? 'disabled data-permanently-disabled="true"' : '' %>
             >
               <span class="spinner-border spinner-border-sm d-none" role="status"></span>
               <i class="fa-solid fa-floppy-disk"></i>

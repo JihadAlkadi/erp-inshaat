@@ -238,19 +238,19 @@
                 <% if (activeUsers && activeUsers.length > 0) { %>
                   <option value="" disabled selected>-- اختر من المستخدمين النشطين المتاحين --</option>
                   <% activeUsers.forEach(function(u) { %>
-                    <option value="<%= u.id %>" <%= head && head.id === u.id ? 'selected' : '' %>>
+                    <option value="<%= u.id %>">
                       <%= u.fullName %> (<%= u.phone %>)
                     </option>
                   <% }); %>
                 <% } else { %>
-                  <option value="" disabled selected>لا يوجد مستخدمون متاحون للتعيين حالياً</option>
+                  <option value="" disabled selected>لا يوجد مستخدمون متاحون لتعيينهم كرؤساء أقسام حالياً</option>
                 <% } %>
               </select>
             </div>
             <% if (!activeUsers || activeUsers.length === 0) { %>
               <div class="alert alert-warning py-2 px-3 small" role="alert">
                 <i class="fa-solid fa-triangle-exclamation me-1"></i>
-                لا يوجد مستخدمون متاحون لتولي رئاسة هذا القسم (المستخدم يمكن أن يكون رئيساً لقسم واحد فقط).
+                لا يوجد مستخدمون متاحون لتعيينهم كرؤساء أقسام حالياً.
               </div>
             <% } %>
             <div class="form-text text-muted small">
@@ -259,7 +259,7 @@
           </div>
           <div class="modal-footer bg-light">
             <button type="button" class="btn btn-light" data-bs-dismiss="modal">إلغاء</button>
-            <button type="submit" id="saveHeadBtn" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background-color: #0984E3; border-color: #0984E3;" <%= !activeUsers || activeUsers.length === 0 ? 'disabled' : '' %>>
+            <button type="submit" id="saveHeadBtn" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background-color: #0984E3; border-color: #0984E3;" <%= !activeUsers || activeUsers.length === 0 ? 'disabled data-permanently-disabled="true"' : '' %>>
               <span class="spinner-border spinner-border-sm d-none" role="status"></span>
               <i class="fa-solid fa-floppy-disk"></i>
               <span>حفظ رئيس القسم</span>

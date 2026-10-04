@@ -90,7 +90,9 @@ function setButtonLoading(btn, isLoading, loadingText) {
     if (icon) icon.classList.add('d-none');
     if (textSpan && loadingText) textSpan.textContent = loadingText;
   } else {
-    btn.disabled = false;
+    if (!btn.hasAttribute('data-permanently-disabled')) {
+      btn.disabled = false;
+    }
     if (spinner) spinner.classList.add('d-none');
     if (icon) icon.classList.remove('d-none');
     if (textSpan && textSpan.dataset.originalText) {

@@ -16,7 +16,7 @@ export class ProductionTeamWebController {
     try {
       const { departmentId } = req.params;
       const teamData = await this.teamService.getDepartmentTeam(departmentId as string);
-      const activeUsers = await this.teamService.listAvailableDepartmentHeadUsers(departmentId as string);
+      const activeUsers = await this.teamService.listAvailableDepartmentHeadUsers();
       const departmentYards = await this.teamService.listDepartmentActiveYards(departmentId as string);
 
       const currentUser = req.user as AuthPrincipal;
@@ -47,7 +47,7 @@ export class ProductionTeamWebController {
     try {
       const { departmentId } = req.params;
       const teamData = await this.teamService.getDepartmentTeam(departmentId as string);
-      const activeUsers = await this.teamService.listAvailableEngineerUsers();
+      const activeUsers = await this.teamService.listAvailableEngineerUsers(departmentId as string);
       const departmentYards = await this.teamService.listDepartmentActiveYards(departmentId as string);
 
       res.render('dashboard/production/team/create-engineer', {

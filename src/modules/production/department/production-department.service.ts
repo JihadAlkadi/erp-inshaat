@@ -14,6 +14,7 @@ import {
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+import { assertUserAvailableAsDepartmentHead } from '../team/production-team.service.js';
 
 export class ProductionDepartmentService {
   private readonly departmentRepository: Repository<ProductionDepartmentEntity>;
@@ -153,38 +154,8 @@ export class ProductionDepartmentService {
 
     return await AppDataSource.transaction(async (manager) => {
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
-      const userRepo = manager.getRepository(UserEntity);
 
-      // 1. Lock & Validate Head User (Protocol step: lock user row)
-      const headUser = await userRepo
-        .createQueryBuilder('user')
-        .setLock('pessimistic_write')
-        .where('user.id = :id', { id: dto.headUserId })
-        .andWhere('user.deletedAt IS NULL')
-        .getOne();
-
-      if (!headUser || !headUser.isActive) {
-        throw new BusinessRuleError(
-          'المستخدم المحدد غير موجود أو غير متاح لتعيينه رئيساً للقسم',
-          'PRODUCTION_DEPARTMENT_HEAD_USER_NOT_AVAILABLE'
-        );
-      }
-
-      // 2. Check if user is already head of another non-deleted department
-      const existingHeadDept = await deptRepo
-        .createQueryBuilder('dept')
-        .where('dept.headUserId = :headUserId', { headUserId: headUser.id })
-        .andWhere('dept.deletedAt IS NULL')
-        .getOne();
-
-      if (existingHeadDept) {
-        throw new ConflictError(
-          'المستخدم المحدد هو رئيس قسم إنتاج آخر ولا يمكن تعيينه رئيساً لأكثر من قسم',
-          'PRODUCTION_USER_ALREADY_DEPARTMENT_HEAD'
-        );
-      }
-
-      // 3. Check code uniqueness including soft-deleted departments
+      // 1. Check code uniqueness including soft-deleted departments
       const existingCode = await deptRepo
         .createQueryBuilder('dept')
         .withDeleted()
@@ -197,6 +168,9 @@ export class ProductionDepartmentService {
           'PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS'
         );
       }
+
+      // 2. Lock & Validate Head User using shared helper (Protocol step: lock user row)
+      const headUser = await assertUserAvailableAsDepartmentHead(manager, dto.headUserId);
 
       try {
         const department = deptRepo.create({
@@ -375,6 +349,7 @@ export class ProductionDepartmentService {
         );
       }
 
+      department.headUserId = null;
       department.deletedAt = new Date();
       department.isActive = false;
       await deptRepo.save(department);

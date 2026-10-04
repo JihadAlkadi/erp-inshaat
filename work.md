@@ -5,14 +5,29 @@
 تم تنفيذ مرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات الشاملة (Role Management Core & Global Permission Assignment) ومرحلة إدارة المستخدمين الأساسية (User Management Core) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات وقاعدة البيانات:
 - **فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core)** (`src/modules/production/team/`):
   - **هيكل مسؤوليات تشغيلي مستقل**: يربط المستخدمين بالكيانات التشغيلية داخل تطبيق الإنتاج حصراً ومستقل تماماً عن HR.
-  - **رئيس القسم (`Department Head`)**: لكل قسم إنتاج رئيس قسم واحد (`head_user_id` في `production_department`)، ويكون مسؤولاً تلقائياً عن جميع ساحات القسم الحالية والمستقبلية دون الحاجة لصفوف إسناد ساحات منفصلة.
+  - **تعارض الأدوار التشغيلية (Mutual Exclusivity)**: لا يجوز للمستخدم في نفس الوقت أن يكون رئيساً لأي قسم إنتاج ومهندساً مسنداً لساحات إنتاج (A user cannot simultaneously hold a current Production Department Head responsibility and a current Yard Engineer assignment).
+  - **رئيس القسم (`Department Head`)**: لكل قسم إنتاج رئيس قسم واحد (`head_user_id` في `production_department`) بقيد فرادة في قاعدة البيانات (`UQ_production_department_head_user`)، ويكون مسؤولاً تلقائياً عن جميع ساحات القسم الحالية والمستقبلية دون الحاجة لصفوف إسناد ساحات منفصلة.
+  - **قواعد ترشيح رئيس القسم (Department Head Candidate Rules)**:
+    - المستخدم يجب أن يكون: نشطاً (`isActive = true`)، غير محذوف ناعماً (`deletedAt IS NULL`)، ليس رئيساً لأي قسم إنتاج غير مؤرشف (بما في ذلك القسم الحالي في واجهة الاختيار)، ليس مهندساً نشطاً في أي قسم إنتاج (`PRODUCTION_ENGINEER_CANNOT_BE_DEPARTMENT_HEAD`)، وليس لديه أي ارتباطات بساحات إنتاج (`PRODUCTION_USER_HAS_EXISTING_YARD_ASSIGNMENTS`).
+    - المستخدم الذي كان مهندساً سابقاً بسجل تاريخي معطل ونظيف (0 ارتباطات ساحات) مؤهل لتولي رئاسة القسم.
+  - **دورة حياة رئيس القسم عند أرشفة القسم (Department Soft Delete Head Release)**:
+    - عند أرشفة قسم إنتاج (`softDeleteDepartment`)، يتم تصفير حقل رئيس القسم (`head_user_id = null`) مع ضبط `deleted_at` وتعيين `is_active = false` داخل نفس الـ Transaction لتحرير قيد الفرادة وتمكين المستخدم من تولي رئاسة قسم آخر.
   - **المهندسون وتوزيع الساحات (`Engineers & Yard Assignments`)**:
-    - المهندس ينتمي لقسم إنتاج واحد فقط (`userId` فريد في `production_department_engineer`).
-    - المهندس يُسند لساحة واحدة أو أكثر تتبع لنفس قسمه (`production_yard_engineer`).
+    - المهندس ينتمي لقسم إنتاج واحد فقط (`userId` فريد في `production_department_engineer` عبر `UQ_production_department_engineer_user`).
+    - المهندس يُسند لساحة واحدة أو أكثر تتبع لنفس قسمه (`production_yard_engineer` مع قيد فرادة الزوج `UQ_production_yard_engineer_assignment`).
     - يمكن للساحة الواحدة أن تضم أكثر من مهندس مسؤول عنها.
     - يُمنع إسناد مهندس لساحات تتبع قسماً آخر (`PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH`).
     - يُمنع نقل أو أرشفة ساحة مسندة لمهندسين حالياً (`PRODUCTION_YARD_HAS_ENGINEERS`).
-    - لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، وعند إعادة تعيينه يُعاد تفعيل نفس السجل لمنع تكرار الـ ID.
+    - لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، وعند إعادة تعيينه يُعاد تفعيل نفس السجل بشرط ألا يكون لديه ارتباطات قديمة (`PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`).
+  - **قواعد ترشيح المهندس (Engineer Candidate Rules)**:
+    - المستخدم يجب أن يكون: نشطاً، غير مؤرشف، ليس رئيساً لأي قسم إنتاج (`PRODUCTION_DEPARTMENT_HEAD_CANNOT_BE_ENGINEER`)، ليس مهندساً نشطاً في القسم المستهدف (`PRODUCTION_ENGINEER_ALREADY_ASSIGNED`) ولا في أي قسم إنتاج آخر (`PRODUCTION_ENGINEER_ASSIGNED_TO_OTHER_DEPARTMENT`)، ولا يملك أي ارتباطات ساحات متعارضة أو قديمة (`PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`).
+  - **بروتوكول قفل سجلات فريق الإنتاج الموحد (Production Team Lock Order Protocol)**:
+    - كافة عمليات فريق الإنتاج (`addEngineerToDepartment`, `updateEngineerYards`, `removeEngineerFromDepartment`, `setDepartmentHead`, `createDepartment`) تلتزم بترتيب القفل التشاؤمي الموحد دون أي انعكاس:
+      1. قسم الإنتاج (`Department row` via `pessimistic_write`)
+      2. سجل المستخدم (`User row` via `pessimistic_write`)
+      3. سجل تعيين المهندس (`Assignment row` via `pessimistic_write`)
+      4. سجلات الساحات مرتبة تصاعدياً حسب المعرف (`Yards sorted ascending by ID` via `pessimistic_write`)
+      5. كتابة المخططات والروابط (`Mapping writes / mutations`)
 - **الهيكل التشغيلي للإنتاج - الأقسام والساحات (Production Departments & Yards Core)** (`src/modules/production/`):
   - **فصل تشغيلي تام عن الموارد البشرية**: بيانات الأقسام والساحات هنا هي بيانات تشغيلية تخص تطبيق الإنتاج (`Production Application`) حصراً ومستقلة تماماً عن الهيكل التنظيمي للموارد البشرية (`HR Structure`).
   - **بيانات أعمال ديناميكية**: بيانات الأقسام والساحات ديناميكية بالكامل وتُدار عبر الواجهة وقاعدة البيانات ولا تحتوي على أي Enums صلبة.
