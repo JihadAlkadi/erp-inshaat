@@ -112,7 +112,7 @@
                 </td>
                 <td class="py-3 text-center px-4">
                   <div class="d-inline-flex gap-1">
-                    <% if (canViewTeam || canManageTeam) { %>
+                    <% if (dept.canViewTeam) { %>
                       <a
                         href="/production/departments/<%= dept.id %>/team"
                         class="btn btn-sm btn-outline-info"
@@ -122,7 +122,7 @@
                       </a>
                     <% } %>
 
-                    <% if (canUpdate) { %>
+                    <% if (dept.canUpdate) { %>
                       <a
                         href="/production/departments/<%= dept.id %>/edit"
                         class="btn btn-sm btn-outline-primary"
@@ -159,7 +159,7 @@
                       <% } %>
                     <% } %>
 
-                    <% if (canDelete) { %>
+                    <% if (dept.canDelete) { %>
                       <button
                         type="button"
                         class="btn btn-sm btn-outline-danger"

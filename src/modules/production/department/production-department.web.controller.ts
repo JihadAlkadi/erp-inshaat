@@ -5,6 +5,8 @@ import { authorizationService } from '../../system/authorization/authorization.s
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { AuthPrincipal } from '../../system/auth/auth.types.js';
 import { productionTeamService } from '../team/production-team.service.js';
+import { getProductionAccessPolicy } from '../authorization/production-authorization-context.js';
+import { canAccessDepartment } from '../authorization/production-access-query.helper.js';
 
 export class ProductionDepartmentWebController {
   private readonly departmentService: ProductionDepartmentService;
@@ -19,17 +21,48 @@ export class ProductionDepartmentWebController {
       const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10));
       const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
 
-      const queryDto: ListProductionDepartmentsQueryDto = { page, limit, search };
-      const departmentsData = await this.departmentService.listDepartments(queryDto);
-
       const currentUser = req.user as AuthPrincipal;
-      const userPermissions = await authorizationService.getEffectivePermissions(currentUser);
+      const viewPolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_DEPARTMENT_VIEW
+      );
+      const updatePolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_DEPARTMENT_UPDATE
+      );
+      const deletePolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_DEPARTMENT_DELETE
+      );
+      const viewTeamPolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_ASSIGNMENT_VIEW
+      );
+      const manageTeamPolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE
+      );
 
-      const canCreate = userPermissions.includes(SystemPermission.PRODUCTION_DEPARTMENT_CREATE);
-      const canUpdate = userPermissions.includes(SystemPermission.PRODUCTION_DEPARTMENT_UPDATE);
-      const canDelete = userPermissions.includes(SystemPermission.PRODUCTION_DEPARTMENT_DELETE);
-      const canViewTeam = userPermissions.includes(SystemPermission.PRODUCTION_ASSIGNMENT_VIEW);
-      const canManageTeam = userPermissions.includes(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE);
+      const queryDto: ListProductionDepartmentsQueryDto = { page, limit, search };
+      const departmentsData = await this.departmentService.listDepartments(queryDto, viewPolicy);
+
+      const canCreate = await authorizationService.hasPermission(
+        currentUser,
+        SystemPermission.PRODUCTION_DEPARTMENT_CREATE
+      );
+
+      const departments = departmentsData.items.map((dept) => ({
+        ...dept,
+        canUpdate: canAccessDepartment(updatePolicy, dept.id),
+        canDelete: canAccessDepartment(deletePolicy, dept.id),
+        canViewTeam: canAccessDepartment(viewTeamPolicy, dept.id),
+        canManageTeam: canAccessDepartment(manageTeamPolicy, dept.id),
+      }));
 
       res.render('dashboard/production/departments/index', {
         layout: 'dashboard/production/layout',
@@ -39,7 +72,7 @@ export class ProductionDepartmentWebController {
         hasSidebar: true,
         sidebarPath: 'production/partials/sidebar',
         activeTab: 'departments',
-        departments: departmentsData.items,
+        departments,
         pagination: {
           page: departmentsData.page,
           limit: departmentsData.limit,
@@ -48,10 +81,6 @@ export class ProductionDepartmentWebController {
         },
         search: search || '',
         canCreate,
-        canUpdate,
-        canDelete,
-        canViewTeam,
-        canManageTeam,
       });
     } catch (error) {
       next(error);
@@ -80,7 +109,13 @@ export class ProductionDepartmentWebController {
   renderEditDepartmentForm = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { id } = req.params;
-      const department = await this.departmentService.getDepartmentById(id as string);
+      const currentUser = req.user as AuthPrincipal;
+      const updatePolicy = await getProductionAccessPolicy(
+        req,
+        currentUser,
+        SystemPermission.PRODUCTION_DEPARTMENT_UPDATE
+      );
+      const department = await this.departmentService.getDepartmentById(id as string, updatePolicy);
 
       res.render('dashboard/production/departments/edit', {
         layout: 'dashboard/production/layout',

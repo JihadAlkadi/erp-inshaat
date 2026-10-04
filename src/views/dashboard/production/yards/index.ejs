@@ -115,7 +115,7 @@
                 </td>
                 <td class="py-3 text-center px-4">
                   <div class="d-inline-flex gap-1">
-                    <% if (canUpdate) { %>
+                    <% if (yard.canUpdate) { %>
                       <a
                         href="/production/yards/<%= yard.id %>/edit"
                         class="btn btn-sm btn-outline-primary"
@@ -150,7 +150,7 @@
                       <% } %>
                     <% } %>
 
-                    <% if (canDelete) { %>
+                    <% if (yard.canDelete) { %>
                       <button
                         type="button"
                         class="btn btn-sm btn-outline-danger"

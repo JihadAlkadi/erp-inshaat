@@ -14,6 +14,11 @@ import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 import { assertUserAvailableAsDepartmentHead } from '../team/production-team.service.js';
+import { ResolvedProductionAccessPolicy } from '../authorization/production-access-policy.types.js';
+import {
+  applyDepartmentAccessScope,
+  canAccessDepartment,
+} from '../authorization/production-access-query.helper.js';
 
 export class ProductionDepartmentService {
   private readonly departmentRepository: Repository<ProductionDepartmentEntity>;
@@ -28,7 +33,8 @@ export class ProductionDepartmentService {
   }
 
   async listDepartments(
-    query: ListProductionDepartmentsQueryDto
+    query: ListProductionDepartmentsQueryDto,
+    policy: ResolvedProductionAccessPolicy
   ): Promise<PaginatedProductionDepartmentsResult> {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 10));
@@ -38,6 +44,9 @@ export class ProductionDepartmentService {
       .createQueryBuilder('dept')
       .leftJoinAndSelect('dept.headUser', 'headUser')
       .where('dept.deletedAt IS NULL');
+
+    // Apply row-level access scope before pagination & counting
+    applyDepartmentAccessScope(qb, policy, 'dept');
 
     if (query.search && query.search.trim() !== '') {
       const term = `%${query.search.trim()}%`;
@@ -111,11 +120,19 @@ export class ProductionDepartmentService {
     };
   }
 
-  async getDepartmentById(id: string): Promise<SafeProductionDepartmentOutput> {
-    const dept = await this.departmentRepository.findOne({
-      where: { id, deletedAt: IsNull() },
-      relations: { headUser: true },
-    });
+  async getDepartmentById(
+    id: string,
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<SafeProductionDepartmentOutput> {
+    const qb = this.departmentRepository
+      .createQueryBuilder('dept')
+      .leftJoinAndSelect('dept.headUser', 'headUser')
+      .where('dept.id = :id', { id })
+      .andWhere('dept.deletedAt IS NULL');
+
+    applyDepartmentAccessScope(qb, policy, 'dept');
+
+    const dept = await qb.getOne();
 
     if (!dept) {
       throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
@@ -224,7 +241,8 @@ export class ProductionDepartmentService {
 
   async updateDepartment(
     id: string,
-    dto: UpdateProductionDepartmentDto
+    dto: UpdateProductionDepartmentDto,
+    policy: ResolvedProductionAccessPolicy
   ): Promise<SafeProductionDepartmentOutput> {
     return await AppDataSource.transaction(async (manager) => {
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
@@ -239,6 +257,11 @@ export class ProductionDepartmentService {
         .getOne();
 
       if (!department) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      // Enforce row-level authorization on locked department before mutation
+      if (!canAccessDepartment(policy, department.id)) {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
@@ -300,7 +323,10 @@ export class ProductionDepartmentService {
     });
   }
 
-  async softDeleteDepartment(id: string): Promise<void> {
+  async softDeleteDepartment(
+    id: string,
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<void> {
     await AppDataSource.transaction(async (manager) => {
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
       const yardRepo = manager.getRepository(ProductionYardEntity);
@@ -314,6 +340,11 @@ export class ProductionDepartmentService {
         .getOne();
 
       if (!department) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      // Enforce row-level authorization on locked department before mutation
+      if (!canAccessDepartment(policy, department.id)) {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
@@ -418,6 +449,29 @@ export class ProductionDepartmentService {
       code: d.code,
     }));
   }
+
+  async listActiveDepartmentsForPolicy(
+    policy: ResolvedProductionAccessPolicy
+  ): Promise<{ id: string; name: string; code: string }[]> {
+    const qb = this.departmentRepository
+      .createQueryBuilder('dept')
+      .where('dept.isActive = :isActive', { isActive: true })
+      .andWhere('dept.deletedAt IS NULL');
+
+    applyDepartmentAccessScope(qb, policy, 'dept');
+
+    qb.orderBy('dept.name', 'ASC')
+      .select(['dept.id', 'dept.name', 'dept.code']);
+
+    const depts = await qb.getMany();
+
+    return depts.map((d) => ({
+      id: d.id,
+      name: d.name,
+      code: d.code,
+    }));
+  }
 }
 
 export const productionDepartmentService = new ProductionDepartmentService();
+

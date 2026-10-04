@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { productionDepartmentController } from './production-department.controller.js';
 import { requireApiAuth } from '../../system/auth/auth.middleware.js';
 import { requirePermission } from '../../system/authorization/authorization.middleware.js';
+import { requireProductionAccess } from '../authorization/production-authorization.middleware.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { validateDto } from '../../../common/middleware/validate-dto.middleware.js';
 import { validateQueryDto } from '../../../common/middleware/validate-query-dto.middleware.js';
@@ -18,7 +19,7 @@ departmentApiRouter.use(requireApiAuth);
 // GET /api/production/departments - List departments
 departmentApiRouter.get(
   '/',
-  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_DEPARTMENT_VIEW),
   validateQueryDto(ListProductionDepartmentsQueryDto),
   productionDepartmentController.listDepartments
 );
@@ -26,12 +27,12 @@ departmentApiRouter.get(
 // GET /api/production/departments/:id - Get department details
 departmentApiRouter.get(
   '/:id',
-  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_VIEW),
+  requireProductionAccess(SystemPermission.PRODUCTION_DEPARTMENT_VIEW),
   validateUuidParam('id'),
   productionDepartmentController.getDepartmentById
 );
 
-// POST /api/production/departments - Create new department
+// POST /api/production/departments - Create new department (Global CREATE permission required)
 departmentApiRouter.post(
   '/',
   requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_CREATE),
@@ -42,7 +43,7 @@ departmentApiRouter.post(
 // PATCH /api/production/departments/:id - Update department
 departmentApiRouter.patch(
   '/:id',
-  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_UPDATE),
+  requireProductionAccess(SystemPermission.PRODUCTION_DEPARTMENT_UPDATE),
   validateUuidParam('id'),
   validateDepartmentUpdatePayload,
   validateDto(UpdateProductionDepartmentDto),
@@ -52,7 +53,7 @@ departmentApiRouter.patch(
 // DELETE /api/production/departments/:id - Soft delete department
 departmentApiRouter.delete(
   '/:id',
-  requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_DELETE),
+  requireProductionAccess(SystemPermission.PRODUCTION_DEPARTMENT_DELETE),
   validateUuidParam('id'),
   productionDepartmentController.deleteDepartment
 );

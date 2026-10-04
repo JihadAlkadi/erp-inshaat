@@ -17,6 +17,8 @@ import { UpdateProductionEngineerYardsDto } from './dto/update-production-engine
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+import { ResolvedProductionAccessPolicy } from '../authorization/production-access-policy.types.js';
+import { canAccessDepartment } from '../authorization/production-access-query.helper.js';
 
 /**
  * Shared Helper: Asserts that a user is available to become a Department Head.
@@ -106,7 +108,11 @@ export class ProductionTeamService {
    * Retrieves the department team details (Head + Engineers + Yards) in an optimized batched query without N+1.
    * Soft-deleted (archived) users remain visible with appropriate flags and identities.
    */
-  async getDepartmentTeam(departmentId: string): Promise<DepartmentTeamOutput> {
+  async getDepartmentTeam(departmentId: string, policy: ResolvedProductionAccessPolicy): Promise<DepartmentTeamOutput> {
+    if (!canAccessDepartment(policy, departmentId)) {
+      throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+    }
+
     const deptRepo = AppDataSource.getRepository(ProductionDepartmentEntity);
     const userRepo = AppDataSource.getRepository(UserEntity);
 
@@ -216,7 +222,8 @@ export class ProductionTeamService {
    */
   async setDepartmentHead(
     departmentId: string,
-    userId: string
+    userId: string,
+    policy: ResolvedProductionAccessPolicy
   ): Promise<{ success: boolean; message: string; head: SafeHeadUserOutput }> {
     return await AppDataSource.transaction(async (manager: EntityManager) => {
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
@@ -229,7 +236,7 @@ export class ProductionTeamService {
         .andWhere('dept.deletedAt IS NULL')
         .getOne();
 
-      if (!department) {
+      if (!department || !canAccessDepartment(policy, department.id)) {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
@@ -291,7 +298,8 @@ export class ProductionTeamService {
    */
   async addEngineerToDepartment(
     departmentId: string,
-    dto: CreateProductionEngineerAssignmentDto
+    dto: CreateProductionEngineerAssignmentDto,
+    policy: ResolvedProductionAccessPolicy
   ): Promise<SafeEngineerAssignmentOutput> {
     return await AppDataSource.transaction(async (manager: EntityManager) => {
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
@@ -308,7 +316,7 @@ export class ProductionTeamService {
         .andWhere('dept.deletedAt IS NULL')
         .getOne();
 
-      if (!department) {
+      if (!department || !canAccessDepartment(policy, department.id)) {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
@@ -485,7 +493,8 @@ export class ProductionTeamService {
   async updateEngineerYards(
     departmentId: string,
     assignmentId: string,
-    dto: UpdateProductionEngineerYardsDto
+    dto: UpdateProductionEngineerYardsDto,
+    policy: ResolvedProductionAccessPolicy
   ): Promise<SafeEngineerAssignmentOutput> {
     return await AppDataSource.transaction(async (manager: EntityManager) => {
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
@@ -515,7 +524,7 @@ export class ProductionTeamService {
         .andWhere('dept.deletedAt IS NULL')
         .getOne();
 
-      if (!department) {
+      if (!department || !canAccessDepartment(policy, department.id)) {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
@@ -618,7 +627,8 @@ export class ProductionTeamService {
    */
   async removeEngineerFromDepartment(
     departmentId: string,
-    assignmentId: string
+    assignmentId: string,
+    policy: ResolvedProductionAccessPolicy
   ): Promise<{ success: boolean; message: string }> {
     return await AppDataSource.transaction(async (manager: EntityManager) => {
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
@@ -647,7 +657,7 @@ export class ProductionTeamService {
         .andWhere('dept.deletedAt IS NULL')
         .getOne();
 
-      if (!department) {
+      if (!department || !canAccessDepartment(policy, department.id)) {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 

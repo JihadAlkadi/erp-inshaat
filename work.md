@@ -2,7 +2,50 @@
 
 ## Current Project State
 
-تم تنفيذ مرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات الشاملة (Role Management Core & Global Permission Assignment) ومرحلة إدارة المستخدمين الأساسية (User Management Core) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات وقاعدة البيانات:
+تم تنفيذ مرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات الشاملة (Role Management Core & Global Permission Assignment) ومرحلة إدارة المستخدمين الأساسية (User Management Core) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات وقاعدة البيانات:
+- **نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core)** (`src/modules/production/authorization/`):
+  - **فصل المسؤوليات المعماري**:
+    - المصادقة (`Authentication`): من هو المستخدم؟ (`AuthPrincipal`).
+    - الصلاحية (`Permission`): ماذا يستطيع أن يفعل؟ (مثل `production.department.view`).
+    - نطاق الوصول (`Access Scope`): على أي بيانات يستطيع فعل ذلك؟ (`ALL`, `PRODUCTION_DEPARTMENT`, `PRODUCTION_YARD`).
+    - المسؤولية التشغيلية (`Operational Responsibility`): ما القسم أو الساحات التي تقع ضمن مسؤوليته الحالية؟
+  - **التحقق الدقيق والصارم من شكل كائن النطاق (`Strict Exact-Shape Scope Validation`)**:
+    - التحقق عبر `isCurrentProductionResponsibilityScope` يفرض أن يكون الكائن مطابقاً تماماً للشكل `{ "source": "CURRENT_PRODUCTION_RESPONSIBILITY" }` بدون أي خصائص إضافية (`Object.keys(scope).length === 1`). أي خصائص إضافية تجعل النطاق غير صالح (`Invalid Scope`).
+    - قواعد الـ ALLOW غير الصالحة لا تمنح أي وصول، وقواعد الـ DENY غير الصالحة تؤدي للرفض التام (`denyAll = true` / Fail Closed).
+  - **حل النطاقات الديناميكي وقت الطلب (`Dynamic Scope Resolution at Request Time`)**:
+    - لا يتم تخزين معرفات الأقسام أو الساحات في `AccessRule` ولا في الـ JWT ولا في الـ Session.
+    - يُخزن فقط نوع النطاق والمصدر الديناميكي `{ "source": "CURRENT_PRODUCTION_RESPONSIBILITY" }`.
+    - عند تنفيذ الطلب، يقوم `ProductionResponsibilityResolver` بحل المسؤوليات الفعلية للمستخدم من قاعدة البيانات بـ استعلامين مستهدفين فقط بدون N+1:
+      1. استعلام رئاسة القسم (`Head query`): على `production_department` حيث `head_user_id = principal.id` و `deleted_at IS NULL`.
+      2. استعلام إسناد المهندس الموحد المدمج (`Engineer joined query`): استعلام واحد يضم `ProductionDepartmentEngineerEntity` مع القسم `department` وارتباطات الساحات `yardMappings` وساحاتها `yard` حيث `eng.userId = :userId` و `eng.isActive = true`.
+    - **فحوصات النزاهة والانغلاق الآمن للمسؤوليات (Resolver Consistency Checks & Fail-Closed)**:
+      - التحقق من وجود علاقة قسم المهندس وعدم أرشفته (`eng.department.deletedAt === null`).
+      - التحقق من امتلاك المهندس النشط لساحة واحدة على الأقل مسندة إليه (`yardMappings.length > 0`) واعتبار وجود مهندس نشط بلا ساحات حالة تشغيلية فاسدة وتناقضاً في البيانات.
+      - التحقق من وجود كافة الساحات المسندة وعدم أرشفتها (`yard.deletedAt === null`).
+      - التحقق من تطابق تبعية كافة الساحات لقسم المهندس نفسه (`yard.departmentId === eng.departmentId`).
+      - التحقق من عدم تعارض الأدوار التشغيلية وجمع رئاسة قسم مع إسناد مهندس نشط (`headDepartmentId !== null && engineerDepartmentId !== null`).
+      - في حال فشل أي شرط نزاهة، تعتبر الحالة غير سليمة (`isConsistent = false`) ويتم تصفير ساحات المهندس (`engineerYardIds = []`) لإبطال النطاقات الديناميكية تلقائياً دون تصليح صامت للبيانات الفاسدة.
+  - **محرك تقييم سياسة الوصول `ProductionAccessPolicyService`**:
+    - تقييم القواعد المطبقة (منح الدور + المنح المباشرة).
+    - تفوق الرفض التام (`DENY ALL` wins / `DENY` overrides `ALLOW`).
+    - قواعد الحظر أو المنح غير الصالحة أو غير المدعومة تخضع لسياسة الـ Fail Closed (الـ DENY غير المفهوم يتحول إلى `denyAll = true`، والـ ALLOW غير المفهوم لا يمنح شيئاً).
+    - إنتاج سياسة وصول قطعية وموحدة `ResolvedProductionAccessPolicy` تحتوي على معرفات الأقسام والساحات المسموحة والمحظورة (`allowDepartmentIds`, `denyDepartmentIds`, `allowYardIds`, `denyYardIds`, `allowAll`, `denyAll`, `hasAnyAccess`).
+  - **كاش الصلاحيات والمسؤوليات على مستوى الطلب `ProductionAuthorizationContext`**:
+    - استخدام `WeakMap<Request, ...>` لضمان انتهاء الكاش تلقائياً بانتهاء دورة حياة الطلب دون تسريب في الذاكرة وبدون الحاجة لـ Redis.
+    - حل المسؤولية التشغيلية مرة واحدة فقط لكل Request.
+    - حل سياسة الوصول لكل صلاحية مرة واحدة فقط لكل Request، مما يمنع تكرار الاستعلامات بين الوسيط (Middleware) ووحدات التحكم (Controllers) وواجهات الويب (Views).
+  - **إنفاذ الشروط على مستوى `QueryBuilder` للبيانات والبيانات الوصفية (`Resource & Metadata Query Scoping`)**:
+    - `applyDepartmentAccessScope`: تطبيق شروط الوصول على استعلامات الأقسام على مستوى SQL قبل الـ Pagination والـ Counting.
+    - `applyYardAccessScope`: تطبيق شروط الوصول على استعلامات الساحات مع دعم أقسام المهندسين وساحاتهم عبر `Brackets` آمنة.
+    - `listActiveDepartmentsForPolicy`: جلب الأقسام النشطة المسموحة للأهداف (Target Departments) بتطبيق `applyDepartmentAccessScope` داخل الـ QueryBuilder مباشرة لمنع تسريب بيانات الأقسام غير المسموحة.
+    - `listAccessibleDepartmentOptions`: جلب خيارات الأقسام لفلتر الساحات عبر استعلام مدمج للساحات المسموحة (`applyYardAccessScope`) واستخراج الأقسام الفريدة منها لمنع تسريب أسماء أقسام لا يملك المستخدم ساحات ضمنها.
+    - حظر الفلترة اللاحقة بعد الجلب (`No post-fetch security filtering`) لخيارات القوائم المنسدلة والفلاتر.
+    - استعلامات `getById`: تطبيق نطاق الوصول داخل استعلام الـ SQL وإرجاع 404 برمز `NOT_FOUND` في حال كان السجل خارج النطاق لمنع تسريب وجود البيانات (`Prevent Information Leakage`).
+    - العمليات التعديلية والحذف: التحقق المسبق من النطاق عبر Scoped Pre-Read لرفض الطلبات غير المصرح بها (404) قبل الدخول في Transactions أو حيازة أقفال تشاؤمية، مع إعادة التحقق القطعي الحتمي من النطاق (`canAccessDepartment`, `canAccessYard`) على السجل المقفول داخل الـ Transaction لمنع ثغرات الـ TOCTOU.
+    - ترتيب التحقق في `updateYard`: قفل الأقسام ثم قفل الساحة والتحقق من صلاحية الوصول للساحة المصدر (`canAccessYard`) أولاً قبل التحقق من فعالية أو صلاحية الوصول للقسم الهدف لمنع تسريب معلومات القسم الهدف لمستخدم لا يملك الساحة المصدر.
+    - إنشاء قسم جديد: يبقى صلاحية عامة شاملة (`requirePermission(PRODUCTION_DEPARTMENT_CREATE)`).
+    - إنشاء ساحة جديدة: التحقق من وقوع القسم المستهدف ضمن نطاق وصول المستخدم (`canAccessDepartment(policy, dto.departmentId)`).
+    - نقل ساحة لقسم آخر: التحقق من امتلاك المستخدم وصولاً للقسم الجديد المستهدف على مستوى القسم (`canAccessDepartment(policy, targetDepartment.id)`).
 - **فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core)** (`src/modules/production/team/`):
   - **هيكل مسؤوليات تشغيلي مستقل**: يربط المستخدمين بالكيانات التشغيلية داخل تطبيق الإنتاج حصراً ومستقل تماماً عن HR.
   - **تعارض الأدوار التشغيلية (Mutual Exclusivity)**: لا يجوز للمستخدم في نفس الوقت أن يكون رئيساً لأي قسم إنتاج ومهندساً مسنداً لساحات إنتاج (A user cannot simultaneously hold a current Production Department Head responsibility and a current Yard Engineer assignment).
@@ -36,23 +79,43 @@
       3. سجل تعيين المهندس (`Assignment row` via `pessimistic_write`)
       4. سجلات الساحات مرتبة تصاعدياً حسب المعرف (`Yards sorted ascending by ID` via `pessimistic_write`)
       5. كتابة المخططات والروابط (`Mapping writes / mutations`)
+  - **تحكم الويب لفريق العمل `ProductionTeamWebController`**:
+    - `renderDepartmentTeam`: يعتمد على `viewPolicy` لعرض الفريق، ويحسب `canManage` عبر `canAccessDepartment(managePolicy, departmentId)`؛ وفي حال كان `canManage === false` يتم تخطي استعلامات ترشيح المستخدمين والساحات وإرجاع مصفوفات فارغة لتوفير الموارد ومنع كشف البيانات.
+    - `renderAddEngineerForm` و `renderEditEngineerYardsForm`: تعتمد حصراً على `managePolicy` في جلب الفريق والتحقق من الوصول دون اشتراط صلاحية `PRODUCTION_ASSIGNMENT_VIEW` ضمنياً.
 - **الهيكل التشغيلي للإنتاج - الأقسام والساحات (Production Departments & Yards Core)** (`src/modules/production/`):
   - **فصل تشغيلي تام عن الموارد البشرية**: بيانات الأقسام والساحات هنا هي بيانات تشغيلية تخص تطبيق الإنتاج (`Production Application`) حصراً ومستقلة تماماً عن الهيكل التنظيمي للموارد البشرية (`HR Structure`).
   - **بيانات أعمال ديناميكية**: بيانات الأقسام والساحات ديناميكية بالكامل وتُدار عبر الواجهة وقاعدة البيانات ولا تحتوي على أي Enums صلبة.
   - **خدمة أقسام الإنتاج `ProductionDepartmentService`** (`src/modules/production/department/production-department.service.ts`):
-    - `listDepartments`: استرجاع قائمة أقسام الإنتاج مع ترقيم الصفحات (Pagination) والبحث بالاسم أو الرمز، واسترجاع رئيس القسم، وحساب إجمالي الساحات (`yardCount`) والساحات النشطة (`activeYardCount`) في استعلام تجميعي واحد بدون N+1، واستبعاد المحذوفين ناعماً.
-    - `getDepartmentById`: استرجاع تفاصيل قسم إنتاج محدد مع رئيس القسم وحساب عدد الساحات ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد.
+    - `listDepartments`: استرجاع قائمة أقسام الإنتاج مع ترقيم الصفحات (Pagination) والبحث بالاسم أو الرمز، واسترجاع رئيس القسم، وحساب إجمالي الساحات (`yardCount`) والساحات النشطة (`activeYardCount`) في استعلام تجميعي واحد بدون N+1، واستبعاد المحذوفين ناعماً وتطبيق `applyDepartmentAccessScope`.
+    - `getDepartmentById`: استرجاع تفاصيل قسم إنتاج محدد مع رئيس القسم وحساب عدد الساحات وتطبيق نطاق الوصول ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد أو كان خارج النطاق.
     - `createDepartment`: إنشاء قسم إنتاج جديد مع تحديد رئيس القسم الإلزامي (`headUserId`)، والتحقق من نشاط المستخدم وصلاحيته عبر قفل سجل المستخدم أولاً (`User row` via `pessimistic_write` ثم `Department INSERT`)، مع فحص مسبق لفرادة الرمز التقني (`code.trim().toUpperCase()`) متضمناً السجلات المحذوفة ناعماً (`withDeleted()`) والتقاط تضارب المفتاح الفريد وتحويله إلى `ConflictError` برمز `PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS` (409).
-    - `updateDepartment`: تحديث بيانات القسم (الاسم، الوصف، حالة التفعيل) داخل Transaction مع قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل القسم (`Department row`)، مع ثبات الرمز التقني وعدم السماح بتعديله، وتطبيق قاعدة منع تعطيل القسم طالما يمتلك ساحات نشطة (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_YARDS`).
+    - `updateDepartment`: تحديث بيانات القسم (الاسم، الوصف، حالة التفعيل) داخل Transaction مع قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل القسم (`Department row`)، مع ثبات الرمز التقني وعدم السماح بتعديله، والتحقق من `canAccessDepartment(policy, department.id)`، وتطبيق قاعدة منع تعطيل القسم طالما يمتلك ساحات نشطة (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_YARDS`).
     - `softDeleteDepartment`: أرشفة القسم (Soft Delete) وضبط `headUserId = null` و `isActive = false` و `deletedAt = new Date()` داخل Transaction مع قفل تشاؤمي على سجل القسم، وتطبيق قاعدة منع أرشفة القسم طالما يمتلك أي ساحات غير مؤرشفة سواء كانت نشطة أو معطلة (`PRODUCTION_DEPARTMENT_HAS_YARDS`) وتطبيق قاعدة منع أرشفة القسم طالما يمتلك مهندسين نشطين (`PRODUCTION_DEPARTMENT_HAS_ENGINEERS`).
+    - `listActiveDepartmentsForPolicy`: استرجاع الأقسام النشطة غير المؤرشفة المسموحة لسياسة الوصول المحددة عبر `applyDepartmentAccessScope` داخل الـ QueryBuilder مباشرة للاستخدام في القوائم المنسدلة للإنشاء ونقل الساحات.
     - `findAssignableDepartmentForUpdate`: دالة مساعدة لقفل والتحقق من نشاط وصلاحية القسم قبل ربط الساحات به.
-    - `listActiveDepartments`: استرجاع قائمة الأقسام النشطة للاختيار في نماذج إنشاء وتعديل الساحات.
+    - `listActiveDepartments`: استرجاع قائمة كافة الأقسام النشطة غير المؤرشفة بدون سياسة وصول (Unscoped)، وتستخدم حصراً في السياقات الداخلية التي لا تعتمد على فلترة الصلاحيات.
   - **خدمة ساحات الإنتاج `ProductionYardService`** (`src/modules/production/yard/production-yard.service.ts`):
-    - `listYards`: استرجاع قائمة ساحات الإنتاج مع Pagination والبحث، والفلترة الاختيارية بالقسم (`departmentId`)، وضم القسم التابع (`department`) بدون N+1.
-    - `getYardById`: استرجاع تفاصيل الساحة مع قسمها التابع.
-    - `createYard`: إنشاء ساحة جديدة داخل Transaction متزامنة مع قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل قسم الإنتاج التابع عبر `findAssignableDepartmentForUpdate` لضمان فعالية القسم ومنع التزامن مع تعطيله، وفحص فرادة رمز الساحة عبر `withDeleted()` والتقاط خطأ 409 برمز `PRODUCTION_YARD_CODE_ALREADY_EXISTS`.
-    - `updateYard`: تحديث بيانات الساحة (القسم، الاسم، السعة، الوصف، حالة التفعيل) داخل Transaction وفق بروتوكول القفل الموحد (`Department(s) sorted ascending -> Yard -> Mutations`): قراءة استطلاعية للساحة خارج الـ Transaction لاكتشاف معرفات الأقسام المعنية، فتح الـ Transaction، قفل الأقسام المعنية تشاؤمياً واحداً تلو الآخر بترتيب تصاعدي حتمي لمعرفاتها (`for (const deptId of sortedDeptIds)`) لمنع الـ Deadlocks، قفل الساحة تشاؤمياً، إعادة التحقق من تطابق التبعية للقسم المقفول (`PRODUCTION_YARD_CONCURRENTLY_CHANGED`)، التحقق من عدم وجود مهندسين مسندين للساحة عند نقلها لقسم آخر (`PRODUCTION_YARD_HAS_ENGINEERS`)، والتحقق من فعالية القسم التابع عند إعادة التفعيل (`PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE`)، وحفظ التعديلات.
-    - `softDeleteYard`: أرشفة الساحة (Soft Delete) وضبط `isActive = false` و `deletedAt = new Date()` داخل Transaction وفق بروتوكول القفل الموحد (`Department -> Yard`): قراءة استطلاعية للساحة خارج الـ Transaction، فتح الـ Transaction، قفل القسم التابع تشاؤمياً، قفل الساحة تشاؤمياً، إعادة التحقق من التبعية للقسم المقفول (`PRODUCTION_YARD_CONCURRENTLY_CHANGED`)، التحقق من عدم وجود مهندسين مسندين للساحة (`PRODUCTION_YARD_HAS_ENGINEERS`)، ثم الأرشفة والتعطيل.
+    - `listYards`: استرجاع قائمة ساحات الإنتاج مع Pagination والبحث، والفلترة الاختيارية بالقسم (`departmentId`)، وضم القسم التابع (`department`) بدون N+1، مع تطبيق `applyYardAccessScope`.
+    - `listAccessibleDepartmentOptions`: استرجاع خيارات الأقسام المتاحة للفلترة بناءً على الساحات المسموح للمستخدم رؤيتها ضمن `viewPolicy` عبر استعلام SQL موحد مستند إلى `applyYardAccessScope` دون كشف أسماء أو معرفات أقسام غير مسموحة.
+    - `getYardById`: استرجاع تفاصيل الساحة مع قسمها التابع وتطبيق نطاق الوصول عبر `applyYardAccessScope` ورمي `NotFoundError` برمز `PRODUCTION_YARD_NOT_FOUND` عند عدم وجودها أو خروجها عن النطاق.
+    - `createYard`: إنشاء ساحة جديدة داخل Transaction متزامنة مع قفل تشاؤمي للكتابة (`pessimistic_write`) على سجل قسم الإنتاج التابع عبر `findAssignableDepartmentForUpdate` بعد التحقق من `canAccessDepartment(policy, dto.departmentId)`، لضمان فعالية القسم ومنع التزامن مع تعطيله، وفحص فرادة رمز الساحة عبر `withDeleted()` والتقاط خطأ 409 برمز `PRODUCTION_YARD_CODE_ALREADY_EXISTS`.
+    - `updateYard`: تحديث بيانات الساحة (القسم، الاسم، السعة، الوصف، حالة التفعيل):
+      1. قراءة استطلاعية مقيدة بالصلاحيات (`Scoped Pre-Read`) خارج الـ Transaction عبر `applyYardAccessScope` لرفض الساحات غير المسموحة فوراً برمز `PRODUCTION_YARD_NOT_FOUND` (404) قبل حيازة أي أقفال تشاؤمية.
+      2. فتح الـ Transaction وقفل الأقسام المعنية تشاؤمياً واحداً تلو الآخر بترتيب تصاعدي حتمي لمعرفاتها (`for (const deptId of sortedDeptIds)`).
+      3. قفل سجل الساحة تشاؤمياً (`Yard row` via `pessimistic_write`).
+      4. إعادة التحقق من تطابق التبعية للقسم المقفول (`PRODUCTION_YARD_CONCURRENTLY_CHANGED`).
+      5. إعادة التحقق القطعي من صلاحية الوصول للساحة المصدر المقفولة (`canAccessYard`) لمنع ثغرات الـ TOCTOU ورمي `PRODUCTION_YARD_NOT_FOUND` في حال خروجها عن النطاق.
+      6. التحقق من صحة القسم الهدف وصلاحية الوصول إليه (`canAccessDepartment`) فقط بعد ثبوت صلاحية الساحة المصدر لمنع تسريب بيانات الأقسام الأخرى.
+      7. التحقق من عدم وجود مهندسين مسندين للساحة عند نقلها لقسم آخر (`PRODUCTION_YARD_HAS_ENGINEERS`).
+      8. التحقق من فعالية القسم التابع عند تفعيل الساحة وحفظ التعديلات.
+    - `softDeleteYard`: أرشفة الساحة (Soft Delete) وضبط `isActive = false` و `deletedAt = new Date()`:
+      1. قراءة استطلاعية مقيدة بالصلاحيات (`Scoped Pre-Read`) خارج الـ Transaction عبر `applyYardAccessScope` ورمي `PRODUCTION_YARD_NOT_FOUND` (404) إذا كانت خارج النطاق.
+      2. فتح الـ Transaction وقفل القسم التابع تشاؤمياً.
+      3. قفل سجل الساحة تشاؤمياً.
+      4. إعادة التحقق من تبعية الساحة للقسم المقفول.
+      5. إعادة التحقق القطعي من صلاحية الوصول للساحة المقفولة (`canAccessYard`).
+      6. التحقق من عدم وجود مهندسين مسندين للساحة (`PRODUCTION_YARD_HAS_ENGINEERS`).
+      7. الأرشفة والتعطيل وحفظ السجل.
   - **مفهوم السعة الاستيعابية للساحات (`Yard Capacity`)**:
     - السعة الاستيعابية تمثل أقصى عدد من الغرف التي تستطيع الساحة استيعابها (`1 Room = 1 Capacity Unit`) كعدد صحيح موجب (`capacity >= 1`) بغض النظر عن نوع الغرفة أو أبعادها.
     - لا يتم تخزين الإشغال الحالي (`Occupancy`) أو السعة المتبقية كأعمدة في قاعدة البيانات؛ بل تُحسب لاحقاً عند بناء دورة حياة الغرف وحركات الإنتاج.
@@ -69,12 +132,12 @@
     - `DELETE /api/production/yards/:id` (محمي بـ `PRODUCTION_YARD_DELETE` و UUID).
   - **واجهات الويب المعروضة من الخادم (Server-rendered EJS)**:
     - `GET /production`: لوحة تحكم تطبيق الإنتاج مع بطاقات التنقل للأقسام والساحات.
-    - `GET /production/departments`: جدول أقسام الإنتاج مع إجمالي والساحات النشطة وشارات الحالة، مع أزرار إجراءات مباشرة مدمجة (`d-inline-flex gap-1`) متسقة مع جداول النظام لتجنب Scrollbars داخل `table-responsive`.
+    - `GET /production/departments`: جدول أقسام الإنتاج مع إجمالي والساحات النشطة وشارات الحالة، مع أزرار إجراءات مقتصرة بدقة على صلاحيات الصف (`dept.canViewTeam`, `dept.canUpdate`, `dept.canDelete`) بدون fallbacks عامة.
     - `GET /production/departments/create`: نموذج إنشاء قسم إنتاج جديد مع التحقق بواسطة المتصفح وبواسطة Bootstrap.
     - `GET /production/departments/:id/edit`: نموذج تعديل بيانات القسم مع قفل الرمز التقني كـ Read-only.
-    - `GET /production/yards`: جدول ساحات الإنتاج مع فلتر الأقسام والسعة الاستيعابية وشارات الحالة، مع أزرار إجراءات مباشرة مدمجة (`d-inline-flex gap-1`).
-    - `GET /production/yards/create`: نموذج إنشاء ساحة إنتاج جديدة مع قائمة اختيار الأقسام النشطة.
-    - `GET /production/yards/:id/edit`: نموذج تعديل ساحة الإنتاج مع قفل الرمز التقني.
+    - `GET /production/yards`: جدول ساحات الإنتاج مع فلتر الأقسام المشتق من الساحات المسموحة (`listAccessibleDepartmentOptions`)، وحساب `canCreate = creatableDepartments.length > 0`، وأزرار إجراءات مشروطة بصلاحيات الصف (`yard.canUpdate`, `yard.canDelete`).
+    - `GET /production/yards/create`: نموذج إنشاء ساحة إنتاج جديدة مع قائمة اختيار الأقسام النشطة المسموحة المشتقة من `listActiveDepartmentsForPolicy`.
+    - `GET /production/yards/:id/edit`: نموذج تعديل ساحة الإنتاج مع قائمة الأقسام المستهدفة المسموحة المشتقة من `listActiveDepartmentsForPolicy` مضافاً إليها القسم الحالي فقط.
   - **تفاعل العميل (Client Scripts)**:
     - `src/public/js/production-departments.js`: إدارة الأقسام عبر Native Fetch وتأكيد الحذف والتعطيل ومعالجة الأخطاء.
     - `src/public/js/production-yards.js`: إدارة الساحات عبر Native Fetch وتأكيد الحذف والتعطيل ومعالجة الأخطاء.
@@ -226,6 +289,14 @@ src/
 │   └── data-source.ts
 ├── modules/
 │   ├── production/
+│   │   ├── authorization/
+│   │   │   ├── production-access-policy.service.ts
+│   │   │   ├── production-access-policy.types.ts
+│   │   │   ├── production-access-query.helper.ts
+│   │   │   ├── production-access-scope.constants.ts
+│   │   │   ├── production-authorization-context.ts
+│   │   │   ├── production-authorization.middleware.ts
+│   │   │   └── production-responsibility.resolver.ts
 │   │   ├── department/
 │   │   │   ├── dto/
 │   │   │   │   ├── create-production-department.dto.ts
@@ -280,7 +351,8 @@ src/
 │       │   └── passport-jwt.strategy.ts
 │       ├── authorization/
 │       │   ├── authorization.middleware.ts
-│       │   └── authorization.service.ts
+│       │   ├── authorization.service.ts
+│       │   └── authorization.types.ts
 │       ├── permission/
 │       │   ├── constants/
 │       │   │   └── system-permission.enum.ts
@@ -441,135 +513,106 @@ src/
 ## Production Infrastructure (Departments, Yards & Teams)
 
 ### `ProductionDepartmentService` (`src/modules/production/department/production-department.service.ts`)
-- **Purpose**: تنفيذ منطق الأعمال، والتحقق من فرادة الرمز التقني، وتعيين رئيس القسم الإلزامي، وحماية الأقسام التي تمتلك ساحات أو مهندسين، وإدارة دورة حياة أقسام الإنتاج التشغيلية مع قفل تشاؤمي موحد لمنع التزامن غير المتسق.
+- **Purpose**: تنفيذ منطق الأعمال، والتحقق من فرادة الرمز التقني، وتعيين رئيس القسم الإلزامي، وحماية الأقسام التي تمتلك ساحات أو مهندسين، وإدارة دورة حياة أقسام الإنتاج التشغيلية مع قفل تشاؤمي موحد لمنع التزامن غير المتسق، وإنفاذ سياسة الوصول على مستوى QueryBuilder والعمليات التعديلية.
 - **Methods**:
-  - `listDepartments(query: ListProductionDepartmentsQueryDto): Promise<PaginatedProductionDepartmentsResult>`
-    - **Input**: `query` (`page`, `limit`, `search`).
-    - **Action**: استعلام مقسم لصفحات مع البحث بالاسم أو الرمز، تجميع وحساب عدد الساحات الإجمالي (`yardCount`) والساحات النشطة (`activeYardCount`) واسترجاع اسم رئيس القسم (`headUserName`) لكل قسم بكفاءة بدون N+1، استبعاد الأقسام المحذوفة ناعماً، وترتيب النتائج تصاعدياً حسب تاريخ الإنشاء.
+  - `listDepartments(query: ListProductionDepartmentsQueryDto, policy: ResolvedProductionAccessPolicy): Promise<PaginatedProductionDepartmentsResult>`
+    - **Input**: `query` (`page`, `limit`, `search`), `policy` (`ResolvedProductionAccessPolicy`).
+    - **Action**: استعلام مقسم لصفحات مع تطبيق `applyDepartmentAccessScope` على `QueryBuilder` قبل الـ Pagination والـ Counting، البحث بالاسم أو الرمز، تجميع وحساب عدد الساحات الإجمالي (`yardCount`) والساحات النشطة (`activeYardCount`) واسترجاع اسم رئيس القسم (`headUserName`) لكل قسم مسموح، استبعاد الأقسام المحذوفة ناعماً، وترتيب النتائج تصاعدياً.
     - **Output**: `{ items: SafeProductionDepartmentOutput[], total, page, limit, totalPages }`.
-  - `getDepartmentById(id: string): Promise<SafeProductionDepartmentOutput>`
-    - **Input**: `id` (UUID).
-    - **Action**: استرجاع قسم الإنتاج غير المحذوف ناعماً مع حسابه لـ `yardCount` و `activeYardCount` ورئيس القسم، ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد.
+  - `getDepartmentById(id: string, policy: ResolvedProductionAccessPolicy): Promise<SafeProductionDepartmentOutput>`
+    - **Input**: `id` (UUID), `policy`.
+    - **Action**: استرجاع قسم الإنتاج غير المحذوف ناعماً مع تطبيق `applyDepartmentAccessScope` ورمي `NotFoundError` برمز `PRODUCTION_DEPARTMENT_NOT_FOUND` إذا لم يوجد أو كان خارج نطاق وصول المستخدم لمنع تسريب وجود السجل.
     - **Output**: `SafeProductionDepartmentOutput`.
   - `createDepartment(dto: CreateProductionDepartmentDto): Promise<SafeProductionDepartmentOutput>`
     - **Input**: `CreateProductionDepartmentDto` (`name`, `code`, `headUserId`, `description`, `isActive`).
-    - **Action**:
-      1. تنظيف الرمز التقني وتحويله إلى أحرف إنجليزية كبيرة (`code.trim().toUpperCase()`).
-      2. معالجة الوصف (`string` يقص ويتحول الفارغ إلى `null`).
-      3. التحقق المسبق من عدم وجود الرمز (مع المحذوفين ناعماً) ورمي `ConflictError` (`PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS`).
-      4. التحقق من وجود ونشاط مستخدم رئيس القسم (`headUserId`) وعدم حذفه ناعماً عبر قفل سجل المستخدم أولاً (`User row` via `pessimistic_write` ثم `Department INSERT`)، ورمي `BusinessRuleError` (`PRODUCTION_DEPARTMENT_HEAD_USER_NOT_AVAILABLE`) في حال عدم توفره.
-      5. حفظ الكيان مع التقاط أخطاء الـ Race Condition في قاعدة البيانات وتحويلها إلى 409 `PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS`.
+    - **Action**: صلاحية عامة شاملة (`PRODUCTION_DEPARTMENT_CREATE`) لإنشاء قسم جديد مع قفل سجل المستخدم المرشح للرئاسة أولاً ثم حفظ القسم.
     - **Output**: `SafeProductionDepartmentOutput`.
-  - `updateDepartment(id: string, dto: UpdateProductionDepartmentDto): Promise<SafeProductionDepartmentOutput>`
-    - **Input**: `id`, `UpdateProductionDepartmentDto` (`name`, `description`, `isActive`).
-    - **Action**:
-      1. بدء Transaction وإعادة تحميل القسم المستهدف مع قفل تشاؤمي (`pessimistic_write`).
-      2. منع تعديل الرمز التقني نهائياً (`code` is immutable).
-      3. معالجة الوصف بشكل آمن: `undefined` يبقي القيمة الحالية دون تغيير، `null` يمسح الوصف، و `string` يتم تنظيفه.
-      4. إذا كان المطلوب تعطيل القسم (`isActive = false`): التحقق من عدم امتلاك القسم لأي ساحات نشطة غير محذوفة (`PRODUCTION_DEPARTMENT_HAS_ACTIVE_YARDS`).
-      5. حفظ التعديلات وإرجاع الكائن المحدث مع عدد الساحات.
+  - `updateDepartment(id: string, dto: UpdateProductionDepartmentDto, policy: ResolvedProductionAccessPolicy): Promise<SafeProductionDepartmentOutput>`
+    - **Input**: `id`, `dto`, `policy`.
+    - **Action**: بدء Transaction، قفل سجل القسم بـ `pessimistic_write`، التحقق من نطاق الوصول `canAccessDepartment(policy, department.id)` ورمي 404 في حال عدم الصلاحية، ثم تطبيق قواعد التحقق وحفظ التعديلات.
     - **Output**: `SafeProductionDepartmentOutput`.
-  - `softDeleteDepartment(id: string): Promise<{ success: boolean; message: string }>`
-    - **Input**: `id`.
-    - **Action**:
-      1. يبدأ Transaction.
-      2. يقفل سجل قسم الإنتاج المستهدف بـ `pessimistic_write`.
-      3. يتحقق من عدم وجود أي ساحات غير مؤرشفة (`deletedAt IS NULL`) سواء كانت نشطة أو معطلة، ورمي `BusinessRuleError` برمز `PRODUCTION_DEPARTMENT_HAS_YARDS` إذا وجدت.
-      4. يتحقق من عدم وجود أي مهندسين نشطين مسندين للقسم، ورمي `BusinessRuleError` برمز `PRODUCTION_DEPARTMENT_HAS_ENGINEERS` إذا وجدوا.
-      5. يحرر رئيس القسم بضبط `headUserId = null` لتحرير قيد الفرادة (`UQ_production_department_head_user`).
-      6. يضبط `isActive = false`.
-      7. يضبط `deletedAt = new Date()`.
-      8. يحفظ القسم داخل نفس الـ Transaction (`deptRepo.save(department)`).
+  - `softDeleteDepartment(id: string, policy: ResolvedProductionAccessPolicy): Promise<{ success: boolean; message: string }>`
+    - **Input**: `id`, `policy`.
+    - **Action**: بدء Transaction، قفل سجل القسم بـ `pessimistic_write`، التحقق من نطاق الوصول `canAccessDepartment(policy, department.id)`، التحقق من عدم وجود ساحات أو مهندسين، تحرير رئيس القسم، وضبط الأرشفة.
     - **Output**: `{ success: true, message: 'تم أرشفة قسم الإنتاج بنجاح' }`.
-  - `findAssignableDepartmentForUpdate(departmentId: string, manager: EntityManager): Promise<ProductionDepartmentEntity | null>`:
-    - **Input**: `departmentId`, `manager`.
-    - **Action**: البحث عن قسم نشط وغير محذوف ناعماً مع فرض قفل تشاؤمي للكتابة (`setLock('pessimistic_write')`) لنقطة تسلسل موحدة أثناء إنشاء/نقل/تفعيل الساحات أو تعيين المهندسين.
-    - **Output**: `ProductionDepartmentEntity | null`.
   - `listActiveDepartments(): Promise<Array<{ id: string; name: string; code: string }>>`:
-    - **Action**: استرجاع قائمة الأقسام النشطة غير المحذوفة للاختيار في الواجهات.
+    - **Action**: استرجاع جميع أقسام الإنتاج النشطة وغير المحذوفة ناعماً (`isActive = true`, `deletedAt IS NULL`) بدون تطبيق Access Policy. هذه الدالة غير مقيدة بالصلاحيات (Unscoped) وتُستخدم حصراً في السياقات الداخلية التي لا تعتمد على فلترة الصلاحيات.
+  - `listActiveDepartmentsForPolicy(policy: ResolvedProductionAccessPolicy): Promise<Array<{ id: string; name: string; code: string }>>`:
+    - **Input**: `policy` (`ResolvedProductionAccessPolicy`).
+    - **Action**: استرجاع الأقسام النشطة غير المؤرشفة المسموحة ضمن `policy` بتطبيق `applyDepartmentAccessScope` على `QueryBuilder` مباشرة، وتستخدم في القوائم المنسدلة للإنشاء ونقل الساحات.
+    - **Output**: `Array<{ id: string; name: string; code: string }>`.
 
 ### `ProductionYardService` (`src/modules/production/yard/production-yard.service.ts`)
-- **Purpose**: إدارة ساحات الإنتاج التشغيلية، وسعاتها الاستيعابية، وربطها بأقسام الإنتاج، ومنع نقل أو أرشفة الساحات المسندة لمهندسين مع فرض قواعد التسلسل والتزامن عبر بروتوكول القفل الموحد.
+- **Purpose**: إدارة ساحات الإنتاج التشغيلية، وسعاتها الاستيعابية، وربطها بأقسام الإنتاج، ومنع نقل أو أرشفة الساحات المسندة لمهندسين مع فرض قواعد التسلسل والتزامن عبر بروتوكول القفل الموحد، وإنفاذ سياسة الوصول على مستوى QueryBuilder والعمليات التعديلية.
 - **Methods**:
-  - `listYards(query: ListProductionYardsQueryDto): Promise<PaginatedProductionYardsResult>`
-    - **Input**: `query` (`page`, `limit`, `search`, `departmentId`).
-    - **Action**: استعلام مقسم لصفحات مع البحث بالاسم أو الرمز، والفلترة الاختيارية بالقسم، وضم القسم التابع (`department`) بكفاءة بدون N+1، واستبعاد الساحات المحذوفة ناعماً، وترتيب النتائج تصاعدياً.
+  - `listYards(query: ListProductionYardsQueryDto, policy: ResolvedProductionAccessPolicy): Promise<PaginatedProductionYardsResult>`
+    - **Input**: `query` (`page`, `limit`, `search`, `departmentId`), `policy` (`ResolvedProductionAccessPolicy`).
+    - **Action**: استعلام مقسم لصفحات مع تطبيق `applyYardAccessScope` على `QueryBuilder` قبل الـ Pagination والـ Counting، والبحث بالاسم أو الرمز، والفلترة الاختيارية بالقسم (Intersection)، واسترجاع الساحات المسموحة فقط.
     - **Output**: `{ items: SafeProductionYardOutput[], total, page, limit, totalPages }`.
-  - `getYardById(id: string): Promise<SafeProductionYardOutput>`
-    - **Input**: `id` (UUID).
-    - **Action**: استرجاع تفاصيل الساحة غير المحذوفة مع بيانات قسمها التابع ورمي `NotFoundError` برمز `PRODUCTION_YARD_NOT_FOUND` إذا لم توجد.
+  - `listAccessibleDepartmentOptions(policy: ResolvedProductionAccessPolicy): Promise<Array<{ id: string; name: string; code: string }>>`:
+    - **Input**: `policy` (`ResolvedProductionAccessPolicy`).
+    - **Action**: استخراج خيارات الأقسام المميزة المتاحة لفلتر الساحات من الساحات المسموح للمستخدم رؤيتها فقط عبر تطبيق `applyYardAccessScope` داخل `QueryBuilder` لمنع كشف أسماء أو معرفات أقسام غير مصرح بها.
+    - **Output**: `Array<{ id: string; name: string; code: string }>`.
+  - `getYardById(id: string, policy: ResolvedProductionAccessPolicy): Promise<SafeProductionYardOutput>`
+    - **Input**: `id` (UUID), `policy`.
+    - **Action**: استرجاع تفاصيل الساحة مع تطبيق `applyYardAccessScope` ورمي `NotFoundError` برمز `PRODUCTION_YARD_NOT_FOUND` إذا لم توجد أو كانت خارج نطاق الوصول.
     - **Output**: `SafeProductionYardOutput`.
-  - `createYard(dto: CreateProductionYardDto): Promise<SafeProductionYardOutput>`
-    - **Input**: `CreateProductionYardDto` (`departmentId`, `name`, `code`, `capacity`, `description`, `isActive`).
-    - **Action**:
-      1. تنظيف الرمز التقني وتحويله لأحرف كبيرة.
-      2. فتح Transaction:
-         - قفل سجل قسم الإنتاج التابع بـ `pessimistic_write` عبر `findAssignableDepartmentForUpdate` والتحقق من نشاطه وعدم حذفه ورمي `NotFoundError('PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE')` في حال عدم صلاحيته.
-         - التحقق المسبق من فرادة رمز الساحة عبر `withDeleted()`.
-         - حفظ الساحة داخل نفس الـ Transaction.
-      3. التقاط خطأ التضارب في قاعدة البيانات وتحويله إلى 409 `PRODUCTION_YARD_CODE_ALREADY_EXISTS`.
+  - `createYard(dto: CreateProductionYardDto, policy: ResolvedProductionAccessPolicy): Promise<SafeProductionYardOutput>`
+    - **Input**: `CreateProductionYardDto`, `policy`.
+    - **Action**: التحقق من امتلاك المستخدم صلاحية الوصول على مستوى القسم المستهدف `canAccessDepartment(policy, dto.departmentId)` ورمي `ForbiddenError('ACCESS_SCOPE_DENIED')` في حال عدم الصلاحية، ثم فتح Transaction وقفل القسم المستهدف بـ `pessimistic_write` وحفظ الساحة.
     - **Output**: `SafeProductionYardOutput`.
-  - `updateYard(id: string, dto: UpdateProductionYardDto): Promise<SafeProductionYardOutput>`
-    - **Input**: `id`, `UpdateProductionYardDto` (`departmentId`, `name`, `capacity`, `description`, `isActive`).
+  - `updateYard(id: string, dto: UpdateProductionYardDto, policy: ResolvedProductionAccessPolicy): Promise<SafeProductionYardOutput>`
+    - **Input**: `id`, `dto`, `policy`.
     - **Action**:
-      1. يعمل pre-read للساحة خارج الـ Transaction فقط لاكتشاف `sourceDepartmentId` و `targetDepartmentId` إن وجد.
-      2. يفتح Transaction.
-      3. يبني قائمة معرفات الأقسام المعنية (`sortedDeptIds`) ويرتبها تصاعدياً حسب UUID.
-      4. يقفل كل قسم معني واحداً تلو الآخر باستخدام `pessimistic_write` عبر حلقة (`for (const deptId of sortedDeptIds)`) دون استخدام `WHERE IN` لضمان ترتيب Row Locks الفعلي في MySQL.
-      5. يتحقق من وجود `sourceDepartment`، وعند النقل يتحقق من وجود ونشاط `targetDepartment` (`PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE`).
-      6. بعد اكتمال أقفال الأقسام، يقفل سجل الساحة بـ `pessimistic_write`.
-      7. يعيد التحقق من تطابق تبعية الساحة للقسم المقفول (`yard.departmentId === sourceDepartmentId`) ويرمي `PRODUCTION_YARD_CONCURRENTLY_CHANGED` في حال تغيرت بالتزامن.
-      8. إذا كان هناك نقل لقسم آخر: يتحقق من عدم وجود ارتباطات مهندسين في `production_yard_engineer` ويرمي `PRODUCTION_YARD_HAS_ENGINEERS`.
-      9. إذا كانت الساحة ستصبح نشطة (`willBeActive`): يتحقق من أن القسم التابع نشط (`PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE`).
-      10. يطبق تعديلات الاسم، السعة، الوصف، حالة التفعيل، ومعرف القسم عند النقل، ويحفظ الساحة داخل نفس الـ Transaction.
+      1. قراءة استطلاعية مقيدة بالصلاحيات (`Scoped Pre-Read`) خارج الـ Transaction باستخدام `applyYardAccessScope` على `QueryBuilder` لرفض الساحات غير المسموحة أو غير الموجودة فوراً برمز `PRODUCTION_YARD_NOT_FOUND` (404) قبل الدخول إلى Transaction أو حيازة أي أقفال تشاؤمية.
+      2. فتح Transaction وقفل الأقسام المعنية تشاؤمياً واحداً تلو الآخر بترتيب تصاعدي حتمي لمعرفاتها (`pessimistic_write`).
+      3. قفل سجل الساحة تشاؤمياً (`Yard row` via `pessimistic_write`) وفق بروتوكول القفل الموحد (`Department(s) -> Yard`).
+      4. إعادة التحقق من تطابق تبعية الساحة للقسم المقفول (`PRODUCTION_YARD_CONCURRENTLY_CHANGED`).
+      5. إعادة التحقق القطعي من صلاحية الوصول للساحة المصدر المقفولة `canAccessYard(policy, yard)` كتحقق نهائي موثوق ضد ثغرات الـ TOCTOU ورمي 404 في حال عدم الصلاحية.
+      6. فقط بعد إثبات صلاحية الساحة المصدر، يتم التحقق من وجود ونشاط القسم المستهدف والتحقق من صلاحية الوصول إليه `canAccessDepartment(policy, targetDeptId)` ورمي 403 `ACCESS_SCOPE_DENIED` لمنع تسريب بيانات الأقسام الأخرى.
+      7. عند النقل لقسم آخر، التحقق من عدم وجود مهندسين مسندين للساحة (`PRODUCTION_YARD_HAS_ENGINEERS`).
+      8. التحقق من فعالية القسم التابع عند إعادة تفعيل الساحة وتطبيق التعديلات وحفظها.
     - **Output**: `SafeProductionYardOutput`.
-  - `softDeleteYard(id: string): Promise<{ success: boolean; message: string }>`
-    - **Input**: `id`.
+  - `softDeleteYard(id: string, policy: ResolvedProductionAccessPolicy): Promise<{ success: boolean; message: string }>`
+    - **Input**: `id`, `policy`.
     - **Action**:
-      1. يعمل pre-read للساحة خارج الـ Transaction لمعرفة `departmentId`.
-      2. يفتح Transaction.
-      3. يقفل سجل قسم الإنتاج التابع أولاً بـ `pessimistic_write`.
-      4. يقفل سجل الساحة بـ `pessimistic_write`.
-      5. يعيد التحقق من تطابق تبعية الساحة للقسم التابع المقفول ويرمي `PRODUCTION_YARD_CONCURRENTLY_CHANGED` إذا تغيرت.
-      6. يتحقق من عدم وجود أي مهندسين مسندين للساحة في `production_yard_engineer` ويرمي `PRODUCTION_YARD_HAS_ENGINEERS`.
-      7. يضبط `yard.deletedAt = new Date()` و `yard.isActive = false`.
-      8. يحفظ الساحة (`yardRepo.save(yard)`).
+      1. قراءة استطلاعية مقيدة بالصلاحيات (`Scoped Pre-Read`) خارج الـ Transaction باستخدام `applyYardAccessScope` على `QueryBuilder` ورمي 404 برمز `PRODUCTION_YARD_NOT_FOUND` في حال كانت الساحة خارج النطاق قبل بدء الـ Transaction.
+      2. فتح Transaction وقفل القسم التابع تشاؤمياً بـ `pessimistic_write`.
+      3. قفل سجل الساحة تشاؤمياً بـ `pessimistic_write` وفق بروتوكول القفل (`Department -> Yard`).
+      4. إعادة التحقق من تطابق تبعية الساحة للقسم المقفول.
+      5. إعادة التحقق القطعي من صلاحية الوصول للساحة المقفولة `canAccessYard(policy, yard)`.
+      6. التحقق من عدم وجود مهندسين مسندين للساحة (`PRODUCTION_YARD_HAS_ENGINEERS`).
+      7. ضبط `isActive = false` و `deletedAt = new Date()` وحفظ التعديلات.
     - **Output**: `{ success: true, message: 'تم أرشفة ساحة الإنتاج بنجاح' }`.
 
 ### `ProductionTeamService` (`src/modules/production/team/production-team.service.ts`)
-- **Purpose**: إدارة فريق عمل ومسؤوليات قسم الإنتاج، بما فيها تعيين رئيس القسم وتوزيع المهندسين وساحات مسؤوليتهم مع الالتزام بترتيب القفل التشاؤمي الموحد.
+- **Purpose**: إدارة فريق عمل ومسؤوليات قسم الإنتاج، بما فيها تعيين رئيس القسم وتوزيع المهندسين وساحات مسؤوليتهم مع الالتزام بترتيب القفل التشاؤمي الموحد وسياسة الوصول على مستوى القسم.
 - **Methods**:
-  - `getDepartmentTeam(departmentId: string): Promise<DepartmentTeamOutput>`
-    - **Input**: `departmentId`.
-    - **Action**: استرجاع بيانات القسم ورئيس القسم وقائمة المهندسين النشطين مع ساحاتهم المسندة داخل استعلام محكم بدون N+1.
+  - `getDepartmentTeam(departmentId: string, policy: ResolvedProductionAccessPolicy): Promise<DepartmentTeamOutput>`
+    - **Input**: `departmentId`, `policy`.
+    - **Action**: التحقق من صلاحية الوصول للقسم `canAccessDepartment(policy, departmentId)` ورمي 404 في حال عدم الصلاحية، ثم استرجاع بيانات القسم ورئيس القسم وقائمة المهندسين النشطين مع ساحاتهم.
     - **Output**: `{ department, head, engineers }`.
   - `listAvailableDepartmentHeadUsers(): Promise<AvailableHeadUserSelectOption[]>`
-    - **Action**: استرجاع المستخدمين النشطين غير المحذوفين المؤهلين لرئاسة الأقسام (ليسوا رؤساء أقسام، ليسوا مهندسين نشطين، ولا يملكون أي ارتباطات بساحات).
+    - **Action**: استرجاع المستخدمين النشطين غير المحذوفين المؤهلين لرئاسة الأقسام.
     - **Output**: `AvailableHeadUserSelectOption[]`.
-  - `listAvailableEngineerUsers(departmentId: string): Promise<AvailableEngineerSelectOption[]>`
-    - **Input**: `departmentId`.
-    - **Action**: استرجاع المستخدمين النشطين غير المحذوفين المؤهلين للإسناد كمهندسين (ليسوا رؤساء أقسام، لا يملكون إسناد مهندس نشط في أي قسم، ولا يملكون ارتباطات ساحات متعارضة أو قديمة، مع دعم إعادة استخدام السجل التاريخي المعطل النظيف).
+  - `listAvailableEngineerUsers(): Promise<AvailableEngineerSelectOption[]>`
+    - **Action**: استرجاع المستخدمين النشطين غير المحذوفين المؤهلين للإسناد كمهندسين.
     - **Output**: `AvailableEngineerSelectOption[]`.
-  - `setDepartmentHead(departmentId: string, userId: string): Promise<{ success: boolean; message: string; head: SafeHeadUserOutput }>`
-    - **Input**: `departmentId`, `userId`.
-    - **Action**: فتح Transaction، قفل القسم ثم المستخدم بـ `pessimistic_write` بترتيب (`Department -> User`)، التحقق من نشاط المستخدم وصلاحيته، تحديث `headUserId` وحفظ القسم.
+  - `setDepartmentHead(departmentId: string, userId: string, policy: ResolvedProductionAccessPolicy): Promise<{ success: boolean; message: string; head: SafeHeadUserOutput }>`
+    - **Input**: `departmentId`, `userId`, `policy`.
+    - **Action**: فتح Transaction، قفل القسم والتحقق من `canAccessDepartment(policy, department.id)`، ثم قفل المستخدم والتحقق وتعيين رئيس القسم.
     - **Output**: `{ success: true, message, head }`.
-  - `addEngineerToDepartment(departmentId: string, dto: CreateProductionEngineerAssignmentDto): Promise<SafeEngineerAssignmentOutput>`
-    - **Input**: `departmentId`, `dto` (`userId`, `yardIds`).
-    - **Action**:
-      1. فتح Transaction، قفل سجل القسم ثم سجل المستخدم ثم سجل التعيين ثم الساحات مرتبة تصاعدياً بـ `pessimistic_write` بترتيب (`Department -> User -> Assignment -> Yards sorted by ID`).
-      2. التحقق من نشاط وصلاحية المستخدم ونشاط القسم.
-      3. التحقق من عدم إسناد المستخدم لأي قسم إنتاج آخر (حظر التعدد عبر الأقسام `PRODUCTION_ENGINEER_ASSIGNED_TO_OTHER_DEPARTMENT`).
-      4. التحقق من أن جميع الساحات المحددة تتبع لنفس القسم ونشطة (`PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH`).
-      5. إنشاء التعيين أو إعادة تفعيل سجل سابق مع كتابة ارتباطات الساحات في `production_yard_engineer`.
+  - `addEngineerToDepartment(departmentId: string, dto: CreateProductionEngineerAssignmentDto, policy: ResolvedProductionAccessPolicy): Promise<SafeEngineerAssignmentOutput>`
+    - **Input**: `departmentId`, `dto`, `policy`.
+    - **Action**: فتح Transaction، قفل القسم والتحقق من `canAccessDepartment(policy, department.id)`، ثم تنفيذ بروتوكول القفل وإسناد المهندس.
     - **Output**: `SafeEngineerAssignmentOutput`.
-  - `updateEngineerYards(departmentId: string, assignmentId: string, dto: UpdateProductionEngineerYardsDto): Promise<SafeEngineerAssignmentOutput>`
-    - **Input**: `departmentId`, `assignmentId`, `dto` (`yardIds`).
-    - **Action**: فتح Transaction، قفل سجل القسم ثم سجل المستخدم ثم سجل التعيين ثم الساحات مرتبة تصاعدياً بـ `pessimistic_write` بترتيب (`Department -> User -> Assignment -> Yards sorted by ID`)، التحقق من تبعيتها لنفس القسم، واستبدال ارتباطات الساحات ذرياً داخل `production_yard_engineer`.
+  - `updateEngineerYards(departmentId: string, assignmentId: string, dto: UpdateProductionEngineerYardsDto, policy: ResolvedProductionAccessPolicy): Promise<SafeEngineerAssignmentOutput>`
+    - **Input**: `departmentId`, `assignmentId`, `dto`, `policy`.
+    - **Action**: فتح Transaction، قفل القسم والتحقق من `canAccessDepartment(policy, department.id)`، ثم تنفيذ بروتوكول القفل وتحديث ساحات المهندس.
     - **Output**: `SafeEngineerAssignmentOutput`.
-  - `removeEngineerFromDepartment(departmentId: string, assignmentId: string): Promise<{ success: boolean; message: string }>`
-    - **Input**: `departmentId`, `assignmentId`.
-    - **Action**: فتح Transaction، قفل سجل القسم ثم سجل المستخدم ثم سجل التعيين بـ `pessimistic_write` بترتيب (`Department -> User -> Assignment`)، حذف كافة ارتباطات الساحات من `production_yard_engineer`، وضبط `isActive = false` دون حذف السجل صلبياً.
+  - `removeEngineerFromDepartment(departmentId: string, assignmentId: string, policy: ResolvedProductionAccessPolicy): Promise<{ success: boolean; message: string }>`
+    - **Input**: `departmentId`, `assignmentId`, `policy`.
+    - **Action**: فتح Transaction، قفل القسم والتحقق من `canAccessDepartment(policy, department.id)`، ثم تعطيل التعيين وحذف ارتباطات الساحات.
     - **Output**: `{ success: true, message: 'تمت إزالة المهندس من قسم الإنتاج بنجاح' }`.
   - `listDepartmentActiveYards(departmentId: string)`: استرجاع الساحات النشطة التابعة للقسم.
 
@@ -785,6 +828,10 @@ src/
     - **Input**: `principal` (`AuthPrincipal`).
     - **Action**: استعلام تجميعي موحد (Single aggregated QueryBuilder without N+1) يستخرج كافة أسماء الصلاحيات التي يمتلك المستخدم عليها قاعدة `ALLOW ALL` نشطة بدون أي قاعدة `DENY ALL`.
     - **Output**: `string[]` (مثل `['system.user.view', 'system.user.create', 'system.role.view', ...]`).
+  - `getApplicableAccessRules(principal: AuthPrincipal, permissionName: string): Promise<ApplicableAccessRule[]>`
+    - **Input**: `principal` (`AuthPrincipal`), `permissionName` (`string`).
+    - **Action**: استرجاع كافة قواعد الوصول الفعالة (`rule.isActive = true`) المرتبطة بمنح سارية للمستخدم أو دوره لصلاحية نشطة محددة بدون تقييد نوع النطاق على `ALL` فقط، لخدمة تقييم النطاقات الديناميكية.
+    - **Output**: `ApplicableAccessRule[]` (`ruleId`, `grantId`, `effect`, `scopeType`, `scope`).
 
 ### `Authorization Middleware` (`src/modules/system/authorization/authorization.middleware.ts`)
 - `requirePermission(permissionName: string)`:
@@ -794,6 +841,72 @@ src/
     2. يستدعي `authorizationService.hasPermission(req.user, permissionName)`.
     3. إذا كانت النتيجة `true`، يمرر التنفيذ للوسيط التالي عبر `next()`.
     4. إذا كانت النتيجة `false`، يمرر `ForbiddenError('ليس لديك صلاحية لتنفيذ هذا الإجراء', 'PERMISSION_DENIED')` (HTTP 403) إلى معالج الأخطاء المركزي.
+
+---
+
+## Dynamic Production Access Scopes & Row-Level Authorization Infrastructure (Phase 2)
+
+### `ApplicableAccessRule` (`src/modules/system/authorization/authorization.types.ts`)
+- **Purpose**: واجهة تمثل قاعدة الوصول الفعالة المسترجعة من محرك الصلاحيات لتقييم النطاقات.
+- **Fields**: `ruleId: string`, `grantId: string`, `effect: 'ALLOW' | 'DENY'`, `scopeType: string`, `scope: Record<string, unknown> | null`.
+
+### `Production Access Scope Constants` (`src/modules/production/authorization/production-access-scope.constants.ts`)
+- **Purpose**: تعريف الثوابت المعتمدة لنطاقات وصول تطبيق الإنتاج ومصادرها الديناميكية.
+- **Values**:
+  - `ProductionAccessScopeType`: `{ DEPARTMENT: 'PRODUCTION_DEPARTMENT', YARD: 'PRODUCTION_YARD' }`.
+  - `ProductionAccessScopeSource`: `{ CURRENT_RESPONSIBILITY: 'CURRENT_PRODUCTION_RESPONSIBILITY' }`.
+
+### `Production Access Policy Types` (`src/modules/production/authorization/production-access-policy.types.ts`)
+- **Purpose**: تعريف كائنات المسؤولية التشغيلية وسياسة الوصول الناتجة ودوال التحقق النوعية الصارمة.
+- **Types**:
+  - `ProductionResponsibility`: `{ headDepartmentId: string | null, engineerDepartmentId: string | null, engineerYardIds: string[], isConsistent: boolean }`.
+  - `ResolvedProductionAccessPolicy`: `{ permissionName: string, allowAll: boolean, denyAll: boolean, allowDepartmentIds: string[], denyDepartmentIds: string[], allowYardIds: string[], denyYardIds: string[], hasAnyAccess: boolean }`.
+  - `isCurrentProductionResponsibilityScope(scope: unknown): boolean`: Type Guard صارم يتحقق من أن كائن النطاق يطابق بالضبط الشكل `{ "source": "CURRENT_PRODUCTION_RESPONSIBILITY" }` بمفتاح وحيد فقط (`Object.keys(scope).length === 1`). أي خصائص إضافية تجعل النطاق غير صالح (`Invalid Scope`).
+
+### `ProductionResponsibilityResolver` (`src/modules/production/authorization/production-responsibility.resolver.ts`)
+- **Purpose**: استرجاع وحل المسؤوليات التشغيلية الحالية للمستخدم من قاعدة البيانات بـ استعلامين مستهدفين فقط دون N+1، مع التحقق الصارم من النزاهة والانغلاق الآمن (Fail Closed).
+- **Methods**:
+  - `resolve(principal: AuthPrincipal): Promise<ProductionResponsibility>`:
+    - **استعلام رئاسة القسم (`Head Query`)**: على جدول `production_department` حيث `head_user_id = principal.id` و `deleted_at IS NULL`.
+    - **استعلام تعيين المهندس الموحد (`Engineer Joined Query`)**: استعلام واحد يضم `ProductionDepartmentEngineerEntity` مع القسم `department` وارتباطات الساحات `yardMappings` وساحاتها `yard` حيث `eng.userId = principal.id` و `eng.isActive = true`.
+    - **قواعد فحص النزاهة والانغلاق الآمن (`Consistency Rules`)**:
+      يتم ضبط `isConsistent = false` وتصفير ساحات المهندس (`engineerYardIds = []`) دون أي إصلاح تلقائي صامت للبيانات في الحالات التالية:
+      1. المستخدم رئيس قسم ومهندس نشط في نفس الوقت (`headDepartmentId !== null && engineerDepartmentId !== null`).
+      2. علاقة قسم المهندس غير موجودة أو فارغة.
+      3. قسم المهندس مؤرشف (`department.deletedAt !== null`).
+      4. المهندس النشط لديه صفر ساحات مسندة (`yardMappings.length === 0`).
+      5. أي ارتباط ساحة لا يحتوي على كيان ساحة صالح.
+      6. الساحة المسندة مؤرشفة (`yard.deletedAt !== null`).
+      7. الساحة المسندة تتبع لقسم مختلف عن قسم المهندس (`yard.departmentId !== engineerAssignment.departmentId`).
+
+### `ProductionAccessPolicyService` (`src/modules/production/authorization/production-access-policy.service.ts`)
+- **Purpose**: دمج قواعد الوصول المطبقة مع المسؤولية التشغيلية للمستخدم لإنتاج سياسة وصول قطعية وموحدة.
+- **Methods**:
+  - `resolvePolicy(rules: ApplicableAccessRule[], responsibility: ProductionResponsibility, permissionName: string): ResolvedProductionAccessPolicy`:
+    - تطبيق قواعد `ALL`: `ALLOW ALL` تضبط `allowAll = true`، و `DENY ALL` تضبط `denyAll = true`.
+    - تطبيق قواعد `PRODUCTION_DEPARTMENT`: إذا كان رئيس قسم، تُضاف لرخص أو حظر الأقسام.
+    - تطبيق قواعد `PRODUCTION_YARD`: إذا كان مهندساً نشطاً، تُضاف ساحاته لرخص أو حظر الساحات.
+    - انغلاق الأمان: القواعد غير المفهومة للـ ALLOW تُهمل، وللـ DENY تُغلق بالكامل (`denyAll = true`). التعارض التشغيلي (`!isConsistent`) يبطل الـ dynamic ALLOW.
+    - حساب `hasAnyAccess = !denyAll && (allowAll || allowDepartmentIds.length > 0 || allowYardIds.length > 0)`.
+
+### `ProductionAuthorizationContext` (`src/modules/production/authorization/production-authorization-context.ts`)
+- **Purpose**: إدارة الكاش التشغيلي المؤقت على مستوى دورة حياة الطلب الواحد باستخدام `WeakMap<Request, ...>`.
+- **Functions**:
+  - `getProductionResponsibility(req, principal)`: كاش المسؤولية التشغيلية مرة واحدة لكل طلب.
+  - `getProductionAccessPolicy(req, principal, permissionName)`: كاش سياسة الوصول لكل صلاحية مرة واحدة لكل طلب لمنع تكرار استعلامات الصلاحيات بين Middleware و Controllers.
+
+### `ProductionAuthorizationMiddleware` (`src/modules/production/authorization/production-authorization.middleware.ts`)
+- **Purpose**: وسيط التحقق من امتلاك المستخدم لأي وصول فعال (`hasAnyAccess === true`) لصلاحية إنتاج معينة.
+- **Functions**:
+  - `requireProductionAccess(permissionName: string)`: يتحقق من المصادقة، يسترجع السياسة من سياق الطلب، ويرمي `ForbiddenError('ليس لديك صلاحية وصول على أي نطاق بيانات في هذا القسم', 'ACCESS_SCOPE_DENIED')` في حال `!policy.hasAnyAccess`.
+
+### `ProductionAccessQueryHelper` (`src/modules/production/authorization/production-access-query.helper.ts`)
+- **Purpose**: ترجمة سياسة الوصول إلى شروط SQL صريحة على استعلامات TypeORM QueryBuilder ودوال فحص الأهداف المباشرة.
+- **Functions**:
+  - `applyDepartmentAccessScope(qb, policy)`: تطبيق شروط الأقسام قبل Pagination/Count (`dept.id IN (...)` و `dept.id NOT IN (...)`).
+  - `applyYardAccessScope(qb, policy)`: تطبيق شروط الساحات عبر `Brackets` تجمع أقسام وساحات المهندس ورئيس القسم مع شروط الحظر.
+  - `canAccessDepartment(policy, departmentId)`: دالة نقية للتحقق من صلاحية الوصول لقسم معين.
+  - `canAccessYard(policy, { id, departmentId })`: دالة نقية للتحقق من صلاحية الوصول لساحة معينة.
 
 ---
 
@@ -1156,7 +1269,6 @@ src/
 10. **Known Follow-ups & Security Hardening**:
     - تعزيز حماية CSRF على الـ State-changing APIs قبل التوسع في بناء موديولات الأعمال.
     - تطبيق Rate Limiting على نقطة تسجيل الدخول لحماية الحسابات من هجمات التخمين (Brute-force).
-    - بناء محرك النطاقات السياقية المتقدمة (Context-aware Dynamic Scopes & Row Filtering).
     - بناء محرك التفويض وتفويض الصلاحيات (Delegation Engine & canDelegate evaluation).
     - بناء واجهات إدارة الأجهزة والجلسات وخيار تسجيل الخروج من كافة الأجهزة (Logout all devices).
 
@@ -1179,6 +1291,14 @@ src/
 
 ## Implemented Infrastructure
 
+- Dynamic Production Access Scopes & Row-Level Authorization Infrastructure (`src/modules/production/authorization/`).
+- Request-Level Authorization Context & WeakMap Caching (`src/modules/production/authorization/production-authorization-context.ts`).
+- Production Responsibility Resolver (`src/modules/production/authorization/production-responsibility.resolver.ts`).
+- Production Access Policy Service with DENY-precedence and Fail-Closed Resolution (`src/modules/production/authorization/production-access-policy.service.ts`).
+- Resource-Specific SQL Query Translation Helper for QueryBuilder Scoping (`src/modules/production/authorization/production-access-query.helper.ts`).
+- Production Authorization Middleware (`src/modules/production/authorization/production-authorization.middleware.ts`).
+- Production Team Assignments Module (`src/modules/production/team/`).
+- Production Team Service with Ordered Lock Protocol and Mutually Exclusive Responsibility Enforcement (`src/modules/production/team/production-team.service.ts`).
 - Production Organizational Structure Module (`src/modules/production/department/`, `src/modules/production/yard/`).
 - Production Department Service with Yard Aggregations, Lock Protocol, and Invariants (`src/modules/production/department/production-department.service.ts`).
 - Production Yard Service with Positive Capacity Invariant, Department Locking, and Invariants (`src/modules/production/yard/production-yard.service.ts`).

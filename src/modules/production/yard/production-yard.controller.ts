@@ -4,6 +4,8 @@ import { ApiResponse } from '../../../common/responses/api-response.js';
 import { CreateProductionYardDto } from './dto/create-production-yard.dto.js';
 import { UpdateProductionYardDto } from './dto/update-production-yard.dto.js';
 import { ListProductionYardsQueryDto } from './dto/list-production-yards-query.dto.js';
+import { getProductionAccessPolicy } from '../authorization/production-authorization-context.js';
+import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 
 export class ProductionYardController {
   private readonly yardService: ProductionYardService;
@@ -15,7 +17,12 @@ export class ProductionYardController {
   listYards = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const query = (req.validatedQuery ?? req.query) as unknown as ListProductionYardsQueryDto;
-      const result = await this.yardService.listYards(query);
+      const policy = await getProductionAccessPolicy(
+        req,
+        req.user!,
+        SystemPermission.PRODUCTION_YARD_VIEW
+      );
+      const result = await this.yardService.listYards(query, policy);
       res.status(200).json(ApiResponse.success(result));
     } catch (error) {
       next(error);
@@ -25,7 +32,12 @@ export class ProductionYardController {
   getYardById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { id } = req.params;
-      const yard = await this.yardService.getYardById(id as string);
+      const policy = await getProductionAccessPolicy(
+        req,
+        req.user!,
+        SystemPermission.PRODUCTION_YARD_VIEW
+      );
+      const yard = await this.yardService.getYardById(id as string, policy);
       res.status(200).json(ApiResponse.success(yard));
     } catch (error) {
       next(error);
@@ -35,7 +47,12 @@ export class ProductionYardController {
   createYard = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const dto = req.body as CreateProductionYardDto;
-      const yard = await this.yardService.createYard(dto);
+      const policy = await getProductionAccessPolicy(
+        req,
+        req.user!,
+        SystemPermission.PRODUCTION_YARD_CREATE
+      );
+      const yard = await this.yardService.createYard(dto, policy);
       res.status(201).json(ApiResponse.success(yard, 'تم إنشاء ساحة الإنتاج بنجاح'));
     } catch (error) {
       next(error);
@@ -46,7 +63,12 @@ export class ProductionYardController {
     try {
       const { id } = req.params;
       const dto = req.body as UpdateProductionYardDto;
-      const yard = await this.yardService.updateYard(id as string, dto);
+      const policy = await getProductionAccessPolicy(
+        req,
+        req.user!,
+        SystemPermission.PRODUCTION_YARD_UPDATE
+      );
+      const yard = await this.yardService.updateYard(id as string, dto, policy);
       res.status(200).json(ApiResponse.success(yard, 'تم تحديث بيانات ساحة الإنتاج بنجاح'));
     } catch (error) {
       next(error);
@@ -56,7 +78,12 @@ export class ProductionYardController {
   deleteYard = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { id } = req.params;
-      await this.yardService.softDeleteYard(id as string);
+      const policy = await getProductionAccessPolicy(
+        req,
+        req.user!,
+        SystemPermission.PRODUCTION_YARD_DELETE
+      );
+      await this.yardService.softDeleteYard(id as string, policy);
       res.status(200).json(ApiResponse.success(null, 'تم أرشفة ساحة الإنتاج بنجاح'));
     } catch (error) {
       next(error);
