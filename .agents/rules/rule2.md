@@ -59,10 +59,10 @@ Authorization = ماذا يستطيع؟
 - بروتوكول قفل سجلات الإنتاج الموحد ومنع التعارضات (Production Unified Lock Protocol & Deadlock Prevention):
   - القاعدة الصارمة: يُمنع نهائياً طلب قفل سجل قسم (`Department`) بعد حيازة قفل سجل ساحة (`Yard`). ترتيب الأقفال دائماً `Department(s) -> Yard`.
   - لعمليات تعديل أو أرشفة الساحة (`updateYard`, `softDeleteYard`):
-    1. القراءة الاستطلاعية المسبقة للساحة (`Pre-read`) بدون قفل لمعرفة معرفات الأقسام المعنية (`sourceDepartmentId` و `targetDepartmentId`).
-    2. قفل الأقسام المعنية تشاؤمياً (`pessimistic_write`) بترتيب تصاعدي حتمي لمعرفات الأقسام (`[...new Set(deptIds)].sort()`).
-    3. قفل سجل الساحة تشاؤمياً (`Yard row` via `pessimistic_write`).
-    4. إعادة التحقق من تطابق تبعية الساحة للقسم المقفول (`Revalidate consistency`) لمنع التعديلات المتزامنة.
+    1. القراءة الاستطلاعية المسبقة للساحة (`Pre-read`) تتم خارج الـ Transaction لمعرفة معرفات الأقسام المعنية (`sourceDepartmentId` و `targetDepartmentId`).
+    2. عند الحاجة لقفل أكثر من Production Department، يجب الحصول على الأقفال واحداً تلو الآخر بترتيب UUID تصاعدي ثابت (`for (const deptId of sortedDeptIds)`)؛ لا يُعتمد على ترتيب القيم داخل `IN(...)` لضمان ترتيب Row Locks.
+    3. قفل سجل الساحة تشاؤمياً (`Yard row` via `pessimistic_write`) بعد اكتمال قفل كافة الأقسام المعنية.
+    4. إعادة التحقق من تطابق تبعية الساحة للقسم المقفول (`Revalidate consistency: yard.departmentId === sourceDepartmentId`) لمنع التعديلات المتزامنة (`PRODUCTION_YARD_CONCURRENTLY_CHANGED`).
     5. التحقق من القواعد التشغيلية (منع النقل أو الأرشفة في حال وجود مهندسين مسندين، واشتراط فعالية القسم عند التفعيل) ثم الحفظ.
   - لعمليات إنشاء ساحة جديدة (`createYard`): قفل القسم التابع تشاؤمياً ثم التحقق وإنشاء الساحة.
   - لعمليات إنشاء قسم جديد (`createDepartment`): قفل سجل المستخدم المرشح للرئاسة (`User row` via `pessimistic_write`) ثم إنشاء القسم (لا يوجد صف قسم مسبق لقفله).

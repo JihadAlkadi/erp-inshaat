@@ -167,48 +167,61 @@ export class ProductionYardService {
   }
 
   async updateYard(id: string, dto: UpdateProductionYardDto): Promise<SafeProductionYardOutput> {
+    // 1. Pre-read Yard outside transaction to discover involved department IDs
+    const unverifiedYard = await this.yardRepository.findOne({
+      where: { id, deletedAt: IsNull() },
+      select: { id: true, departmentId: true, isActive: true },
+    });
+
+    if (!unverifiedYard) {
+      throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+    }
+
     return await AppDataSource.transaction(async (manager) => {
       const yardRepo = manager.getRepository(ProductionYardEntity);
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
       const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
-      // 1. Pre-read Yard without lock to discover involved department IDs
-      const unverifiedYard = await this.yardRepository.findOne({
-        where: { id, deletedAt: IsNull() },
-        select: { id: true, departmentId: true, isActive: true },
-      });
+      // 2. Determine involved Departments & Lock in deterministic ascending order (Protocol step 1)
+      const sourceDepartmentId = unverifiedYard.departmentId;
+      const targetDepartmentId =
+        dto.departmentId !== undefined && dto.departmentId !== sourceDepartmentId
+          ? dto.departmentId
+          : undefined;
 
-      if (!unverifiedYard) {
-        throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+      const sortedDeptIds = [
+        ...new Set(
+          targetDepartmentId
+            ? [sourceDepartmentId, targetDepartmentId]
+            : [sourceDepartmentId]
+        ),
+      ].sort();
+
+      const lockedDepartments = new Map<string, ProductionDepartmentEntity>();
+
+      for (const deptId of sortedDeptIds) {
+        const department = await deptRepo
+          .createQueryBuilder('dept')
+          .setLock('pessimistic_write')
+          .where('dept.id = :deptId', { deptId })
+          .andWhere('dept.deletedAt IS NULL')
+          .getOne();
+
+        if (department) {
+          lockedDepartments.set(department.id, department);
+        }
       }
 
-      // 2. Determine involved Departments & Lock in deterministic ascending order (Protocol step 1)
-      const involvedDeptIds = [
-        unverifiedYard.departmentId,
-        ...(dto.departmentId !== undefined && dto.departmentId !== unverifiedYard.departmentId
-          ? [dto.departmentId]
-          : []),
-      ];
-      const sortedDeptIds = [...new Set(involvedDeptIds)].sort();
-
-      const lockedDepartments = await deptRepo
-        .createQueryBuilder('dept')
-        .setLock('pessimistic_write')
-        .where('dept.id IN (:...deptIds)', { deptIds: sortedDeptIds })
-        .andWhere('dept.deletedAt IS NULL')
-        .getMany();
-
-      const sourceDepartment = lockedDepartments.find((d) => d.id === unverifiedYard.departmentId);
+      const sourceDepartment = lockedDepartments.get(sourceDepartmentId);
       if (!sourceDepartment) {
         throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
       }
 
+      const isMovingDepartment = targetDepartmentId !== undefined;
       let targetDepartment = sourceDepartment;
-      const isMovingDepartment =
-        dto.departmentId !== undefined && dto.departmentId !== unverifiedYard.departmentId;
 
       if (isMovingDepartment) {
-        const foundTarget = lockedDepartments.find((d) => d.id === dto.departmentId);
+        const foundTarget = lockedDepartments.get(targetDepartmentId);
         if (!foundTarget || !foundTarget.isActive) {
           throw new BusinessRuleError(
             'قسم الإنتاج المستهدف غير موجود أو غير نشط',
@@ -231,7 +244,7 @@ export class ProductionYardService {
       }
 
       // Revalidate that yard's departmentId did not change concurrently from pre-read
-      if (yard.departmentId !== unverifiedYard.departmentId) {
+      if (yard.departmentId !== sourceDepartmentId) {
         throw new BusinessRuleError(
           'تم تعديل قسم الساحة بالتوازي، يرجى إعادة المحاولة',
           'PRODUCTION_YARD_CONCURRENTLY_CHANGED'
@@ -300,20 +313,20 @@ export class ProductionYardService {
   }
 
   async softDeleteYard(id: string): Promise<void> {
+    // 1. Pre-read Yard outside transaction to discover departmentId
+    const unverifiedYard = await this.yardRepository.findOne({
+      where: { id, deletedAt: IsNull() },
+      select: { id: true, departmentId: true },
+    });
+
+    if (!unverifiedYard) {
+      throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+    }
+
     await AppDataSource.transaction(async (manager) => {
       const yardRepo = manager.getRepository(ProductionYardEntity);
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
       const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
-
-      // 1. Pre-read Yard without lock to discover departmentId
-      const unverifiedYard = await this.yardRepository.findOne({
-        where: { id, deletedAt: IsNull() },
-        select: { id: true, departmentId: true },
-      });
-
-      if (!unverifiedYard) {
-        throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
-      }
 
       // 2. Lock Department (Protocol step 1)
       const department = await deptRepo
