@@ -65,12 +65,18 @@ export const PERMISSION_SCOPE_CAPABILITIES: Record<string, AccessScopePresetType
 export class AccessScopeCapabilityRegistry {
   /**
    * Returns list of supported preset types for a given permission.
-   * Defaults to ['ALL'] if not explicitly defined in registry.
+   * Rules:
+   * 1. If explicitly defined in PERMISSION_SCOPE_CAPABILITIES -> return registered capabilities.
+   * 2. If permission starts with 'production.' but not registered -> return [] (Fail Closed).
+   * 3. If non-production permission and not registered -> return [AccessScopePreset.ALL].
    */
   static getAllowedPresetsForPermission(permissionName: string): AccessScopePresetType[] {
     const capabilities = PERMISSION_SCOPE_CAPABILITIES[permissionName];
     if (capabilities && capabilities.length > 0) {
       return [...capabilities];
+    }
+    if (permissionName.startsWith('production.')) {
+      return [];
     }
     return [AccessScopePreset.ALL];
   }

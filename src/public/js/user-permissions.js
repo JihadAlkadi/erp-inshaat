@@ -1,12 +1,9 @@
 /**
  * Direct User Permission & Access Rules Administration Client Script
- * Handles:
- * 1. Direct Permission Enable/Disable State Toggling
- * 2. Access Rules Drawer for Direct User Permissions
- * 3. Add, Edit, and Soft-Disable Direct Access Rules
- * 4. Searchable Target Selectors for Specific Departments & Yards
+ * Strictly hardened against DOM XSS and malformed/unknown scope payloads.
  */
 
+// Helper to extract error message from API response
 function extractApiErrorMessage(responseBody, fallback) {
   if (!responseBody) return fallback || 'حدث خطأ غير متوقع';
 
@@ -167,7 +164,7 @@ document.addEventListener('DOMContentLoaded', function() {
   var currentDrawerPermName = null;
   var currentDrawerCapabilities = [];
   var selectedTargetIds = new Set();
-  var selectedTargetObjects = new Map();
+  var selectedTargetObjects = new Map(); // id -> { id, name, code }
 
   var searchDebounceTimer = null;
 
@@ -194,7 +191,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function loadDrawerUserRules(permId) {
     var listEl = document.getElementById('drawerRulesList');
-    listEl.innerHTML = '<div class="text-center py-4 text-muted small"><div class="spinner-border spinner-border-sm text-secondary mb-2" role="status"></div><div>جاري تحميل القواعد...</div></div>';
+    listEl.innerHTML = '';
+    var loadingDiv = document.createElement('div');
+    loadingDiv.className = 'text-center py-4 text-muted small';
+    loadingDiv.innerHTML = '<div class="spinner-border spinner-border-sm text-secondary mb-2" role="status"></div>';
+    var loadingText = document.createElement('div');
+    loadingText.textContent = 'جاري تحميل القواعد...';
+    loadingDiv.appendChild(loadingText);
+    listEl.appendChild(loadingDiv);
 
     fetch('/api/system/users/' + encodeURIComponent(userId) + '/permissions/' + encodeURIComponent(permId) + '/access-rules', {
       headers: { 'Accept': 'application/json' },
@@ -209,11 +213,19 @@ document.addEventListener('DOMContentLoaded', function() {
           renderDrawerRulesList(data.directRules || [], data.directEnabled);
           populatePresetDropdown(currentDrawerCapabilities);
         } else {
-          listEl.innerHTML = '<div class="alert alert-danger small p-2">تعذر جلب قواعد الوصول: ' + extractApiErrorMessage(resObj.data) + '</div>';
+          listEl.innerHTML = '';
+          var errAlert = document.createElement('div');
+          errAlert.className = 'alert alert-danger small p-2';
+          errAlert.textContent = 'تعذر جلب قواعد الوصول: ' + extractApiErrorMessage(resObj.data);
+          listEl.appendChild(errAlert);
         }
       })
       .catch(function() {
-        listEl.innerHTML = '<div class="alert alert-danger small p-2">تعذر الاتصال بالخادم لجلب القواعد</div>';
+        listEl.innerHTML = '';
+        var errAlert = document.createElement('div');
+        errAlert.className = 'alert alert-danger small p-2';
+        errAlert.textContent = 'تعذر الاتصال بالخادم لجلب القواعد';
+        listEl.appendChild(errAlert);
       });
   }
 
@@ -222,21 +234,31 @@ document.addEventListener('DOMContentLoaded', function() {
     var countsSummary = document.getElementById('drawerRuleCountsSummary');
     var showFormBtn = document.getElementById('showAddRuleFormBtn');
 
-    var allowCount = rules.filter(function(r) { return r.isActive && r.effect === 'ALLOW'; }).length;
+    var allowCount = rules.filter(function(r) { return r.isActive && r.effect === 'ALLOW' && r.isValid; }).length;
     var denyCount = rules.filter(function(r) { return r.isActive && r.effect === 'DENY'; }).length;
 
     countsSummary.textContent = allowCount + ' قواعد منح مباشرة • ' + denyCount + ' قواعد حظر مباشرة';
 
+    badgeArea.innerHTML = '';
+    var badgeSpan = document.createElement('span');
+    badgeSpan.className = 'badge small py-1 px-2';
+
     if (!enabled) {
-      badgeArea.innerHTML = '<span class="badge bg-secondary-subtle text-secondary small py-1 px-2">مباشرة غير مفعلة</span>';
+      badgeSpan.className += ' bg-secondary-subtle text-secondary';
+      badgeSpan.textContent = 'مباشرة غير مفعلة';
       if (showFormBtn) showFormBtn.disabled = true;
     } else if (allowCount === 0) {
-      badgeArea.innerHTML = '<span class="badge bg-warning-subtle text-warning-emphasis small py-1 px-2 border border-warning-subtle"><i class="fa-solid fa-triangle-exclamation me-1"></i> مفعلة بلا منح مباشر</span>';
-      if (showFormBtn) showFormBtn.disabled = isSelf || !canManage;
+      badgeSpan.className += ' bg-warning-subtle text-warning-emphasis border border-warning-subtle';
+      badgeSpan.innerHTML = '<i class="fa-solid fa-triangle-exclamation me-1"></i>';
+      badgeSpan.appendChild(document.createTextNode('مفعلة بلا منح مباشر'));
+      if (showFormBtn) showFormBtn.disabled = isSelf || !canManage || currentDrawerCapabilities.length === 0;
     } else {
-      badgeArea.innerHTML = '<span class="badge bg-primary-subtle text-primary small py-1 px-2"><i class="fa-solid fa-user-check me-1"></i> مباشرة مفعّلة</span>';
-      if (showFormBtn) showFormBtn.disabled = isSelf || !canManage;
+      badgeSpan.className += ' bg-primary-subtle text-primary';
+      badgeSpan.innerHTML = '<i class="fa-solid fa-user-check me-1"></i>';
+      badgeSpan.appendChild(document.createTextNode('مباشرة مفعّلة'));
+      if (showFormBtn) showFormBtn.disabled = isSelf || !canManage || currentDrawerCapabilities.length === 0;
     }
+    badgeArea.appendChild(badgeSpan);
   }
 
   function renderRoleRulesPreview(roleRules) {
@@ -251,92 +273,180 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     section.classList.remove('d-none');
-    var html = '';
-    activeRoleRules.forEach(function(r) {
-      var isAllow = r.effect === 'ALLOW';
-      var badge = isAllow
-        ? '<span class="badge bg-success-subtle text-success small py-0 px-2">منح (ALLOW)</span>'
-        : '<span class="badge bg-danger-subtle text-danger small py-0 px-2">حظر (DENY)</span>';
+    list.innerHTML = '';
 
-      html += '<div class="p-2 rounded border bg-light small d-flex justify-content-between align-items-center">' +
-        '<div>' + badge + ' <span class="fw-bold text-dark ms-1">' + r.presetLabel + '</span></div>' +
-        '<span class="badge bg-info-subtle text-info-emphasis py-0" style="font-size: 0.7rem;">الدور الأساسي</span>' +
-        '</div>';
+    activeRoleRules.forEach(function(r) {
+      var itemDiv = document.createElement('div');
+      itemDiv.className = 'p-2 rounded border bg-light small d-flex justify-content-between align-items-center mb-1';
+
+      var leftDiv = document.createElement('div');
+      leftDiv.className = 'd-flex align-items-center gap-1';
+
+      var isAllow = r.effect === 'ALLOW';
+      var badge = document.createElement('span');
+      badge.className = 'badge small py-0 px-2 ' + (isAllow ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger');
+      badge.textContent = isAllow ? 'منح (ALLOW)' : 'حظر (DENY)';
+      leftDiv.appendChild(badge);
+
+      if (r.isValid === false) {
+        var invalidBadge = document.createElement('span');
+        invalidBadge.className = 'badge bg-danger-subtle text-danger border border-danger-subtle small py-0 px-1';
+        invalidBadge.textContent = 'غير صالحة';
+        leftDiv.appendChild(invalidBadge);
+      }
+
+      var labelSpan = document.createElement('span');
+      labelSpan.className = 'fw-bold text-dark ms-1';
+      labelSpan.textContent = r.presetLabel;
+      leftDiv.appendChild(labelSpan);
+
+      var roleBadge = document.createElement('span');
+      roleBadge.className = 'badge bg-info-subtle text-info-emphasis py-0';
+      roleBadge.style.fontSize = '0.7rem';
+      roleBadge.textContent = 'الدور الأساسي';
+
+      itemDiv.appendChild(leftDiv);
+      itemDiv.appendChild(roleBadge);
+      list.appendChild(itemDiv);
     });
-    list.innerHTML = html;
   }
 
   function renderDrawerRulesList(rules, enabled) {
     var listEl = document.getElementById('drawerRulesList');
+    listEl.innerHTML = '';
     var activeRules = rules.filter(function(r) { return r.isActive; });
 
     if (!enabled) {
-      listEl.innerHTML = '<div class="alert alert-warning small p-3 mb-0"><i class="fa-solid fa-triangle-exclamation me-1"></i> الصلاحية المباشرة غير مفعلة لهذا المستخدم. يرجى تفعيل الصلاحية أولاً للتمكن من إضافة قواعد وصول مباشرة.</div>';
+      var warnAlert = document.createElement('div');
+      warnAlert.className = 'alert alert-warning small p-3 mb-0';
+      warnAlert.innerHTML = '<i class="fa-solid fa-triangle-exclamation me-1"></i>';
+      warnAlert.appendChild(document.createTextNode('الصلاحية المباشرة غير مفعلة لهذا المستخدم. يرجى تفعيل الصلاحية أولاً للتمكن من إضافة قواعد وصول مباشرة.'));
+      listEl.appendChild(warnAlert);
       return;
     }
 
     if (activeRules.length === 0) {
-      listEl.innerHTML = '<div class="text-center py-4 bg-white border rounded text-muted small"><i class="fa-solid fa-folder-open fs-3 text-secondary mb-2 d-block"></i>لا توجد قواعد وصول مباشرة مسجلة لهذا المستخدم حالياً.</div>';
+      var emptyDiv = document.createElement('div');
+      emptyDiv.className = 'text-center py-4 bg-white border rounded text-muted small';
+      emptyDiv.innerHTML = '<i class="fa-solid fa-folder-open fs-3 text-secondary mb-2 d-block"></i>';
+      emptyDiv.appendChild(document.createTextNode('لا توجد قواعد وصول مباشرة مسجلة لهذا المستخدم حالياً.'));
+      listEl.appendChild(emptyDiv);
       return;
     }
 
-    var html = '';
     activeRules.forEach(function(rule) {
+      var cardDiv = document.createElement('div');
+      cardDiv.className = 'card border p-3 bg-white';
+      cardDiv.id = 'user_rule_card_' + rule.id;
+      cardDiv.style.borderRadius = '8px';
+
+      // Top row: effect badge + invalid badge + preset label + actions
+      var topRow = document.createElement('div');
+      topRow.className = 'd-flex justify-content-between align-items-start';
+
+      var leftSide = document.createElement('div');
+      leftSide.className = 'd-flex flex-wrap align-items-center gap-2';
+
       var isAllow = rule.effect === 'ALLOW';
-      var effectBadge = isAllow
-        ? '<span class="badge bg-success text-white small px-2 py-1"><i class="fa-solid fa-circle-check me-1"></i>منح (ALLOW)</span>'
-        : '<span class="badge bg-danger text-white small px-2 py-1"><i class="fa-solid fa-ban me-1"></i>حظر (DENY)</span>';
+      var effectBadge = document.createElement('span');
+      effectBadge.className = 'badge text-white small px-2 py-1 ' + (isAllow ? 'bg-success' : 'bg-danger');
+      effectBadge.innerHTML = isAllow
+        ? '<i class="fa-solid fa-circle-check me-1"></i>'
+        : '<i class="fa-solid fa-ban me-1"></i>';
+      effectBadge.appendChild(document.createTextNode(isAllow ? 'منح (ALLOW)' : 'حظر (DENY)'));
+      leftSide.appendChild(effectBadge);
 
-      var targetsHtml = '';
-      if (rule.targets && rule.targets.length > 0) {
-        targetsHtml = '<div class="d-flex flex-wrap gap-1 mt-2 pt-2 border-top">';
-        rule.targets.forEach(function(t) {
-          var targetClass = t.isAvailable ? 'bg-light text-dark border' : 'bg-danger-subtle text-danger border border-danger-subtle';
-          var nameLabel = t.name + (t.code ? ' (' + t.code + ')' : '') + (t.departmentName ? ' • ' + t.departmentName : '');
-          targetsHtml += '<span class="badge ' + targetClass + ' small py-1 px-2" style="font-weight: 500;">' + nameLabel + '</span>';
-        });
-        targetsHtml += '</div>';
+      if (rule.isValid === false) {
+        var invalidBadge = document.createElement('span');
+        invalidBadge.className = 'badge bg-danger-subtle text-danger border border-danger-subtle small px-2 py-1';
+        invalidBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation me-1"></i>';
+        invalidBadge.appendChild(document.createTextNode('قاعدة غير صالحة'));
+        leftSide.appendChild(invalidBadge);
       }
 
-      var descHtml = rule.description ? '<div class="small text-muted mt-1 fst-italic">' + rule.description + '</div>' : '';
+      var presetLabelSpan = document.createElement('span');
+      presetLabelSpan.className = 'fw-bold text-dark small';
+      presetLabelSpan.textContent = rule.presetLabel;
+      leftSide.appendChild(presetLabelSpan);
 
-      var actionsHtml = '';
+      topRow.appendChild(leftSide);
+
+      // Actions
       if (!isSelf && canManage) {
-        actionsHtml = '<div class="d-flex gap-1">' +
-          '<button type="button" class="btn btn-sm btn-outline-secondary edit-user-rule-btn py-0 px-2" data-rule-id="' + rule.id + '" title="تعديل القاعدة"><i class="fa-solid fa-pen-to-square"></i></button>' +
-          '<button type="button" class="btn btn-sm btn-outline-danger disable-user-rule-btn py-0 px-2" data-rule-id="' + rule.id + '" title="تعطيل القاعدة"><i class="fa-solid fa-trash-can"></i></button>' +
-          '</div>';
+        var actionsDiv = document.createElement('div');
+        actionsDiv.className = 'd-flex gap-1';
+
+        if (rule.isValid !== false) {
+          var editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.className = 'btn btn-sm btn-outline-secondary edit-user-rule-btn py-0 px-2';
+          editBtn.dataset.ruleId = rule.id;
+          editBtn.title = 'تعديل القاعدة';
+          editBtn.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+          editBtn.addEventListener('click', function() {
+            openEditRuleForm(rule);
+          });
+          actionsDiv.appendChild(editBtn);
+        }
+
+        var disableBtn = document.createElement('button');
+        disableBtn.type = 'button';
+        disableBtn.className = 'btn btn-sm btn-outline-danger disable-user-rule-btn py-0 px-2';
+        disableBtn.dataset.ruleId = rule.id;
+        disableBtn.title = 'تعطيل القاعدة';
+        disableBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+        disableBtn.addEventListener('click', function() {
+          disableUserRule(rule.id);
+        });
+        actionsDiv.appendChild(disableBtn);
+
+        topRow.appendChild(actionsDiv);
       }
 
-      html += '<div class="card border p-3 bg-white" id="user_rule_card_' + rule.id + '" style="border-radius: 8px;">' +
-        '<div class="d-flex justify-content-between align-items-start">' +
-          '<div class="d-flex align-items-center gap-2">' +
-            effectBadge +
-            '<span class="fw-bold text-dark small">' + rule.presetLabel + '</span>' +
-          '</div>' +
-          actionsHtml +
-        '</div>' +
-        descHtml +
-        targetsHtml +
-        '</div>';
-    });
+      cardDiv.appendChild(topRow);
 
-    listEl.innerHTML = html;
+      // Invalid rule warning box
+      if (rule.isValid === false) {
+        var alertDiv = document.createElement('div');
+        alertDiv.className = 'alert alert-danger small p-2 mt-2 mb-1';
+        if (rule.effect === 'DENY') {
+          alertDiv.textContent = 'قاعدة حظر غير صالحة — محرك الصلاحيات يتعامل معها بالرفض التام (Fail Closed).';
+        } else {
+          alertDiv.textContent = 'قاعدة منح غير صالحة — لا تمنح أي وصول فعلي.';
+        }
+        cardDiv.appendChild(alertDiv);
+      }
 
-    // Attach Edit & Disable Listeners
-    listEl.querySelectorAll('.disable-user-rule-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var ruleId = btn.getAttribute('data-rule-id');
-        disableUserRule(ruleId);
-      });
-    });
+      // Description
+      if (rule.description && rule.description.trim() !== '') {
+        var descDiv = document.createElement('div');
+        descDiv.className = 'small text-muted mt-1 fst-italic';
+        descDiv.textContent = rule.description;
+        cardDiv.appendChild(descDiv);
+      }
 
-    listEl.querySelectorAll('.edit-user-rule-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var ruleId = btn.getAttribute('data-rule-id');
-        var ruleObj = rules.find(function(r) { return r.id === ruleId; });
-        if (ruleObj) openEditRuleForm(ruleObj);
-      });
+      // Targets Chips
+      if (rule.targets && rule.targets.length > 0) {
+        var targetsDiv = document.createElement('div');
+        targetsDiv.className = 'd-flex flex-wrap gap-1 mt-2 pt-2 border-top';
+
+        rule.targets.forEach(function(t) {
+          var targetBadge = document.createElement('span');
+          targetBadge.className = 'badge small py-1 px-2 ' +
+            (t.isAvailable ? 'bg-light text-dark border' : 'bg-danger-subtle text-danger border border-danger-subtle');
+          targetBadge.style.fontWeight = '500';
+
+          var nameLabel = t.name +
+            (t.code ? ' (' + t.code + ')' : '') +
+            (t.departmentName ? ' • ' + t.departmentName : '');
+          targetBadge.textContent = nameLabel;
+          targetsDiv.appendChild(targetBadge);
+        });
+
+        cardDiv.appendChild(targetsDiv);
+      }
+
+      listEl.appendChild(cardDiv);
     });
   }
 
@@ -383,14 +493,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function openAddRuleForm() {
     clearDrawerAlert();
-    var titleEl = document.getElementById('ruleFormTitle');
-    if (titleEl) titleEl.textContent = 'إضافة قاعدة وصول مباشرة جديدة';
-    var formRuleId = document.getElementById('formRuleId');
-    if (formRuleId) formRuleId.value = '';
-    var allowRadio = document.getElementById('effectAllow');
-    if (allowRadio) allowRadio.checked = true;
-    var descInput = document.getElementById('ruleDescriptionInput');
-    if (descInput) descInput.value = '';
+    document.getElementById('ruleFormTitle').textContent = 'إضافة قاعدة وصول مباشرة جديدة';
+    document.getElementById('formRuleId').value = '';
+    document.getElementById('effectAllow').checked = true;
+    document.getElementById('ruleDescriptionInput').value = '';
 
     selectedTargetIds.clear();
     selectedTargetObjects.clear();
@@ -401,29 +507,22 @@ document.addEventListener('DOMContentLoaded', function() {
       handlePresetChange(presetSelect.value);
     }
 
-    if (ruleFormContainer) {
-      ruleFormContainer.classList.remove('d-none');
-      ruleFormContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
+    ruleFormContainer.classList.remove('d-none');
+    ruleFormContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   function openEditRuleForm(rule) {
     clearDrawerAlert();
-    var titleEl = document.getElementById('ruleFormTitle');
-    if (titleEl) titleEl.textContent = 'تعديل قاعدة الوصول المباشرة';
-    var formRuleId = document.getElementById('formRuleId');
-    if (formRuleId) formRuleId.value = rule.id;
+    document.getElementById('ruleFormTitle').textContent = 'تعديل قاعدة الوصول المباشرة';
+    document.getElementById('formRuleId').value = rule.id;
 
     if (rule.effect === 'DENY') {
-      var denyRadio = document.getElementById('effectDeny');
-      if (denyRadio) denyRadio.checked = true;
+      document.getElementById('effectDeny').checked = true;
     } else {
-      var allowRadio = document.getElementById('effectAllow');
-      if (allowRadio) allowRadio.checked = true;
+      document.getElementById('effectAllow').checked = true;
     }
 
-    var descInput = document.getElementById('ruleDescriptionInput');
-    if (descInput) descInput.value = rule.description || '';
+    document.getElementById('ruleDescriptionInput').value = rule.description || '';
 
     selectedTargetIds.clear();
     selectedTargetObjects.clear();
@@ -435,15 +534,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     updateSelectedChipsDisplay();
 
-    if (presetSelect) {
+    if (presetSelect && rule.preset) {
       presetSelect.value = rule.preset;
       handlePresetChange(rule.preset);
     }
 
-    if (ruleFormContainer) {
-      ruleFormContainer.classList.remove('d-none');
-      ruleFormContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
+    ruleFormContainer.classList.remove('d-none');
+    ruleFormContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   function hideRuleForm() {
@@ -454,13 +551,30 @@ document.addEventListener('DOMContentLoaded', function() {
   function populatePresetDropdown(capabilities) {
     if (!presetSelect) return;
     presetSelect.innerHTML = '';
+
+    var helpText = document.getElementById('presetHelpText');
+    var showFormBtn = document.getElementById('showAddRuleFormBtn');
+
+    if (capabilities.length === 0) {
+      var opt = document.createElement('option');
+      opt.value = '';
+      opt.disabled = true;
+      opt.selected = true;
+      opt.textContent = 'لا توجد نطاقات وصول مدعومة لهذه الصلاحية';
+      presetSelect.appendChild(opt);
+
+      if (helpText) helpText.textContent = 'هذه الصلاحية الإنتاجية لا تحتوي تعريف نطاق وصول مسجل في النظام.';
+      if (showFormBtn) showFormBtn.disabled = true;
+      return;
+    }
+
     capabilities.forEach(function(cap) {
       var opt = document.createElement('option');
       opt.value = cap.preset;
       opt.textContent = cap.label;
-      opt.setAttribute('data-desc', cap.description);
-      opt.setAttribute('data-target-type', cap.targetType || '');
-      opt.setAttribute('data-requires-targets', cap.requiresTargetIds ? 'true' : 'false');
+      opt.dataset.desc = cap.description;
+      opt.dataset.targetType = cap.targetType || '';
+      opt.dataset.requiresTargets = cap.requiresTargetIds ? 'true' : 'false';
       presetSelect.appendChild(opt);
     });
   }
@@ -473,9 +587,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function handlePresetChange(presetValue) {
     var selectedOpt = presetSelect.options[presetSelect.selectedIndex];
-    var requiresTargets = selectedOpt ? selectedOpt.getAttribute('data-requires-targets') === 'true' : false;
-    var targetType = selectedOpt ? selectedOpt.getAttribute('data-target-type') : '';
-    var desc = selectedOpt ? selectedOpt.getAttribute('data-desc') : '';
+    var requiresTargets = selectedOpt ? selectedOpt.dataset.requiresTargets === 'true' : false;
+    var targetType = selectedOpt ? selectedOpt.dataset.targetType : '';
+    var desc = selectedOpt ? selectedOpt.dataset.desc : '';
 
     var helpText = document.getElementById('presetHelpText');
     if (helpText) helpText.textContent = desc || '';
@@ -500,7 +614,12 @@ document.addEventListener('DOMContentLoaded', function() {
   // Target Lookup Fetchers
   function loadDepartmentOptions(searchTerm) {
     var resultsEl = document.getElementById('targetSearchResults');
-    resultsEl.innerHTML = '<div class="text-center py-2 text-muted small"><div class="spinner-border spinner-border-sm text-secondary me-1"></div>جاري البحث عن الأقسام...</div>';
+    resultsEl.innerHTML = '';
+    var loadingDiv = document.createElement('div');
+    loadingDiv.className = 'text-center py-2 text-muted small';
+    loadingDiv.innerHTML = '<div class="spinner-border spinner-border-sm text-secondary me-1"></div>';
+    loadingDiv.appendChild(document.createTextNode('جاري البحث عن الأقسام...'));
+    resultsEl.appendChild(loadingDiv);
 
     var url = '/api/system/users/lookups/departments?limit=100' + (searchTerm ? '&search=' + encodeURIComponent(searchTerm) : '');
     fetch(url, { headers: { 'Accept': 'application/json' } })
@@ -509,17 +628,30 @@ document.addEventListener('DOMContentLoaded', function() {
         if (resData.success) {
           renderTargetCheckboxes(resData.data || [], 'DEPARTMENT');
         } else {
-          resultsEl.innerHTML = '<div class="text-danger small p-1">فشل جلب الأقسام</div>';
+          resultsEl.innerHTML = '';
+          var errDiv = document.createElement('div');
+          errDiv.className = 'text-danger small p-1';
+          errDiv.textContent = 'فشل جلب الأقسام';
+          resultsEl.appendChild(errDiv);
         }
       })
       .catch(function() {
-        resultsEl.innerHTML = '<div class="text-danger small p-1">تعذر الاتصال بالخادم</div>';
+        resultsEl.innerHTML = '';
+        var errDiv = document.createElement('div');
+        errDiv.className = 'text-danger small p-1';
+        errDiv.textContent = 'تعذر الاتصال بالخادم';
+        resultsEl.appendChild(errDiv);
       });
   }
 
   function loadYardOptions(searchTerm) {
     var resultsEl = document.getElementById('targetSearchResults');
-    resultsEl.innerHTML = '<div class="text-center py-2 text-muted small"><div class="spinner-border spinner-border-sm text-secondary me-1"></div>جاري البحث عن الساحات...</div>';
+    resultsEl.innerHTML = '';
+    var loadingDiv = document.createElement('div');
+    loadingDiv.className = 'text-center py-2 text-muted small';
+    loadingDiv.innerHTML = '<div class="spinner-border spinner-border-sm text-secondary me-1"></div>';
+    loadingDiv.appendChild(document.createTextNode('جاري البحث عن الساحات...'));
+    resultsEl.appendChild(loadingDiv);
 
     var url = '/api/system/users/lookups/yards?limit=100' + (searchTerm ? '&search=' + encodeURIComponent(searchTerm) : '');
     fetch(url, { headers: { 'Accept': 'application/json' } })
@@ -528,44 +660,75 @@ document.addEventListener('DOMContentLoaded', function() {
         if (resData.success) {
           renderTargetCheckboxes(resData.data || [], 'YARD');
         } else {
-          resultsEl.innerHTML = '<div class="text-danger small p-1">فشل جلب الساحات</div>';
+          resultsEl.innerHTML = '';
+          var errDiv = document.createElement('div');
+          errDiv.className = 'text-danger small p-1';
+          errDiv.textContent = 'فشل جلب الساحات';
+          resultsEl.appendChild(errDiv);
         }
       })
       .catch(function() {
-        resultsEl.innerHTML = '<div class="text-danger small p-1">تعذر الاتصال بالخادم</div>';
+        resultsEl.innerHTML = '';
+        var errDiv = document.createElement('div');
+        errDiv.className = 'text-danger small p-1';
+        errDiv.textContent = 'تعذر الاتصال بالخادم';
+        resultsEl.appendChild(errDiv);
       });
   }
 
   function renderTargetCheckboxes(items, type) {
     var resultsEl = document.getElementById('targetSearchResults');
+    resultsEl.innerHTML = '';
+
     if (items.length === 0) {
-      resultsEl.innerHTML = '<div class="text-center py-2 text-muted small">لا توجد نتائج مطابقة</div>';
+      var noResDiv = document.createElement('div');
+      noResDiv.className = 'text-center py-2 text-muted small';
+      noResDiv.textContent = 'لا توجد نتائج مطابقة';
+      resultsEl.appendChild(noResDiv);
       return;
     }
 
-    var html = '';
     items.forEach(function(item) {
       var isChecked = selectedTargetIds.has(item.id);
-      var extraInfo = item.departmentName ? ' • ' + item.departmentName : (item.code ? ' • ' + item.code : '');
-      var statusBadge = !item.isActive ? ' <span class="badge bg-danger-subtle text-danger small py-0">معطل</span>' : '';
 
-      html += '<div class="form-check py-1 border-bottom border-light">' +
-        '<input class="form-check-input target-item-checkbox" type="checkbox" value="' + item.id + '" id="user_target_' + item.id + '" ' + (isChecked ? 'checked' : '') + ' data-name="' + item.name + '" data-code="' + (item.code || '') + '">' +
-        '<label class="form-check-label small cursor-pointer text-dark" for="user_target_' + item.id + '">' +
-          item.name + extraInfo + statusBadge +
-        '</label>' +
-        '</div>';
-    });
+      var checkDiv = document.createElement('div');
+      checkDiv.className = 'form-check py-1 border-bottom border-light';
 
-    resultsEl.innerHTML = html;
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'form-check-input target-item-checkbox';
+      input.value = item.id;
+      input.id = 'user_target_' + item.id;
+      input.checked = isChecked;
+      input.dataset.name = item.name;
+      input.dataset.code = item.code || '';
 
-    resultsEl.querySelectorAll('.target-item-checkbox').forEach(function(cb) {
-      cb.addEventListener('change', function() {
-        var id = cb.value;
-        var name = cb.getAttribute('data-name');
-        var code = cb.getAttribute('data-code');
+      var label = document.createElement('label');
+      label.className = 'form-check-label small cursor-pointer text-dark';
+      label.htmlFor = 'user_target_' + item.id;
 
-        if (cb.checked) {
+      var extraInfo = item.departmentName
+        ? ' • ' + item.departmentName
+        : (item.code ? ' • ' + item.code : '');
+      label.textContent = item.name + extraInfo;
+
+      if (!item.isActive) {
+        var inactiveBadge = document.createElement('span');
+        inactiveBadge.className = 'badge bg-danger-subtle text-danger small py-0 ms-1';
+        inactiveBadge.textContent = 'معطل';
+        label.appendChild(inactiveBadge);
+      }
+
+      checkDiv.appendChild(input);
+      checkDiv.appendChild(label);
+      resultsEl.appendChild(checkDiv);
+
+      input.addEventListener('change', function() {
+        var id = input.value;
+        var name = input.dataset.name || '';
+        var code = input.dataset.code || '';
+
+        if (input.checked) {
           selectedTargetIds.add(id);
           selectedTargetObjects.set(id, { id: id, name: name, code: code });
         } else {
@@ -577,6 +740,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
+  // Search Input Handler
   var targetSearchInput = document.getElementById('targetSearchInput');
   if (targetSearchInput) {
     targetSearchInput.addEventListener('input', function() {
@@ -584,7 +748,7 @@ document.addEventListener('DOMContentLoaded', function() {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(function() {
         var selectedOpt = presetSelect.options[presetSelect.selectedIndex];
-        var targetType = selectedOpt ? selectedOpt.getAttribute('data-target-type') : '';
+        var targetType = selectedOpt ? selectedOpt.dataset.targetType : '';
         if (targetType === 'DEPARTMENT') loadDepartmentOptions(term);
         else if (targetType === 'YARD') loadYardOptions(term);
       }, 300);
@@ -594,26 +758,29 @@ document.addEventListener('DOMContentLoaded', function() {
   function updateSelectedChipsDisplay() {
     var chipsContainer = document.getElementById('selectedTargetChips');
     if (!chipsContainer) return;
+    chipsContainer.innerHTML = '';
 
     if (selectedTargetIds.size === 0) {
-      chipsContainer.innerHTML = '<span class="text-muted small align-self-center empty-chips-text">لم يتم تحديد أي أهداف بعد</span>';
+      var emptySpan = document.createElement('span');
+      emptySpan.className = 'text-muted small align-self-center empty-chips-text';
+      emptySpan.textContent = 'لم يتم تحديد أي أهداف بعد';
+      chipsContainer.appendChild(emptySpan);
       return;
     }
 
-    var html = '';
     selectedTargetObjects.forEach(function(obj, id) {
-      html += '<span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1 py-1 px-2 small">' +
-        obj.name +
-        '<i class="fa-solid fa-xmark cursor-pointer remove-chip-btn ms-1" data-id="' + id + '"></i>' +
-        '</span>';
-    });
+      var chipSpan = document.createElement('span');
+      chipSpan.className = 'badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1 py-1 px-2 small';
 
-    chipsContainer.innerHTML = html;
+      var textNode = document.createTextNode(obj.name);
+      chipSpan.appendChild(textNode);
 
-    chipsContainer.querySelectorAll('.remove-chip-btn').forEach(function(icon) {
-      icon.addEventListener('click', function(e) {
+      var removeIcon = document.createElement('i');
+      removeIcon.className = 'fa-solid fa-xmark cursor-pointer remove-chip-btn ms-1';
+      removeIcon.dataset.id = id;
+
+      removeIcon.addEventListener('click', function(e) {
         e.stopPropagation();
-        var id = icon.getAttribute('data-id');
         selectedTargetIds.delete(id);
         selectedTargetObjects.delete(id);
         updateSelectedChipsDisplay();
@@ -621,6 +788,9 @@ document.addEventListener('DOMContentLoaded', function() {
         var cb = document.getElementById('user_target_' + id);
         if (cb) cb.checked = false;
       });
+
+      chipSpan.appendChild(removeIcon);
+      chipsContainer.appendChild(chipSpan);
     });
   }
 
@@ -636,8 +806,13 @@ document.addEventListener('DOMContentLoaded', function() {
       var preset = presetSelect.value;
       var description = document.getElementById('ruleDescriptionInput').value.trim() || undefined;
 
+      if (!preset || preset.trim().length === 0) {
+        showDrawerAlert('يرجى اختيار نطاق وصول صالح');
+        return;
+      }
+
       var selectedOpt = presetSelect.options[presetSelect.selectedIndex];
-      var requiresTargets = selectedOpt ? selectedOpt.getAttribute('data-requires-targets') === 'true' : false;
+      var requiresTargets = selectedOpt ? selectedOpt.dataset.requiresTargets === 'true' : false;
 
       var targetIds = undefined;
       if (requiresTargets) {
@@ -702,11 +877,28 @@ document.addEventListener('DOMContentLoaded', function() {
               var toggle = cardEl.querySelector('.direct-perm-toggle');
               if (toggle) toggle.checked = updatedPerm.direct.enabled;
 
-              var directSummary = cardEl.querySelector('.p-2.mb-2:nth-child(2) .text-muted');
-              if (directSummary) directSummary.textContent = updatedPerm.direct.summary;
+              var sections = cardEl.querySelectorAll('.p-2.mb-2.rounded.border.bg-white');
+              if (sections && sections.length > 1) {
+                var directSection = sections[1];
+                var directSummary = directSection.querySelector('.small.text-muted');
+                if (directSummary) directSummary.textContent = updatedPerm.direct.summary;
 
-              var effectiveSummary = cardEl.querySelector('.p-2.rounded.mb-3 .text-secondary');
-              if (effectiveSummary) effectiveSummary.textContent = updatedPerm.effective.summary;
+                var badgeSpan = directSection.querySelector('.badge');
+                if (badgeSpan) {
+                  if (updatedPerm.direct.enabled) {
+                    badgeSpan.className = 'badge bg-primary-subtle text-primary small py-0.5 px-2';
+                    badgeSpan.textContent = 'مباشرة مفعّلة';
+                  } else {
+                    badgeSpan.className = 'badge bg-secondary-subtle text-secondary small py-0.5 px-2';
+                    badgeSpan.textContent = 'غير مفعلة';
+                  }
+                }
+              }
+
+              var effectiveSummary = cardEl.querySelector('.rounded.mb-3.bg-light .text-secondary');
+              if (effectiveSummary) {
+                effectiveSummary.textContent = updatedPerm.effective.summary;
+              }
 
               var rulesCountSpan = cardEl.querySelector('.border-top span.small');
               if (rulesCountSpan) rulesCountSpan.textContent = updatedPerm.direct.rules.length + ' قواعد مباشرة';

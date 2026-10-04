@@ -100,14 +100,20 @@ export class RolePermissionService {
               if (summary) {
                 ruleSummaries.push(summary);
               }
+              const isValid = summary ? summary.isValid : true;
               if (rule.effect === 'ALLOW') {
-                allowRuleCount++;
-                if (rule.scopeType === 'ALL') {
-                  hasAllowAll = true;
+                if (isValid) {
+                  allowRuleCount++;
+                  if (rule.scopeType === 'ALL') {
+                    hasAllowAll = true;
+                  }
                 }
               } else if (rule.effect === 'DENY') {
                 denyRuleCount++;
-                if (rule.scopeType === 'ALL') {
+                if (rule.scopeType === 'ALL' && isValid) {
+                  hasDenyAll = true;
+                } else if (!isValid) {
+                  // Malformed/unknown DENY fails closed
                   hasDenyAll = true;
                 }
               }
@@ -116,7 +122,7 @@ export class RolePermissionService {
         }
       }
 
-      const activeRuleCount = allowRuleCount + denyRuleCount;
+      const activeRuleCount = ruleSummaries.length;
       const hasAnyAllow = allowRuleCount > 0;
       const hasAnyDeny = denyRuleCount > 0;
       const capabilities = AccessScopeCapabilityRegistry.getCapabilitiesForPermission(perm.name);
@@ -124,6 +130,7 @@ export class RolePermissionService {
         ruleSummaries.map((r) => ({
           effect: r.effect,
           preset: r.preset,
+          isValid: r.isValid,
           targetIdsCount: r.targetIds.length,
           isActive: r.isActive,
         }))

@@ -7,6 +7,8 @@ import {
 } from '../../production/authorization/production-admin-lookup.service.js';
 import { ApiResponse } from '../../../common/responses/api-response.js';
 import { ListRolesQueryDto } from './dto/list-roles-query.dto.js';
+import { ListProductionDepartmentAdminLookupQueryDto } from '../../production/authorization/dto/list-production-department-admin-lookup-query.dto.js';
+import { ListProductionYardAdminLookupQueryDto } from '../../production/authorization/dto/list-production-yard-admin-lookup-query.dto.js';
 import { CreateRoleDto } from './dto/create-role.dto.js';
 import { UpdateRoleDto } from './dto/update-role.dto.js';
 import { SetPermissionStateDto } from '../permission-grant/dto/set-permission-state.dto.js';
@@ -84,9 +86,11 @@ export class RoleController {
 
   listDepartmentsLookup = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
-      const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 50;
-      const result = await this.adminLookupService.listDepartmentsForLookup(search, limit);
+      if (!req.validatedQuery) {
+        throw new Error('Validated query parameters not found on request context');
+      }
+      const query = req.validatedQuery as ListProductionDepartmentAdminLookupQueryDto;
+      const result = await this.adminLookupService.listDepartmentsForLookup(query.search, query.limit);
       res.status(200).json(ApiResponse.success(result));
     } catch (error) {
       next(error);
@@ -95,10 +99,11 @@ export class RoleController {
 
   listYardsLookup = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
-      const departmentId = typeof req.query.departmentId === 'string' ? req.query.departmentId : undefined;
-      const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 50;
-      const result = await this.adminLookupService.listYardsForLookup(search, departmentId, limit);
+      if (!req.validatedQuery) {
+        throw new Error('Validated query parameters not found on request context');
+      }
+      const query = req.validatedQuery as ListProductionYardAdminLookupQueryDto;
+      const result = await this.adminLookupService.listYardsForLookup(query.search, query.departmentId, query.limit);
       res.status(200).json(ApiResponse.success(result));
     } catch (error) {
       next(error);

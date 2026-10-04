@@ -29,16 +29,29 @@ export interface PersistenceShapeResult {
 export class AccessRuleAdministrationService {
   /**
    * Maps an AccessRuleEntity into a preset and target IDs.
+   * Invariant: Unknown / Malformed scopes must NEVER be mapped to ALL; they are represented explicitly as invalid.
    */
   mapRuleToPresetAndTargets(rule: AccessRuleEntity): {
-    preset: AccessScopePresetType;
+    isValid: boolean;
+    preset: AccessScopePresetType | null;
     presetLabel: string;
+    validationErrorCode?: string;
     targetIds: string[];
   } {
     if (rule.scopeType === 'ALL') {
+      if (rule.scope === null) {
+        return {
+          isValid: true,
+          preset: AccessScopePreset.ALL,
+          presetLabel: PRESET_DEFINITIONS[AccessScopePreset.ALL].label,
+          targetIds: [],
+        };
+      }
       return {
-        preset: AccessScopePreset.ALL,
-        presetLabel: PRESET_DEFINITIONS[AccessScopePreset.ALL].label,
+        isValid: false,
+        preset: null,
+        presetLabel: 'قاعدة شاملة غير صالحة (تحتوي نطاق JSON)',
+        validationErrorCode: 'MALFORMED_ALL_SCOPE',
         targetIds: [],
       };
     }
@@ -46,6 +59,7 @@ export class AccessRuleAdministrationService {
     if (rule.scopeType === 'PRODUCTION_DEPARTMENT') {
       if (isCurrentProductionResponsibilityScope(rule.scope)) {
         return {
+          isValid: true,
           preset: AccessScopePreset.CURRENT_PRODUCTION_DEPARTMENT,
           presetLabel: PRESET_DEFINITIONS[AccessScopePreset.CURRENT_PRODUCTION_DEPARTMENT].label,
           targetIds: [],
@@ -53,16 +67,25 @@ export class AccessRuleAdministrationService {
       }
       if (isSpecificDepartmentScope(rule.scope)) {
         return {
+          isValid: true,
           preset: AccessScopePreset.SPECIFIC_PRODUCTION_DEPARTMENTS,
           presetLabel: PRESET_DEFINITIONS[AccessScopePreset.SPECIFIC_PRODUCTION_DEPARTMENTS].label,
           targetIds: [...rule.scope.departmentIds],
         };
       }
+      return {
+        isValid: false,
+        preset: null,
+        presetLabel: 'نطاق قسم غير صالح / غير مدعوم',
+        validationErrorCode: 'MALFORMED_DEPARTMENT_SCOPE',
+        targetIds: [],
+      };
     }
 
     if (rule.scopeType === 'PRODUCTION_YARD') {
       if (isCurrentProductionResponsibilityScope(rule.scope)) {
         return {
+          isValid: true,
           preset: AccessScopePreset.CURRENT_PRODUCTION_YARDS,
           presetLabel: PRESET_DEFINITIONS[AccessScopePreset.CURRENT_PRODUCTION_YARDS].label,
           targetIds: [],
@@ -70,17 +93,27 @@ export class AccessRuleAdministrationService {
       }
       if (isSpecificYardScope(rule.scope)) {
         return {
+          isValid: true,
           preset: AccessScopePreset.SPECIFIC_PRODUCTION_YARDS,
           presetLabel: PRESET_DEFINITIONS[AccessScopePreset.SPECIFIC_PRODUCTION_YARDS].label,
           targetIds: [...rule.scope.yardIds],
         };
       }
+      return {
+        isValid: false,
+        preset: null,
+        presetLabel: 'نطاق ساحة غير صالح / غير مدعوم',
+        validationErrorCode: 'MALFORMED_YARD_SCOPE',
+        targetIds: [],
+      };
     }
 
-    // Fallback for unknown / legacy scopes
+    // Explicitly represent unknown scopeType as invalid (never fallback to ALL)
     return {
-      preset: AccessScopePreset.ALL,
-      presetLabel: rule.scopeType,
+      isValid: false,
+      preset: null,
+      presetLabel: `نوع نطاق غير مدعوم (${rule.scopeType})`,
+      validationErrorCode: 'UNSUPPORTED_SCOPE_TYPE',
       targetIds: [],
     };
   }
@@ -260,13 +293,13 @@ export class AccessRuleAdministrationService {
     const allYardIds = new Set<string>();
 
     const ruleParsed = rules.map((r) => {
-      const { preset, presetLabel, targetIds } = this.mapRuleToPresetAndTargets(r);
-      if (preset === AccessScopePreset.SPECIFIC_PRODUCTION_DEPARTMENTS) {
-        for (const id of targetIds) allDeptIds.add(id);
-      } else if (preset === AccessScopePreset.SPECIFIC_PRODUCTION_YARDS) {
-        for (const id of targetIds) allYardIds.add(id);
+      const mapping = this.mapRuleToPresetAndTargets(r);
+      if (mapping.isValid && mapping.preset === AccessScopePreset.SPECIFIC_PRODUCTION_DEPARTMENTS) {
+        for (const id of mapping.targetIds) allDeptIds.add(id);
+      } else if (mapping.isValid && mapping.preset === AccessScopePreset.SPECIFIC_PRODUCTION_YARDS) {
+        for (const id of mapping.targetIds) allYardIds.add(id);
       }
-      return { rule: r, preset, presetLabel, targetIds };
+      return { rule: r, ...mapping };
     });
 
     const deptMap = new Map<string, { name: string; code: string; isActive: boolean; isAvailable: boolean }>();
@@ -359,8 +392,10 @@ export class AccessRuleAdministrationService {
         permissionGrantId: item.rule.permissionGrantId,
         effect: item.rule.effect,
         scopeType: item.rule.scopeType,
+        isValid: item.isValid,
         preset: item.preset,
         presetLabel: item.presetLabel,
+        validationErrorCode: item.validationErrorCode,
         targetIds: item.targetIds,
         targets,
         description: item.rule.description,
@@ -377,26 +412,49 @@ export class AccessRuleAdministrationService {
    * Generates a concise human-readable summary of effective access configuration for a permission.
    */
   generateConfigurationSummary(
-    rules: { effect: 'ALLOW' | 'DENY'; preset: AccessScopePresetType; targetIdsCount: number; isActive: boolean }[]
+    rules: {
+      effect: 'ALLOW' | 'DENY';
+      preset: AccessScopePresetType | null;
+      isValid: boolean;
+      targetIdsCount: number;
+      isActive: boolean;
+    }[]
   ): string {
     const activeRules = rules.filter((r) => r.isActive);
     if (activeRules.length === 0) {
       return 'لا توجد قواعد وصول فعالة';
     }
 
-    const hasDenyAll = activeRules.some((r) => r.effect === 'DENY' && r.preset === AccessScopePreset.ALL);
+    const hasInvalidDeny = activeRules.some(
+      (r) => r.effect === 'DENY' && !r.isValid
+    );
+    if (hasInvalidDeny) {
+      return 'توجد قاعدة حظر غير صالحة؛ محرك الصلاحيات يتعامل معها بالرفض التام (Fail Closed)';
+    }
+
+    const hasDenyAll = activeRules.some(
+      (r) => r.effect === 'DENY' && r.isValid && r.preset === AccessScopePreset.ALL
+    );
     if (hasDenyAll) {
       return 'محظور كلياً بقاعدة حظر شاملة (DENY ALL)';
     }
 
-    const allows = activeRules.filter((r) => r.effect === 'ALLOW');
-    const denys = activeRules.filter((r) => r.effect === 'DENY');
+    const validAllows = activeRules.filter(
+      (r) => r.effect === 'ALLOW' && r.isValid && r.preset !== null
+    );
+    const validDenys = activeRules.filter(
+      (r) => r.effect === 'DENY' && r.isValid && r.preset !== null
+    );
 
-    if (allows.length === 0) {
+    if (validAllows.length === 0) {
+      const hasInvalidAllow = activeRules.some((r) => r.effect === 'ALLOW' && !r.isValid);
+      if (hasInvalidAllow) {
+        return 'توجد قاعدة منح غير صالحة ولا تمنح أي وصول فعلي';
+      }
       return 'لا توجد قواعد منح (ALLOW) فعالة';
     }
 
-    const allowLabels = allows.map((a) => {
+    const allowLabels = validAllows.map((a) => {
       switch (a.preset) {
         case AccessScopePreset.ALL:
           return 'شامل';
@@ -409,14 +467,14 @@ export class AccessRuleAdministrationService {
         case AccessScopePreset.SPECIFIC_PRODUCTION_YARDS:
           return `${a.targetIdsCount} ساحات محددة`;
         default:
-          return a.preset;
+          return a.preset ?? 'نطاق مخصص';
       }
     });
 
     let summary = `منح: ${allowLabels.join(' + ')}`;
 
-    if (denys.length > 0) {
-      const denyLabels = denys.map((d) => {
+    if (validDenys.length > 0) {
+      const denyLabels = validDenys.map((d) => {
         switch (d.preset) {
           case AccessScopePreset.SPECIFIC_PRODUCTION_DEPARTMENTS:
             return `${d.targetIdsCount} أقسام مستثناة`;
@@ -427,7 +485,7 @@ export class AccessRuleAdministrationService {
           case AccessScopePreset.CURRENT_PRODUCTION_YARDS:
             return 'استثناء الساحات الحالية';
           default:
-            return d.preset;
+            return d.preset ?? 'استثناء مخصص';
         }
       });
       summary += ` (مع استثناء: ${denyLabels.join(' + ')})`;

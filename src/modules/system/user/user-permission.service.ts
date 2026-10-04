@@ -114,12 +114,19 @@ export class UserPermissionService {
             if (rule.isActive) {
               const summary = resolvedRulesMap.get(rule.id);
               if (summary) directRules.push(summary);
+              const isValid = summary ? summary.isValid : true;
               if (rule.effect === 'ALLOW') {
-                directAllowCount++;
-                if (rule.scopeType === 'ALL') directHasAllowAll = true;
+                if (isValid) {
+                  directAllowCount++;
+                  if (rule.scopeType === 'ALL') directHasAllowAll = true;
+                }
               } else if (rule.effect === 'DENY') {
                 directDenyCount++;
-                if (rule.scopeType === 'ALL') directHasDenyAll = true;
+                if (rule.scopeType === 'ALL' && isValid) {
+                  directHasDenyAll = true;
+                } else if (!isValid) {
+                  directHasDenyAll = true;
+                }
               }
             }
           }
@@ -138,12 +145,19 @@ export class UserPermissionService {
             if (rule.isActive) {
               const summary = resolvedRulesMap.get(rule.id);
               if (summary) roleRules.push(summary);
+              const isValid = summary ? summary.isValid : true;
               if (rule.effect === 'ALLOW') {
-                roleAllowCount++;
-                if (rule.scopeType === 'ALL') roleHasAllowAll = true;
+                if (isValid) {
+                  roleAllowCount++;
+                  if (rule.scopeType === 'ALL') roleHasAllowAll = true;
+                }
               } else if (rule.effect === 'DENY') {
                 roleDenyCount++;
-                if (rule.scopeType === 'ALL') roleHasDenyAll = true;
+                if (rule.scopeType === 'ALL' && isValid) {
+                  roleHasDenyAll = true;
+                } else if (!isValid) {
+                  roleHasDenyAll = true;
+                }
               }
             }
           }
@@ -156,6 +170,7 @@ export class UserPermissionService {
         directRules.map((r) => ({
           effect: r.effect,
           preset: r.preset,
+          isValid: r.isValid,
           targetIdsCount: r.targetIds.length,
           isActive: r.isActive,
         }))
@@ -165,6 +180,7 @@ export class UserPermissionService {
         roleRules.map((r) => ({
           effect: r.effect,
           preset: r.preset,
+          isValid: r.isValid,
           targetIdsCount: r.targetIds.length,
           isActive: r.isActive,
         }))
@@ -178,6 +194,7 @@ export class UserPermissionService {
         allActiveMergedRules.map((r) => ({
           effect: r.effect,
           preset: r.preset,
+          isValid: r.isValid,
           targetIdsCount: r.targetIds.length,
           isActive: r.isActive,
         }))

@@ -19,8 +19,11 @@ export interface AccessRuleSummary {
   permissionGrantId: string;
   effect: 'ALLOW' | 'DENY';
   scopeType: string;
-  preset: AccessScopePresetType;
+  isValid: boolean;
+  preset: AccessScopePresetType | null;
   presetLabel: string;
+  validationErrorCode?: string;
+  validationErrorMessage?: string;
   targetIds: string[];
   targets: AccessRuleTargetSummary[];
   description: string | null;

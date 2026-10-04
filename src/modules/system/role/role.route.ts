@@ -9,6 +9,8 @@ import { validateUuidParam } from '../../../common/middleware/validate-uuid-para
 import { CreateRoleDto } from './dto/create-role.dto.js';
 import { UpdateRoleDto } from './dto/update-role.dto.js';
 import { ListRolesQueryDto } from './dto/list-roles-query.dto.js';
+import { ListProductionDepartmentAdminLookupQueryDto } from '../../production/authorization/dto/list-production-department-admin-lookup-query.dto.js';
+import { ListProductionYardAdminLookupQueryDto } from '../../production/authorization/dto/list-production-yard-admin-lookup-query.dto.js';
 import { SetPermissionStateDto } from '../permission-grant/dto/set-permission-state.dto.js';
 import { CreateAccessRuleDto } from '../access-rule/dto/create-access-rule.dto.js';
 import { UpdateAccessRuleDto } from '../access-rule/dto/update-access-rule.dto.js';
@@ -21,6 +23,7 @@ roleApiRouter.get(
   '/lookups/departments',
   requireApiAuth,
   requirePermission(SystemPermission.ROLE_PERMISSION_MANAGE),
+  validateQueryDto(ListProductionDepartmentAdminLookupQueryDto),
   roleController.listDepartmentsLookup
 );
 
@@ -28,6 +31,7 @@ roleApiRouter.get(
   '/lookups/yards',
   requireApiAuth,
   requirePermission(SystemPermission.ROLE_PERMISSION_MANAGE),
+  validateQueryDto(ListProductionYardAdminLookupQueryDto),
   roleController.listYardsLookup
 );
 
