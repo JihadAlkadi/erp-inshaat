@@ -99,6 +99,12 @@ Authorization = ماذا يستطيع؟
 - يُمنع نقل أو أرشفة ساحة مسندة لمهندسين حالياً (`PRODUCTION_YARD_HAS_ENGINEERS`).
 - لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، ولا يُعاد تفعيل السجل إلا إذا كانت ارتباطات الساحات مساوية للصفر (Fail closed on stale mappings: `PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`).
 - المستخدمون المؤرشفون المرتبطون تاريخياً كرؤساء أقسام أو مهندسين تظل هوياتهم محفوظة وظاهرة في واجهة الفريق مع تمييز حالتهم بوسم "مؤرشف / غير متاح" ودون كشف أي بيانات حساسة.
+- قواعد تعديل إسناد ساحات المهندس (Engineer Yard Assignment Update Invariants):
+  - فحص الارتباطات الحالية مسبقاً (`Existing mappings inspection`) قبل تنفيذ أي تعديل أو استبدال.
+  - الانغلاق الأمني الفوري (`Fail Closed` / `PRODUCTION_ENGINEER_HAS_UNEDITABLE_YARD_ASSIGNMENTS`) في حال وجود أي ارتباط حالي لساحة معطلة أو مؤرشفة أو تتبع قسماً آخر أو مفقودة، ويُمنع نهائياً حذف أو تصليح الارتباطات التالفة بصمت (`No silent repair / No silent deletion`).
+  - مجموعة أقفال الساحات هي اتحاد الساحات الحالية والمطلوبة (`lockYardIds = union(existing, requested)`).
+  - قفل الساحات يتم حصراً بشكل تسلسلي واحدة تلو الأخرى بترتيب معرفات UUID تصاعدي (`Sequential one-by-one locking in ascending UUID order`)؛ يُمنع استخدام `IN (...)` مع القفل التشاؤمي.
+  - بروتوكول القفل الموحد إلزامي: `Department -> User -> Assignment -> Yards (individually sorted) -> Mutations`.
 - فلترة المرشحين في واجهة المستخدم (UI Filtering) هي لتحسين تجربة المستخدم فقط، بينما التحقق الصارم في طبقة الخدمات والـ Transactions هو الحامي للمنطق التشغيلي وقيود قاعدة البيانات هي خط الدفاع النهائي.
 
 قواعد نطاقات الوصول وديناميكية الصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Invariants):
