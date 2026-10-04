@@ -2,7 +2,54 @@
 
 ## Current Project State
 
-تم تنفيذ مرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات الشاملة (Role Management Core & Global Permission Assignment) ومرحلة إدارة المستخدمين الأساسية (User Management Core) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل ودمجها مع نموذج الجلسات وقاعدة البيانات:
+تم تنفيذ مرحلة إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration) ومرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات (Role Management & Permission Administration) ومرحلة إدارة المستخدمين (User Management) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل:
+- **إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration)** (`src/modules/system/authorization/access-administration/`, `src/modules/system/role/`, `src/modules/system/user/`):
+  - **فصل دلالة التفعيل (Checkbox Semantics)**:
+    - خانة الاختيار بجانب الصلاحية تعني حصراً: هل توجد منحة نشطة (`PermissionGrant.isActive = true`) لهذا الدور أو المستخدم؟
+    - تفعيل الصلاحية **لا ينشئ إطلاقاً** قاعدة `ALLOW ALL` ولا ينشئ أي قواعد وصول تلقائياً.
+    - الصلاحية المفعلة بدون أي قاعدة منح (`ALLOW`) فعالة تؤدي تلقائياً إلى انعدام الوصول (Fail Closed) وتُظهر الواجهة تحذيراً صريحاً.
+  - **دعم تعدد قواعد الوصول (Multiple Access Rules 0..N)**:
+    - يمكن للمنحة الواحدة امتلاك عدة قواعد وصول تجمع بين المنح (`ALLOW`) والحظر/الاستثناء (`DENY`).
+    - صيغة التقييم القطعية: `(ALLOW 1 OR ALLOW 2 ...) AND NOT (DENY 1 OR DENY 2 ...)`. قاعدة `DENY ALL` تلغي الوصول تماماً وتتفوق على كافة المنح.
+  - **سجل قدرات الصلاحيات المركزي (Centralized Capability Registry)**:
+    - تعريف `AccessScopeCapabilityRegistry` لتحديد القوالب المسموحة (`Allowed Presets`) لكل صلاحية في الـ Backend.
+    - صلاحيات النظام تقبل حصراً القالب الشامل `ALL`.
+    - صلاحيات الإنتاج تدعم القوالب التشغيلية المحددة:
+      - `production.department.view/update/delete`: `ALL`, `CURRENT_PRODUCTION_DEPARTMENT`, `SPECIFIC_PRODUCTION_DEPARTMENTS`.
+      - `production.department.create`: `ALL` فقط.
+      - `production.yard.view/update/delete`: `ALL`, `CURRENT_PRODUCTION_DEPARTMENT`, `CURRENT_PRODUCTION_YARDS`, `SPECIFIC_PRODUCTION_DEPARTMENTS`, `SPECIFIC_PRODUCTION_YARDS`.
+      - `production.yard.create`: `ALL`, `CURRENT_PRODUCTION_DEPARTMENT`, `SPECIFIC_PRODUCTION_DEPARTMENTS`.
+      - `production.assignment.view/manage`: `ALL`, `CURRENT_PRODUCTION_DEPARTMENT`, `SPECIFIC_PRODUCTION_DEPARTMENTS`.
+  - **قوالب الإدارة المهيكلة ومطابقة التخزين (Typed Presets & Persistence Mapping)**:
+    - العميل لا يرسل JSON خام أو SQL؛ بل يرسل القالب `preset` وقائمة المعرفات `targetIds`.
+    - `ALL`: `scopeType = 'ALL'`, `scope = null`.
+    - `CURRENT_PRODUCTION_DEPARTMENT`: `scopeType = 'PRODUCTION_DEPARTMENT'`, `scope = { source: 'CURRENT_PRODUCTION_RESPONSIBILITY' }`.
+    - `CURRENT_PRODUCTION_YARDS`: `scopeType = 'PRODUCTION_YARD'`, `scope = { source: 'CURRENT_PRODUCTION_RESPONSIBILITY' }`.
+    - `SPECIFIC_PRODUCTION_DEPARTMENTS`: `scopeType = 'PRODUCTION_DEPARTMENT'`, `scope = { source: 'SPECIFIC_IDS', departmentIds: [...] }`.
+    - `SPECIFIC_PRODUCTION_YARDS`: `scopeType = 'PRODUCTION_YARD'`, `scope = { source: 'SPECIFIC_IDS', yardIds: [...] }`.
+  - **التحقق الصارم من الأهداف المحددة (Specific IDs Validation)**:
+    - التحقق في قاعدة البيانات عند الإنشاء والتعديل من وجود الأقسام والساحات المحددة وعدم أرشفاتها (`deletedAt IS NULL`).
+    - إزالة التكرارات وترتيب المعرفات حتمياً والتأكد من أنها ضمن الحد المسموح (1 إلى 200 معرف).
+  - **توسيع محرك تقييم السياسة `ProductionAccessPolicyService`**:
+    - دعم مصدر `SPECIFIC_IDS` في تقييم نطاقات الأقسام والساحات بإضافة المعرفات مباشرة إلى `allowDepartmentIds` / `denyDepartmentIds` / `allowYardIds` / `denyYardIds`.
+    - القواعد المحددة لا تتأثر بفساد المسؤولية التشغيلية؛ بينما القواعد الديناميكية فقط تخضع لفحص `responsibility.isConsistent`.
+    - أي قاعدة حظر (`DENY`) تالفة أو غير معروفة تؤدي إلى `denyAll = true` (Fail Closed).
+  - **خدمة البحث والاستعلام الإدارية `ProductionAdminLookupService`**:
+    - توفير بحث سريع ومحدد للأقسام والساحات غير المؤرشفة لإدارة القواعد المحددة دون تسريب وبدون N+1.
+  - **بروتوكول القفل التشاؤمي للموضوع (Subject Serialization Lock Protocol)**:
+    - جميع عمليات تعديل الصلاحيات وقواعد الوصول للأدوار تتسلسل عبر قفل تشاؤمي على صف الدور (`Role row` via `pessimistic_write`).
+    - جميع عمليات تعديل الصلاحيات وقواعد الوصول للمستخدمين تتسلسل عبر قفل تشاؤمي على صف المستخدم (`User row` via `pessimistic_write`).
+  - **حماية مدير النظام والذات (SYSTEM_ADMIN & Self Protection)**:
+    - منع تعديل صلاحيات وقواعد دور `SYSTEM_ADMIN` (`SYSTEM_ADMIN_PERMISSIONS_MANAGED_BY_SYSTEM`).
+    - منع المستخدم من تعديل صلاحياته المباشرة بنفسه (`CANNOT_MANAGE_OWN_PERMISSIONS`).
+  - **واجهات مستخدم تفاعلية ومتجاوبة (Responsive Bootstrap UI)**:
+    - بطاقات صلاحيات متجاوبة (2-columns على الشاشات الكبيرة، 1-column على الهواتف).
+    - درج جانبي Offcanvas منبثق لإدارة قواعد الوصول مع دعم كامل للهواتف (Full Width).
+    - محدد أهداف ذكي Native JS مع بحث debounced وشرائح مختارة (Chips) قابلة للحذف السريع.
+    - فصل واضح في شاشة المستخدم بين الصلاحيات الموروثة من الدور والصلاحيات المباشرة والنتيجة الفعالة.
+  - **إلغاء مسار التعديل القديم غير الآمن (Legacy Removal)**:
+    - إزالة مسارات وخدمات `/global-permissions` و `setRoleGlobalPermissions` و `setUserGlobalPermissions` واستبدالها بنظام إدارة الصلاحيات وقواعد الوصول الدقيق الجديد.
+
 - **نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core)** (`src/modules/production/authorization/`):
   - **فصل المسؤوليات المعماري**:
     - المصادقة (`Authentication`): من هو المستخدم؟ (`AuthPrincipal`).
