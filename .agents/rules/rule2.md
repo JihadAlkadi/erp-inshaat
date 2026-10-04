@@ -43,13 +43,52 @@ Authorization = ماذا يستطيع؟
 - بروتوكول قفل سجل المستخدم (User Lock Protocol): تعديل الصلاحيات المباشرة للمستخدم وتعديل بيانات المستخدم وحذفه ناعماً تتزامن جميعها عبر قفل تشاؤمي (`pessimistic_write`) على نفس سجل المستخدم (`User row`).
 - بروتوكول قفل سجل الدور لصلاحيات الدور (Role Permission Lock Protocol): تعديل صلاحيات الدور وعمليات دورة حياة الدور وإسناد الدور للمستخدم تتزامن جميعها عبر قفل تشاؤمي (`pessimistic_write`) على نفس سجل الدور (`Role row`).
 
+سياسة حماية القواعد والنزاهة المنطقية (Business Invariant Policy):
+- Business invariants must be enforced at the backend transaction boundary, not only by UI filtering.
+- Where an invariant can be safely represented by a database constraint, use one as the final integrity barrier.
+- Concurrency-sensitive invariants must use a consistent serialization/locking point.
+- Do not duplicate derived state when it can be calculated safely.
+- Do not silently repair contradictory business state; reject unsafe requests (Fail Closed).
+
 قواعد الهيكل التشغيلي للإنتاج (Production Departments & Yards Invariants):
 - أقسام وساحات الإنتاج بيانات تشغيلية تخص تطبيق الإنتاج (Production Application) حصراً، ومستقلة تماماً عن الهيكل التنظيمي للموارد البشرية (HR Structure).
 - بيانات الأقسام والساحات ديناميكية بالكامل وتُدار عبر قاعدة البيانات ويُمنع تعريفها كـ Enums.
 - سعة الساحات تقاس بعدد الغرف (Room Count)، وكل غرفة تستهلك وحدة سعة واحدة (1 Room = 1 Capacity Unit) بغض النظر عن نوع الغرفة أو أبعادها.
 - يُمنع تخزين الإشغال الحالي (Occupancy) في قاعدة البيانات؛ بل يُحسب ديناميكياً من الغرف الفعلية الموجودة في الساحة.
 - لا يمكن تفعيل أو إنشاء ساحة تابعة لقسم إنتاج معطل أو محذوف ناعماً.
-- بروتوكول قفل سجل قسم الإنتاج (Department Lock Protocol): عمليات إنشاء الساحة، ونقل الساحة لقسم جديد، وتفعيل الساحة، وتعطيل القسم، وأرشفة القسم تتزامن جميعها عبر قفل تشاؤمي (`pessimistic_write`) على نفس سجل قسم الإنتاج (`Department row`).
+- بروتوكول قفل سجلات الإنتاج الموحد ومنع التعارضات (Production Unified Lock Protocol & Deadlock Prevention):
+  - القاعدة الصارمة: يُمنع نهائياً طلب قفل سجل قسم (`Department`) بعد حيازة قفل سجل ساحة (`Yard`). ترتيب الأقفال دائماً `Department(s) -> Yard`.
+  - لعمليات تعديل أو أرشفة الساحة (`updateYard`, `softDeleteYard`):
+    1. القراءة الاستطلاعية المسبقة للساحة (`Pre-read`) تتم خارج الـ Transaction لمعرفة معرفات الأقسام المعنية (`sourceDepartmentId` و `targetDepartmentId`).
+    2. عند الحاجة لقفل أكثر من Production Department، يجب الحصول على الأقفال واحداً تلو الآخر بترتيب UUID تصاعدي ثابت (`for (const deptId of sortedDeptIds)`)؛ لا يُعتمد على ترتيب القيم داخل `IN(...)` لضمان ترتيب Row Locks.
+    3. قفل سجل الساحة تشاؤمياً (`Yard row` via `pessimistic_write`) بعد اكتمال قفل كافة الأقسام المعنية.
+    4. إعادة التحقق من تطابق تبعية الساحة للقسم المقفول (`Revalidate consistency: yard.departmentId === sourceDepartmentId`) لمنع التعديلات المتزامنة (`PRODUCTION_YARD_CONCURRENTLY_CHANGED`).
+    5. التحقق من القواعد التشغيلية (منع النقل أو الأرشفة في حال وجود مهندسين مسندين، واشتراط فعالية القسم عند التفعيل) ثم الحفظ.
+  - لعمليات إنشاء ساحة جديدة (`createYard`): قفل القسم التابع تشاؤمياً ثم التحقق وإنشاء الساحة.
+  - لعمليات إنشاء قسم جديد (`createDepartment`): قفل سجل المستخدم المرشح للرئاسة (`User row` via `pessimistic_write`) ثم إنشاء القسم (لا يوجد صف قسم مسبق لقفله).
+  - لعمليات فريق ومسؤولي الإنتاج (`Production Team Operations`):
+    1. قسم الإنتاج (`Department row` via `pessimistic_write`)
+    2. سجل المستخدم (`User row` via `pessimistic_write` إن وجد)
+    3. سجل تعيين المهندس (`Assignment row` via `pessimistic_write` إن وجد)
+    4. سجلات الساحات مرتبة تصاعدياً حسب المعرف (`Yards sorted ascending by ID` via `pessimistic_write` إن وجدت)
+    5. كتابة المخططات والروابط (`Mapping writes / mutations`)
+
+قواعد هيكل المسؤوليات وفريق عمل الإنتاج (Production Department Team & Engineer Assignments Invariants):
+- لكل قسم إنتاج رئيس قسم واحد (`head_user_id` في `production_department`) مع قيد فرادة في قاعدة البيانات (`UQ_production_department_head_user`).
+- المستخدم الواحد يمكن أن يكون رئيساً لقسم إنتاج واحد فقط غير مؤرشف (A user may head at most one non-deleted production department).
+- تعارض الأدوار التشغيلية (Mutual Exclusivity): لا يجوز للمستخدم في نفس الوقت أن يكون رئيساً لأي قسم إنتاج ومهندساً مسنداً لساحات إنتاج (A user cannot simultaneously hold a current Production Department Head responsibility and a current Yard Engineer assignment).
+- مرشح رئاسة القسم (Department Head Candidate): يجب أن يكون مستخدماً نشطاً، غير مؤرشف/محذوف ناعماً، ليس رئيساً لأي قسم إنتاج غير مؤرشف (بما في ذلك القسم الحالي في واجهة الاختيار)، ليس مهندساً نشطاً في أي قسم إنتاج (`PRODUCTION_ENGINEER_CANNOT_BE_DEPARTMENT_HEAD`)، وليس لديه أي ارتباطات بساحات إنتاج (`PRODUCTION_USER_HAS_EXISTING_YARD_ASSIGNMENTS`).
+- رئيس القسم مسؤول تلقائياً عن جميع ساحات القسم الحالية والمستقبلية دون الحاجة لصفوف إسناد منفصلة.
+- عند أرشفة قسم الإنتاج (`softDeleteDepartment`)، يتم تحرير رئيس القسم تلقائياً بجعل `head_user_id = null` مع ضبط `deleted_at` وتعيين `is_active = false` لإتاحة إسناده لقسم آخر دون تعارض مع قيد الفرادة.
+- مرشح وظيفة المهندس (Engineer Candidate): يجب أن يكون مستخدماً نشطاً، غير مؤرشف، ليس رئيساً لأي قسم إنتاج (`PRODUCTION_DEPARTMENT_HEAD_CANNOT_BE_ENGINEER`)، ليس مهندساً نشطاً في القسم المستهدف (`PRODUCTION_ENGINEER_ALREADY_ASSIGNED`) ولا في أي قسم إنتاج آخر (`PRODUCTION_ENGINEER_ASSIGNED_TO_OTHER_DEPARTMENT`)، ولا يملك ارتباطات ساحات متعارضة أو قديمة (`PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`). السجل التاريخي المعطل النظيف (0 ارتباطات) مؤهل لإعادة الاستخدام.
+- المهندس الواحد ينتمي لقسم إنتاج واحد فقط (`userId` فريد في `production_department_engineer` عبر `UQ_production_department_engineer_user`).
+- المهندس يُسند لساحة واحدة أو أكثر تتبع لنفس قسمه (`production_yard_engineer` مع قيد فرادة الزوج `UQ_production_yard_engineer_assignment`).
+- يمكن للساحة الواحدة أن تضم أكثر من مهندس مسؤول عنها.
+- يُمنع إسناد مهندس لساحات تتبع قسماً آخر (`PRODUCTION_ENGINEER_YARD_DEPARTMENT_MISMATCH`).
+- يُمنع نقل أو أرشفة ساحة مسندة لمهندسين حالياً (`PRODUCTION_YARD_HAS_ENGINEERS`).
+- لا يتم حذف صف المهندس صلبياً بل يُعطّل (`isActive = false`) مع حذف ارتباطات ساحاته، ولا يُعاد تفعيل السجل إلا إذا كانت ارتباطات الساحات مساوية للصفر (Fail closed on stale mappings: `PRODUCTION_ENGINEER_HAS_EXISTING_YARD_ASSIGNMENTS`).
+- المستخدمون المؤرشفون المرتبطون تاريخياً كرؤساء أقسام أو مهندسين تظل هوياتهم محفوظة وظاهرة في واجهة الفريق مع تمييز حالتهم بوسم "مؤرشف / غير متاح" ودون كشف أي بيانات حساسة.
+- فلترة المرشحين في واجهة المستخدم (UI Filtering) هي لتحسين تجربة المستخدم فقط، بينما التحقق الصارم في طبقة الخدمات والـ Transactions هو الحامي للمنطق التشغيلي وقيود قاعدة البيانات هي خط الدفاع النهائي.
 
 ---
 

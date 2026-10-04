@@ -2,6 +2,7 @@ import { EntityManager, IsNull, Repository } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionDepartmentEntity } from './production-department.entity.js';
 import { ProductionYardEntity } from '../yard/production-yard.entity.js';
+import { ProductionDepartmentEngineerEntity } from '../team/entities/production-department-engineer.entity.js';
 import { CreateProductionDepartmentDto } from './dto/create-production-department.dto.js';
 import { UpdateProductionDepartmentDto } from './dto/update-production-department.dto.js';
 import { ListProductionDepartmentsQueryDto } from './dto/list-production-departments-query.dto.js';
@@ -12,6 +13,7 @@ import {
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+import { assertUserAvailableAsDepartmentHead } from '../team/production-team.service.js';
 
 export class ProductionDepartmentService {
   private readonly departmentRepository: Repository<ProductionDepartmentEntity>;
@@ -34,6 +36,7 @@ export class ProductionDepartmentService {
 
     const qb = this.departmentRepository
       .createQueryBuilder('dept')
+      .leftJoinAndSelect('dept.headUser', 'headUser')
       .where('dept.deletedAt IS NULL');
 
     if (query.search && query.search.trim() !== '') {
@@ -90,6 +93,8 @@ export class ProductionDepartmentService {
         code: dept.code,
         description: dept.description,
         isActive: dept.isActive,
+        headUserId: dept.headUserId,
+        headUserName: dept.headUser?.fullName || null,
         yardCount: counts.total,
         activeYardCount: counts.active,
         createdAt: dept.createdAt,
@@ -109,6 +114,7 @@ export class ProductionDepartmentService {
   async getDepartmentById(id: string): Promise<SafeProductionDepartmentOutput> {
     const dept = await this.departmentRepository.findOne({
       where: { id, deletedAt: IsNull() },
+      relations: { headUser: true },
     });
 
     if (!dept) {
@@ -133,6 +139,8 @@ export class ProductionDepartmentService {
       code: dept.code,
       description: dept.description,
       isActive: dept.isActive,
+      headUserId: dept.headUserId,
+      headUserName: dept.headUser?.fullName || null,
       yardCount: Number(yardCounts?.totalCount) || 0,
       activeYardCount: Number(yardCounts?.activeCount) || 0,
       createdAt: dept.createdAt,
@@ -143,56 +151,75 @@ export class ProductionDepartmentService {
   async createDepartment(dto: CreateProductionDepartmentDto): Promise<SafeProductionDepartmentOutput> {
     const normalizedCode = dto.code.trim().toUpperCase();
 
-    // 1. Check uniqueness including soft-deleted departments
-    const existingCode = await this.departmentRepository
-      .createQueryBuilder('dept')
-      .withDeleted()
-      .where('dept.code = :code', { code: normalizedCode })
-      .getOne();
+    return await AppDataSource.transaction(async (manager) => {
+      const deptRepo = manager.getRepository(ProductionDepartmentEntity);
 
-    if (existingCode) {
-      throw new ConflictError(
-        'رمز قسم الإنتاج مستخدم مسبقاً',
-        'PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS'
-      );
-    }
+      // 1. Check code uniqueness including soft-deleted departments
+      const existingCode = await deptRepo
+        .createQueryBuilder('dept')
+        .withDeleted()
+        .where('dept.code = :code', { code: normalizedCode })
+        .getOne();
 
-    try {
-      const department = this.departmentRepository.create({
-        name: dto.name.trim(),
-        code: normalizedCode,
-        description: dto.description ?? null,
-        isActive: dto.isActive ?? true,
-      });
-
-      const saved = await this.departmentRepository.save(department);
-
-      return {
-        id: saved.id,
-        name: saved.name,
-        code: saved.code,
-        description: saved.description,
-        isActive: saved.isActive,
-        yardCount: 0,
-        activeYardCount: 0,
-        createdAt: saved.createdAt,
-        updatedAt: saved.updatedAt,
-      };
-    } catch (err: unknown) {
-      if (
-        typeof err === 'object' &&
-        err !== null &&
-        'code' in err &&
-        ((err as { code: string }).code === 'ER_DUP_ENTRY' ||
-          ('errno' in err && (err as { errno: number }).errno === 1062))
-      ) {
+      if (existingCode) {
         throw new ConflictError(
           'رمز قسم الإنتاج مستخدم مسبقاً',
           'PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS'
         );
       }
-      throw err;
-    }
+
+      // 2. Lock & Validate Head User using shared helper (Protocol step: lock user row)
+      const headUser = await assertUserAvailableAsDepartmentHead(manager, dto.headUserId);
+
+      try {
+        const department = deptRepo.create({
+          name: dto.name.trim(),
+          code: normalizedCode,
+          description: dto.description ?? null,
+          isActive: dto.isActive ?? true,
+          headUserId: headUser.id,
+        });
+
+        const saved = await deptRepo.save(department);
+
+        return {
+          id: saved.id,
+          name: saved.name,
+          code: saved.code,
+          description: saved.description,
+          isActive: saved.isActive,
+          headUserId: saved.headUserId,
+          headUserName: headUser.fullName,
+          yardCount: 0,
+          activeYardCount: 0,
+          createdAt: saved.createdAt,
+          updatedAt: saved.updatedAt,
+        };
+      } catch (err: unknown) {
+        if (
+          typeof err === 'object' &&
+          err !== null &&
+          'code' in err &&
+          ((err as { code: string }).code === 'ER_DUP_ENTRY' ||
+            ('errno' in err && (err as { errno: number }).errno === 1062))
+        ) {
+          const errMsg = 'message' in err && typeof (err as { message: string }).message === 'string'
+            ? (err as { message: string }).message
+            : '';
+          if (errMsg.includes('UQ_production_department_head_user') || errMsg.includes('head_user_id')) {
+            throw new ConflictError(
+              'المستخدم المحدد هو رئيس قسم إنتاج آخر ولا يمكن تعيينه رئيساً لأكثر من قسم',
+              'PRODUCTION_USER_ALREADY_DEPARTMENT_HEAD'
+            );
+          }
+          throw new ConflictError(
+            'رمز قسم الإنتاج مستخدم مسبقاً',
+            'PRODUCTION_DEPARTMENT_CODE_ALREADY_EXISTS'
+          );
+        }
+        throw err;
+      }
+    });
   }
 
   async updateDepartment(
@@ -305,6 +332,23 @@ export class ProductionDepartmentService {
         );
       }
 
+      // Check active engineers rule: Cannot delete department if it has active engineers
+      const engRepo = manager.getRepository(ProductionDepartmentEngineerEntity);
+      const activeEngineersCount = await engRepo.count({
+        where: {
+          departmentId: department.id,
+          isActive: true,
+        },
+      });
+
+      if (activeEngineersCount > 0) {
+        throw new BusinessRuleError(
+          'لا يمكن أرشفة القسم قبل إزالة تعيينات المهندسين منه',
+          'PRODUCTION_DEPARTMENT_HAS_ENGINEERS'
+        );
+      }
+
+      department.headUserId = null;
       department.deletedAt = new Date();
       department.isActive = false;
       await deptRepo.save(department);

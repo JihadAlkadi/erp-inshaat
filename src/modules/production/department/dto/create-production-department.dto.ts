@@ -1,4 +1,4 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, Length, Matches } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, IsUUID, Length, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class CreateProductionDepartmentDto {
@@ -32,4 +32,8 @@ export class CreateProductionDepartmentDto {
   @IsOptional()
   @IsBoolean({ message: 'حالة التفعيل يجب أن تكون قيمة منطقية' })
   isActive?: boolean;
+
+  @IsUUID('4', { message: 'يجب أن يكون معرف رئيس القسم بتنسيق UUID صالح' })
+  @IsNotEmpty({ message: 'رئيس القسم مطلوب' })
+  headUserId!: string;
 }

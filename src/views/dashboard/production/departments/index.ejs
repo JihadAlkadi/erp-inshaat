@@ -48,6 +48,7 @@
           <tr>
             <th class="ps-4 py-3">اسم القسم</th>
             <th class="py-3">الرمز التقني</th>
+            <th class="py-3">رئيس القسم</th>
             <th class="py-3 text-center">إجمالي الساحات</th>
             <th class="py-3 text-center">الساحات النشطة</th>
             <th class="py-3 text-center">الحالة</th>
@@ -75,6 +76,16 @@
                 <td>
                   <code class="bg-light text-dark px-2 py-1 rounded border"><%= dept.code %></code>
                 </td>
+                <td>
+                  <% if (dept.headUserName) { %>
+                    <span class="d-inline-flex align-items-center gap-1 text-dark fw-medium">
+                      <i class="fa-solid fa-user-tie text-primary small"></i>
+                      <span><%= dept.headUserName %></span>
+                    </span>
+                  <% } else { %>
+                    <span class="text-muted small">غير محدد</span>
+                  <% } %>
+                </td>
                 <td class="text-center">
                   <span class="badge bg-secondary-subtle text-secondary px-3 py-1 rounded-pill">
                     <%= dept.yardCount || 0 %>
@@ -101,6 +112,16 @@
                 </td>
                 <td class="py-3 text-center px-4">
                   <div class="d-inline-flex gap-1">
+                    <% if (canViewTeam || canManageTeam) { %>
+                      <a
+                        href="/production/departments/<%= dept.id %>/team"
+                        class="btn btn-sm btn-outline-info"
+                        title="إدارة فريق القسم والمهندسين"
+                      >
+                        <i class="fa-solid fa-users-gear"></i>
+                      </a>
+                    <% } %>
+
                     <% if (canUpdate) { %>
                       <a
                         href="/production/departments/<%= dept.id %>/edit"
@@ -157,7 +178,7 @@
             <% }); %>
           <% } else { %>
             <tr>
-              <td colspan="7" class="text-center py-5 text-muted">
+              <td colspan="8" class="text-center py-5 text-muted">
                 <i class="fa-solid fa-building-user fs-1 text-secondary mb-3 d-block"></i>
                 <p class="mb-0 fw-bold">لا توجد أقسام إنتاج مسجلة حالياً</p>
                 <% if (search) { %>

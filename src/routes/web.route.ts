@@ -7,6 +7,7 @@ import { userWebController } from '../modules/system/user/user.web.controller.js
 import { roleWebController } from '../modules/system/role/role.web.controller.js';
 import { productionDepartmentWebController } from '../modules/production/department/production-department.web.controller.js';
 import { productionYardWebController } from '../modules/production/yard/production-yard.web.controller.js';
+import { productionTeamWebController } from '../modules/production/team/production-team.web.controller.js';
 
 const webRouter: Router = Router();
 
@@ -150,6 +151,34 @@ webRouter.get(
   requirePermission(SystemPermission.PRODUCTION_DEPARTMENT_UPDATE),
   validateUuidParam('id'),
   productionDepartmentWebController.renderEditDepartmentForm
+);
+
+// GET /production/departments/:departmentId/team - Department Team Management Page (Protected)
+webRouter.get(
+  '/production/departments/:departmentId/team',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_VIEW),
+  validateUuidParam('departmentId'),
+  productionTeamWebController.renderDepartmentTeam
+);
+
+// GET /production/departments/:departmentId/team/engineers/create - Add Engineer Page (Protected)
+webRouter.get(
+  '/production/departments/:departmentId/team/engineers/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
+  validateUuidParam('departmentId'),
+  productionTeamWebController.renderAddEngineerForm
+);
+
+// GET /production/departments/:departmentId/team/engineers/:assignmentId/edit - Edit Engineer Yards Page (Protected)
+webRouter.get(
+  '/production/departments/:departmentId/team/engineers/:assignmentId/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE),
+  validateUuidParam('departmentId'),
+  validateUuidParam('assignmentId'),
+  productionTeamWebController.renderEditEngineerYardsForm
 );
 
 // GET /production/yards - Production Yards List (Protected)

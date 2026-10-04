@@ -13,6 +13,7 @@ import {
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+import { ProductionYardEngineerEntity } from '../team/entities/production-yard-engineer.entity.js';
 
 export class ProductionYardService {
   private readonly yardRepository: Repository<ProductionYardEntity>;
@@ -166,15 +167,74 @@ export class ProductionYardService {
   }
 
   async updateYard(id: string, dto: UpdateProductionYardDto): Promise<SafeProductionYardOutput> {
+    // 1. Pre-read Yard outside transaction to discover involved department IDs
+    const unverifiedYard = await this.yardRepository.findOne({
+      where: { id, deletedAt: IsNull() },
+      select: { id: true, departmentId: true, isActive: true },
+    });
+
+    if (!unverifiedYard) {
+      throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+    }
+
     return await AppDataSource.transaction(async (manager) => {
       const yardRepo = manager.getRepository(ProductionYardEntity);
       const deptRepo = manager.getRepository(ProductionDepartmentEntity);
+      const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
-      // 1. Lock Target Yard
+      // 2. Determine involved Departments & Lock in deterministic ascending order (Protocol step 1)
+      const sourceDepartmentId = unverifiedYard.departmentId;
+      const targetDepartmentId =
+        dto.departmentId !== undefined && dto.departmentId !== sourceDepartmentId
+          ? dto.departmentId
+          : undefined;
+
+      const sortedDeptIds = [
+        ...new Set(
+          targetDepartmentId
+            ? [sourceDepartmentId, targetDepartmentId]
+            : [sourceDepartmentId]
+        ),
+      ].sort();
+
+      const lockedDepartments = new Map<string, ProductionDepartmentEntity>();
+
+      for (const deptId of sortedDeptIds) {
+        const department = await deptRepo
+          .createQueryBuilder('dept')
+          .setLock('pessimistic_write')
+          .where('dept.id = :deptId', { deptId })
+          .andWhere('dept.deletedAt IS NULL')
+          .getOne();
+
+        if (department) {
+          lockedDepartments.set(department.id, department);
+        }
+      }
+
+      const sourceDepartment = lockedDepartments.get(sourceDepartmentId);
+      if (!sourceDepartment) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      const isMovingDepartment = targetDepartmentId !== undefined;
+      let targetDepartment = sourceDepartment;
+
+      if (isMovingDepartment) {
+        const foundTarget = lockedDepartments.get(targetDepartmentId);
+        if (!foundTarget || !foundTarget.isActive) {
+          throw new BusinessRuleError(
+            'قسم الإنتاج المستهدف غير موجود أو غير نشط',
+            'PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE'
+          );
+        }
+        targetDepartment = foundTarget;
+      }
+
+      // 3. Lock Target Yard (Protocol step 2)
       const yard = await yardRepo
         .createQueryBuilder('yard')
         .setLock('pessimistic_write')
-        .leftJoinAndSelect('yard.department', 'department')
         .where('yard.id = :id', { id })
         .andWhere('yard.deletedAt IS NULL')
         .getOne();
@@ -183,35 +243,40 @@ export class ProductionYardService {
         throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
       }
 
-      let currentDepartment = yard.department;
-
-      // 2. If moving to another department, validate & lock target department
-      if (dto.departmentId !== undefined && dto.departmentId !== yard.departmentId) {
-        currentDepartment = await this.departmentService.findAssignableDepartmentForUpdate(
-          dto.departmentId,
-          manager
+      // Revalidate that yard's departmentId did not change concurrently from pre-read
+      if (yard.departmentId !== sourceDepartmentId) {
+        throw new BusinessRuleError(
+          'تم تعديل قسم الساحة بالتوازي، يرجى إعادة المحاولة',
+          'PRODUCTION_YARD_CONCURRENTLY_CHANGED'
         );
-        yard.departmentId = currentDepartment.id;
-        yard.department = currentDepartment;
       }
 
-      // 3. If reactivating yard (isActive: true), ensure parent department is active
+      // 4. Invariant: If moving to another department, verify no assigned engineers
+      if (isMovingDepartment) {
+        const assignedCount = await yardEngRepo.count({
+          where: { yardId: yard.id },
+        });
+
+        if (assignedCount > 0) {
+          throw new BusinessRuleError(
+            'لا يمكن نقل الساحة إلى قسم آخر لأنها مسندة لمهندسين حالياً',
+            'PRODUCTION_YARD_HAS_ENGINEERS'
+          );
+        }
+
+        yard.departmentId = targetDepartment.id;
+      }
+
+      // 5. Invariant: If reactivating yard (isActive: true), ensure active parent department
       const willBeActive = dto.isActive !== undefined ? dto.isActive : yard.isActive;
       if (willBeActive && !yard.isActive) {
-        const parentDept = await deptRepo
-          .createQueryBuilder('dept')
-          .setLock('pessimistic_write')
-          .where('dept.id = :deptId', { deptId: yard.departmentId })
-          .andWhere('dept.deletedAt IS NULL')
-          .getOne();
-
-        if (!parentDept || !parentDept.isActive) {
+        const parentDept = targetDepartment;
+        if (!parentDept.isActive) {
           throw new BusinessRuleError(
             'لا يمكن تفعيل الساحة لأن قسم الإنتاج التابع له معطل أو غير نشط',
             'PRODUCTION_DEPARTMENT_NOT_FOUND_OR_INACTIVE'
           );
         }
-        currentDepartment = parentDept;
       }
 
       if (dto.name !== undefined) {
@@ -235,7 +300,7 @@ export class ProductionYardService {
       return {
         id: updated.id,
         departmentId: updated.departmentId,
-        departmentName: currentDepartment?.name || '',
+        departmentName: targetDepartment.name,
         name: updated.name,
         code: updated.code,
         capacity: updated.capacity,
@@ -248,9 +313,34 @@ export class ProductionYardService {
   }
 
   async softDeleteYard(id: string): Promise<void> {
+    // 1. Pre-read Yard outside transaction to discover departmentId
+    const unverifiedYard = await this.yardRepository.findOne({
+      where: { id, deletedAt: IsNull() },
+      select: { id: true, departmentId: true },
+    });
+
+    if (!unverifiedYard) {
+      throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+    }
+
     await AppDataSource.transaction(async (manager) => {
       const yardRepo = manager.getRepository(ProductionYardEntity);
+      const deptRepo = manager.getRepository(ProductionDepartmentEntity);
+      const yardEngRepo = manager.getRepository(ProductionYardEngineerEntity);
 
+      // 2. Lock Department (Protocol step 1)
+      const department = await deptRepo
+        .createQueryBuilder('dept')
+        .setLock('pessimistic_write')
+        .where('dept.id = :deptId', { deptId: unverifiedYard.departmentId })
+        .andWhere('dept.deletedAt IS NULL')
+        .getOne();
+
+      if (!department) {
+        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+      }
+
+      // 3. Lock Target Yard (Protocol step 2)
       const yard = await yardRepo
         .createQueryBuilder('yard')
         .setLock('pessimistic_write')
@@ -260,6 +350,26 @@ export class ProductionYardService {
 
       if (!yard) {
         throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
+      }
+
+      // Revalidate parent department consistency
+      if (yard.departmentId !== unverifiedYard.departmentId) {
+        throw new BusinessRuleError(
+          'تم تعديل قسم الساحة بالتوازي، يرجى إعادة المحاولة',
+          'PRODUCTION_YARD_CONCURRENTLY_CHANGED'
+        );
+      }
+
+      // 4. Invariant: Cannot delete yard if assigned to engineers
+      const assignedCount = await yardEngRepo.count({
+        where: { yardId: yard.id },
+      });
+
+      if (assignedCount > 0) {
+        throw new BusinessRuleError(
+          'لا يمكن أرشفة الساحة لأنها مسندة لمهندسين حالياً',
+          'PRODUCTION_YARD_HAS_ENGINEERS'
+        );
       }
 
       yard.deletedAt = new Date();

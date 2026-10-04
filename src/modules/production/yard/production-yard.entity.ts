@@ -6,11 +6,13 @@ import {
   UpdateDateColumn,
   DeleteDateColumn,
   ManyToOne,
+  OneToMany,
   JoinColumn,
   Index,
   Check,
 } from 'typeorm';
 import { ProductionDepartmentEntity } from '../department/production-department.entity.js';
+import { ProductionYardEngineerEntity } from '../team/entities/production-yard-engineer.entity.js';
 
 @Entity('production_yard')
 @Check('CHK_production_yard_capacity', '`capacity` >= 1')
@@ -57,4 +59,10 @@ export class ProductionYardEntity {
   })
   @JoinColumn({ name: 'department_id' })
   department!: ProductionDepartmentEntity;
+
+  @OneToMany(() => ProductionYardEngineerEntity, (ye) => ye.yard, {
+    eager: false,
+    cascade: false,
+  })
+  engineerMappings!: ProductionYardEngineerEntity[];
 }
