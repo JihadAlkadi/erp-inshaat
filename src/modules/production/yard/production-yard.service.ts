@@ -203,11 +203,17 @@ export class ProductionYardService {
     dto: UpdateProductionYardDto,
     policy: ResolvedProductionAccessPolicy
   ): Promise<SafeProductionYardOutput> {
-    // 1. Pre-read Yard outside transaction to discover involved department IDs
-    const unverifiedYard = await this.yardRepository.findOne({
-      where: { id, deletedAt: IsNull() },
-      select: { id: true, departmentId: true, isActive: true },
-    });
+    // 1. Scoped pre-read Yard outside transaction to reject out-of-scope requests before acquiring locks
+    const preReadQb = this.yardRepository
+      .createQueryBuilder('yard')
+      .where('yard.id = :id', { id })
+      .andWhere('yard.deletedAt IS NULL');
+
+    applyYardAccessScope(preReadQb, policy, 'yard');
+
+    const unverifiedYard = await preReadQb
+      .select(['yard.id', 'yard.departmentId', 'yard.isActive'])
+      .getOne();
 
     if (!unverifiedYard) {
       throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
@@ -364,11 +370,17 @@ export class ProductionYardService {
     id: string,
     policy: ResolvedProductionAccessPolicy
   ): Promise<void> {
-    // 1. Pre-read Yard outside transaction to discover departmentId
-    const unverifiedYard = await this.yardRepository.findOne({
-      where: { id, deletedAt: IsNull() },
-      select: { id: true, departmentId: true },
-    });
+    // 1. Scoped pre-read Yard outside transaction to reject out-of-scope requests before acquiring locks
+    const preReadQb = this.yardRepository
+      .createQueryBuilder('yard')
+      .where('yard.id = :id', { id })
+      .andWhere('yard.deletedAt IS NULL');
+
+    applyYardAccessScope(preReadQb, policy, 'yard');
+
+    const unverifiedYard = await preReadQb
+      .select(['yard.id', 'yard.departmentId'])
+      .getOne();
 
     if (!unverifiedYard) {
       throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
@@ -388,7 +400,7 @@ export class ProductionYardService {
         .getOne();
 
       if (!department) {
-        throw new NotFoundError('قسم الإنتاج غير موجود', 'PRODUCTION_DEPARTMENT_NOT_FOUND');
+        throw new NotFoundError('ساحة الإنتاج غير موجودة', 'PRODUCTION_YARD_NOT_FOUND');
       }
 
       // 3. Lock Target Yard (Protocol step 2)

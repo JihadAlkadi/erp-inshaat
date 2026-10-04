@@ -56,17 +56,28 @@ export class ProductionResponsibilityResolver {
 
     if (engineerAssignment) {
       engineerDepartmentId = engineerAssignment.departmentId;
+      const yardMappings = engineerAssignment.yardMappings ?? [];
 
       let hasMappingCorruption = false;
 
-      // Invariant: Engineer department must exist and not be soft-deleted
-      if (!engineerAssignment.department || engineerAssignment.department.deletedAt !== null) {
+      // Invariant A: Engineer department relation must exist
+      if (!engineerAssignment.department) {
         hasMappingCorruption = true;
       }
 
-      // Invariant: Every yard mapping must exist, be non-deleted, and belong to the engineer's department
-      if (!hasMappingCorruption && engineerAssignment.yardMappings) {
-        for (const ym of engineerAssignment.yardMappings) {
+      // Invariant B: Engineer department must not be soft-deleted
+      if (!hasMappingCorruption && engineerAssignment.department.deletedAt !== null) {
+        hasMappingCorruption = true;
+      }
+
+      // Invariant C: Must have at least one yard mapping (Active engineer with zero yard mappings = corrupted state)
+      if (!hasMappingCorruption && yardMappings.length === 0) {
+        hasMappingCorruption = true;
+      }
+
+      // Invariant D, E, F: Every yard mapping must contain a non-deleted yard belonging to the engineer's department
+      if (!hasMappingCorruption) {
+        for (const ym of yardMappings) {
           if (
             !ym.yard ||
             ym.yard.deletedAt !== null ||
@@ -81,9 +92,9 @@ export class ProductionResponsibilityResolver {
       if (hasMappingCorruption) {
         isConsistent = false;
         engineerYardIds = [];
-      } else if (engineerAssignment.yardMappings) {
+      } else {
         engineerYardIds = Array.from(
-          new Set(engineerAssignment.yardMappings.map((m) => m.yard.id))
+          new Set(yardMappings.map((m) => m.yard.id))
         ).sort();
       }
     }
