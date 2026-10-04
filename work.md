@@ -11,10 +11,13 @@
     - `الصلاحيات والوصول (Permissions)`: دمج واجهة إدارة الصلاحيات وقواعد الوصول الحالية داخل إطار الملف الإداري مع شريط السياق التشغيلي.
     - `المسؤولية التشغيلية (Production Responsibility)`: عرض القسم والساحات المسندة للمستخدم في تطبيق الإنتاج مع التحقق من نطاق الوصول وحظر تسريب البيانات.
   - **خدمة استعلام المسؤولية التشغيلية الآمنة `ProductionUserResponsibilityReadService`**:
-    - ترجع حالة المسؤولية (`VISIBLE` | `NONE` | `NOT_VISIBLE` | `INCONSISTENT`) بالاعتماد على `ProductionResponsibilityResolver.resolveByUserId`.
-    - تفرض التحقق من نطاق القسم المستهدف عبر `canAccessDepartment(viewPolicy, targetDeptId)`.
-    - تخفي بيانات الأقسام والساحات وتعيد `NOT_VISIBLE` في حال كان القسم خارج نطاق وصول الفاعل لمنع تسريب المعلومات.
-    - تفحص إمكانية إدارة الفريق عبر `canAccessDepartment(managePolicy, targetDeptId)` لعرض زر إدارة الفريق المشروط.
+    - ترجع حالة المسؤولية (`VISIBLE` | `NONE` | `NOT_VISIBLE` | `INCONSISTENT`) بالاعتماد على `ProductionResponsibilityResolver.resolveByUserId` مع إعادة التحقق الحتمي للبيانات المقروءة ضد الـ TOCTOU.
+    - تفرض التحقق من نطاق القسم المستهدف دائماً عبر `canAccessDepartment(viewPolicy, targetDeptId)` ولا تعتمد إطلاقاً على `allowAll` بمفرده لضمان تفوق قواعد `DENY`.
+    - تعيد التحقق من ملكية رئاسة القسم (`dept.id = targetDeptId`, `dept.headUserId = targetUserId`, `dept.deletedAt IS NULL`) وإعادة فحص صلاحية القسم قبل العرض.
+    - تقيد استعلام المهندس الثاني بمعرف المستخدم والحالة النشطة والقسم المصرح به (`eng.userId = targetUserId`, `eng.isActive = true`, `eng.departmentId = targetDeptId`) لمنع تسريب أقسام أخرى في حال إعادة الإسناد المتزامن.
+    - تتحقق من صحة كافة ارتباطات الساحات دون فلترة صامتة؛ وفي حال وجود ساحة تتبع قسماً آخر يتم فحص صلاحية كلا القسمين ولا تُعرض حالة عدم الاتساق `INCONSISTENT` إلا إذا كان كلا القسمين ضمن نطاق وصول الفاعل وإلا تفشل مغلقة `NOT_VISIBLE`.
+    - تحظر كشف حالة انعدام المسؤولية `NONE` إلا إذا امتلك الفاعل وصولاً شاملاً غير مقيد للأقسام (`hasUnrestrictedDepartmentVisibility(viewPolicy)`)؛ والمشاهد المقيد يحصل على `NOT_VISIBLE` لمنع التمييز بين انعدام المسؤولية ووجودها خارج النطاق.
+    - تفحص إمكانية إدارة الفريق عبر `canAccessDepartment(managePolicy, targetDeptId)` لعرض زر وإجراءات إدارة الفريق المشروطة.
   - **تجميع التنبيهات الذكي (`Smart Derived Warnings`)**:
     - اشتقاق تنبيهات فورية غير مخزنة في قاعدة البيانات لحالات الحساب المعطل، الصلاحيات المفعلة بدون منح، القواعد غير الصالحة، وعدم اتساق المسؤولية التشغيلية.
   - **مسارات الويب المعتمدة**:
@@ -1289,7 +1292,7 @@ src/
      - سجل الدور المستهدف في `system_role` هو نقطة التسلسل المركزية (`Serialization Point`) لجميع عمليات إسناد الأدوار ودورة حياة الأدوار.
      - كل عملية تسند دوراً لمستخدم (إنشاء مستخدم جديد `createUser` أو تعديل دور مستخدم `updateUser`)، وكل عملية تغير دورة حياة الدور (تعطيل الدور `updateRole` أو أرشفة الدور `softDeleteRole`)، يجب أن تنفذ داخل Transaction وتحصل على قفل تشاؤمي للكتابة (`setLock('pessimistic_write')`) على نفس سجل الدور المستهدف.
      - هذا البروتوكول يضمن رياضياً وتزامنياً استحالة وجود أي مستخدم غير محذوف مرتبط بدور معطل أو محذوف ناعماً تحت أي ظروف تزامن متوازية.
-   - نطاق إدارة صلاحيات الدور: واجهة إدارة صلاحيات الأدوار تدير فقط الصلاحيات الشاملة (`ALLOW ALL`) للدور، ويُمنع حذف أو إلغاء قواعد الحظر (`DENY`) أو النطاقات المخصصة أو المنح المباشرة للمستخدمين.
+   - نطاق إدارة صلاحيات الدور: واجهة إدارة صلاحيات الأدوار تدير حالة تفعيل المنحة (`PermissionGrant.isActive`)، وتعدد قواعد الوصول (`0..N AccessRules`) بأثر `ALLOW` أو `DENY`، والنطاق الشامل `ALL`، والنطاقات التشغيلية والمحددة للأقسام والساحات وفق قيود سجل القدرات (`Capability Registry`)، ولا تدير المنح المباشرة للمستخدمين.
    - معالجة أخطاء فرادة المفاتيح في قاعدة البيانات: يتم التقاط أخطاء التزامن الخاصة بفرادة رقم الهاتف (`USER_PHONE_ALREADY_EXISTS`) وفرادة رمز الدور (`ROLE_CODE_ALREADY_EXISTS`) وتحويلها إلى أخطاء تضارب آمنة (`ConflictError` 409) دون إظهار استثناءات قاعدة البيانات الخام (500).
    - إخفاء العناصر والأزرار في واجهة المستخدم (`UI Visibility`) ليس بديلاً عن الصلاحيات الأمنية؛ يجب على الـ APIs التحقق الصارم من الصلاحيات.
    - فرادية رقم الهاتف (`Unique Phone`): يُمنع تكرار رقم الهاتف مع أي حساب موجود في النظام بما في ذلك الحسابات المحذوفة ناعماً.
@@ -1399,9 +1402,9 @@ src/
 - Production Yard Service with Positive Capacity Invariant, Department Locking, and Invariants (`src/modules/production/yard/production-yard.service.ts`).
 - Production API & Web Controllers with EJS Views & Native Fetch Client Scripts (`src/public/js/production-departments.js`, `src/public/js/production-yards.js`).
 - Centralized Direct User Permissions Management Module (`src/modules/system/user/user-permission.service.ts`).
-- Centralized Role Management Module & Global Permission Assignment (`src/modules/system/role/`, `src/modules/system/permission/`).
+- Centralized Role Management & Permission/Access Rule Administration (`src/modules/system/role/`, `src/modules/system/permission/`).
 - Role Service with Assignment Count, Pessimistic Lock Protocol, Code Immutability, and Safe Description Handling (`src/modules/system/role/role.service.ts`).
-- Role Global Permission Service (`src/modules/system/role/role-permission.service.ts`).
+- Role Permission & Access Rule Administration Service (`src/modules/system/role/role-permission.service.ts`).
 - Permission Lookup Service (`src/modules/system/permission/permission.service.ts`).
 - Centralized User Management Module (`src/modules/system/user/`).
 - User Service with Concurrency Phone Uniqueness Hardening, Pessimistic Locking on Role Assignment and Invariants (`src/modules/system/user/user.service.ts`).
