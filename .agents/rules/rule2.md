@@ -18,6 +18,16 @@ Authorization = ماذا يستطيع؟
 - يمكن للمستخدم الواحد امتلاك عدة جلسات متزامنة نشطة.
 - تخضع صلاحية الجلسة لحالتها (`is_active` و `revoked_at` و `expires_at`).
 - تُمنع العلاقات التلقائية `eager: true` على كيانات الجلسات.
+- حماية CSRF المرتبطة بالجلسة (Session-Bound CSRF Protection):
+  - يبقى الـ JWT محمياً داخل `HttpOnly` Cookie ولا يُعرض نهائياً لبيئة JavaScript.
+  - رمز الـ CSRF مستقل تماماً عن الـ JWT، غير مخزن في قاعدة البيانات، ومشتق عبر HMAC-SHA256 بمفتاح مخصص `AUTH_CSRF_SECRET` مع معرف الجلسة `sessionId`.
+  - تخضع جميع الطرق غير الآمنة (`POST`, `PUT`, `PATCH`, `DELETE`, etc.) للتحقق الإلزامي من ترويسة `X-CSRF-Token` في الطلبات الموثقة.
+  - الطرق الآمنة والقراءة فقط (`GET`, `HEAD`, `OPTIONS`) معفاة من فحص الـ CSRF.
+  - مسار تسجيل الدخول (`POST /api/auth/login`) معفى من رمز الـ CSRF لكونه غير موثق بعد، بينما مسار تسجيل الخروج (`POST /api/auth/logout`) محمي برمز CSRF الجلسة.
+  - فحص الـ CSRF يتم حصراً بعد نجاح التحقق من المصادقة (Authentication First)؛ والطلبات غير الموثقة تفشل برمز 401 دون تسريب أخطاء CSRF.
+  - خاصية `SameSite=Lax` تبقى خط دفاع إضافي (Defense in Depth).
+  - مقارنة رموز الـ CSRF تتم حصراً عبر دوال التوقيت الآمن (`crypto.timingSafeEqual`).
+  - يُمنع كلياً تسجيل (Logging) رموز الـ CSRF أو المفاتيح السرية أو قيم الكوكيز الخام في السجلات.
 
 قواعد محرك الصلاحيات (Authorization Engine Rules):
 - الرفض الافتراضي (Default Deny / Fail Closed): غياب أي قاعدة `ALLOW` صريحة يعني رفض الوصول تلقائياً.

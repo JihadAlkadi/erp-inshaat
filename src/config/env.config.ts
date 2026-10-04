@@ -15,6 +15,7 @@ export interface EnvConfig {
   };
   auth: {
     jwtSecret: string;
+    csrfSecret: string;
     sessionTtlDays: number;
     sessionTtlMs: number;
   };
@@ -47,6 +48,13 @@ function validateEnv(): EnvConfig {
     throw new Error('AUTH_JWT_SECRET must be at least 32 characters long.');
   }
 
+  const authCsrfSecret = process.env.AUTH_CSRF_SECRET;
+  if (!authCsrfSecret || authCsrfSecret.trim() === '') {
+    missingVars.push('AUTH_CSRF_SECRET');
+  } else if (authCsrfSecret.length < 32) {
+    throw new Error('AUTH_CSRF_SECRET must be at least 32 characters long.');
+  }
+
   if (missingVars.length > 0) {
     throw new Error(
       `Missing or invalid required environment variables: ${missingVars.join(', ')}`
@@ -71,6 +79,7 @@ function validateEnv(): EnvConfig {
     },
     auth: {
       jwtSecret: authJwtSecret!,
+      csrfSecret: authCsrfSecret!,
       sessionTtlDays: validSessionTtlDays,
       sessionTtlMs,
     },

@@ -149,7 +149,7 @@ function handleDepartmentStatusToggle(deptId, newStatus, deptName, activeYards) 
 }
 
 function performDepartmentStatusToggle(deptId, newStatus) {
-  fetch('/api/production/departments/' + encodeURIComponent(deptId), {
+  (window.erpFetch || fetch)('/api/production/departments/' + encodeURIComponent(deptId), {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
@@ -240,7 +240,7 @@ function handleDepartmentSoftDelete(deptId, deptName, yardCount) {
 }
 
 function performDepartmentSoftDelete(deptId) {
-  fetch('/api/production/departments/' + encodeURIComponent(deptId), {
+  (window.erpFetch || fetch)('/api/production/departments/' + encodeURIComponent(deptId), {
     method: 'DELETE',
     headers: {
       'Accept': 'application/json',
@@ -353,7 +353,7 @@ document.addEventListener('DOMContentLoaded', function() {
         isActive: isActiveCheck ? isActiveCheck.checked : true,
       };
 
-      fetch('/api/production/departments', {
+      (window.erpFetch || fetch)('/api/production/departments', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -424,7 +424,7 @@ document.addEventListener('DOMContentLoaded', function() {
         payload.isActive = isActiveCheck.checked;
       }
 
-      fetch('/api/production/departments/' + encodeURIComponent(deptId), {
+      (window.erpFetch || fetch)('/api/production/departments/' + encodeURIComponent(deptId), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

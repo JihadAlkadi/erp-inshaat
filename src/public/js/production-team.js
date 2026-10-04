@@ -132,7 +132,7 @@ function handleRemoveEngineer(departmentId, assignmentId, engineerName) {
 }
 
 function performRemoveEngineer(departmentId, assignmentId) {
-  fetch('/api/production/departments/' + encodeURIComponent(departmentId) + '/team/engineers/' + encodeURIComponent(assignmentId), {
+  (window.erpFetch || fetch)('/api/production/departments/' + encodeURIComponent(departmentId) + '/team/engineers/' + encodeURIComponent(assignmentId), {
     method: 'DELETE',
     headers: {
       'Accept': 'application/json',
@@ -216,7 +216,7 @@ document.addEventListener('DOMContentLoaded', function() {
       var saveBtn = document.getElementById('saveHeadBtn');
       setButtonLoading(saveBtn, true, 'جاري الحفظ...');
 
-      fetch('/api/production/departments/' + encodeURIComponent(deptId) + '/team/head', {
+      (window.erpFetch || fetch)('/api/production/departments/' + encodeURIComponent(deptId) + '/team/head', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -275,7 +275,7 @@ document.addEventListener('DOMContentLoaded', function() {
       var submitBtn = document.getElementById('submitBtn');
       setButtonLoading(submitBtn, true, 'جاري الإسناد...');
 
-      fetch('/api/production/departments/' + encodeURIComponent(deptId) + '/team/engineers', {
+      (window.erpFetch || fetch)('/api/production/departments/' + encodeURIComponent(deptId) + '/team/engineers', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -330,7 +330,7 @@ document.addEventListener('DOMContentLoaded', function() {
       var submitBtn = document.getElementById('submitBtn');
       setButtonLoading(submitBtn, true, 'جاري الحفظ...');
 
-      fetch('/api/production/departments/' + encodeURIComponent(deptId) + '/team/engineers/' + encodeURIComponent(assignmentId), {
+      (window.erpFetch || fetch)('/api/production/departments/' + encodeURIComponent(deptId) + '/team/engineers/' + encodeURIComponent(assignmentId), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

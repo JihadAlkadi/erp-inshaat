@@ -131,7 +131,7 @@ function handleYardStatusToggle(yardId, newStatus, yardName) {
 }
 
 function performYardStatusToggle(yardId, newStatus) {
-  fetch('/api/production/yards/' + encodeURIComponent(yardId), {
+  (window.erpFetch || fetch)('/api/production/yards/' + encodeURIComponent(yardId), {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
@@ -206,7 +206,7 @@ function handleYardSoftDelete(yardId, yardName) {
 }
 
 function performYardSoftDelete(yardId) {
-  fetch('/api/production/yards/' + encodeURIComponent(yardId), {
+  (window.erpFetch || fetch)('/api/production/yards/' + encodeURIComponent(yardId), {
     method: 'DELETE',
     headers: {
       'Accept': 'application/json',
@@ -319,7 +319,7 @@ document.addEventListener('DOMContentLoaded', function() {
         isActive: isActiveCheck ? isActiveCheck.checked : true,
       };
 
-      fetch('/api/production/yards', {
+      (window.erpFetch || fetch)('/api/production/yards', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -394,7 +394,7 @@ document.addEventListener('DOMContentLoaded', function() {
         payload.isActive = isActiveCheck.checked;
       }
 
-      fetch('/api/production/yards/' + encodeURIComponent(yardId), {
+      (window.erpFetch || fetch)('/api/production/yards/' + encodeURIComponent(yardId), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

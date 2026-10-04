@@ -3,6 +3,22 @@
 ## Current Project State
 
 تم تنفيذ مرحلة الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile) ومرحلة إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration) ومرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات (Role Management & Permission Administration) ومرحلة إدارة المستخدمين (User Management) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل:
+- **حماية CSRF المرتبطة بالجلسة (Session-Bound CSRF Protection)** (`src/modules/system/auth/csrf.service.ts`, `src/modules/system/auth/csrf.middleware.ts`, `src/modules/system/auth/auth.middleware.ts`):
+  - **نموذج أمني مشتق من الجلسة (Session-Bound HMAC Token)**:
+    - توليد رمز CSRF باستخدام HMAC-SHA256 مع مفتاح سري مستقل وإلزامي `AUTH_CSRF_SECRET` (32 حرفاً على الأقل) مرتبط بمعرف الجلسة الموثقة `sessionId` (`erp-csrf-v1:${sessionId}`).
+    - الرمز غير مخزن في قاعدة البيانات ولا يحتوي على الـ JWT ولا يسمح باشتقاقه، ولا يُعرض الـ JWT للـ JavaScript إطلاقاً.
+    - التحقق من الرمز Server-side باستخدام `crypto.timingSafeEqual` بعد مطابقة الطول لمنع هجمات التوقيت (Timing Attacks).
+  - **الاستثناءات والطرائق المحمية (Safe Methods & Endpoint Invariants)**:
+    - إعفاء الطرق الآمنة فقط: `GET`, `HEAD`, `OPTIONS`.
+    - حماية مركزية تلقائية لكافة الطرق غير الآمنة (Mutations: `POST`, `PUT`, `PATCH`, `DELETE`) عبر `requireApiAuth` بعد نجاح المصادقة والحصول على `req.user.sessionId`.
+    - مسار تسجيل الدخول `POST /api/auth/login` مستثنى لكونه pre-authentication ويُحمى عبر معدل الطلبات (Rate Limiting).
+    - مسار تسجيل الخروج `POST /api/auth/logout` محمي برمز CSRF.
+    - الطلبات غير الموثقة لـ endpoints محمية ترجع 401 (فشل مصادقة) أولاً قبل فحص الـ CSRF لمنع كشف حالة الـ Token.
+    - أخطاء CSRF ترجع 403 برمز `CSRF_TOKEN_MISSING` أو `CSRF_TOKEN_INVALID`.
+  - **تكامل القوالب والعميل (EJS & Client erpFetch Integration)**:
+    - وسيط `requireWebAuth` يضع `res.locals.csrfToken` للمستخدم الموثق فقط ليتم تضمينه في `<meta name="csrf-token">` داخل لوحة التحكم.
+    - دالة العميل المركزية `window.erpFetch` في `src/public/js/app.js` تعتمد Native Fetch وتضمن حصر الرمز في نفس الـ Origin (`window.location.origin`) وإرساله عبر ترويسة `X-CSRF-Token` في الطرق غير الآمنة مع الحفاظ على الترويسات الأخرى والتعامل الآمن مع تسجيل الخروج.
+    - تحديث كافة نصوص العميل للعمليات التعديلية (`users.js`, `roles.js`, `user-permissions.js`, `production-departments.js`, `production-yards.js`, `production-team.js`) لاستخدام `window.erpFetch`.
 - **الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile)** (`src/modules/system/user/portfolio/`, `src/modules/production/team/production-user-responsibility-read.service.ts`):
   - **طبقة قراءة وتجميع (Read / Composition Layer)**: توفر مركزاً إدارياً شاملاً لفهم هوية المستخدم، حالة حسابه، دوره، ملخص صلاحياته، تنبيهات الأمان، ومسؤوليته التشغيلية في تطبيق الإنتاج دون تكرار أو مساس بمنطق الأعمال للوحدات المدمجة.
   - **أقسام الملف الإداري (Portfolio Tabs)**:
