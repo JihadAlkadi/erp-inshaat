@@ -698,156 +698,206 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Load Product Units (Fetch all pages without truncation)
+    /**
+     * Helper to fetch all product units across pages without truncation.
+     * Fails closed if any page fails, response is invalid, or pagination metadata is inconsistent.
+     */
+    async function fetchAllProductUnits(productId) {
+      const allUnits = [];
+      let page = 1;
+      let totalPages = 1;
+
+      while (page <= totalPages) {
+        const res = await fetch(
+          `/api/inventory/products/${encodeURIComponent(productId)}/units?page=${page}&limit=100`
+        );
+        if (!res.ok) {
+          throw new Error(`Failed to load product units (HTTP ${res.status})`);
+        }
+
+        let json;
+        try {
+          json = await res.json();
+        } catch (e) {
+          throw new Error('Invalid JSON received for product units');
+        }
+
+        if (!json || json.success !== true || !json.data || !Array.isArray(json.data.items)) {
+          throw new Error('Invalid response structure for product units');
+        }
+
+        const { items, page: resPage, totalPages: resTotalPages } = json.data;
+
+        if (
+          typeof resPage !== 'number' ||
+          typeof resTotalPages !== 'number' ||
+          resPage <= 0 ||
+          resTotalPages <= 0 ||
+          resPage !== page ||
+          resPage > resTotalPages
+        ) {
+          throw new Error('Inconsistent product unit pagination metadata');
+        }
+
+        totalPages = resTotalPages;
+        allUnits.push(...items);
+        page++;
+      }
+
+      return allUnits;
+    }
+
+    // Load Product Units (Fetch all pages without truncation, fail-closed)
     async function loadProductUnits() {
       if (!productUnitsTableBody) return;
 
-      productUnitsTableBody.textContent = '';
-      const loadingRow = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = 7;
-      td.className = 'text-center py-4 text-muted';
-      td.textContent = 'جاري تحميل وحدات القياس...';
-      loadingRow.appendChild(td);
-      productUnitsTableBody.appendChild(loadingRow);
+      const hadExistingData = currentUnitsList && currentUnitsList.length > 0;
+      if (!hadExistingData) {
+        productUnitsTableBody.textContent = '';
+        const loadingRow = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 7;
+        td.className = 'text-center py-4 text-muted';
+        td.textContent = 'جاري تحميل وحدات القياس...';
+        loadingRow.appendChild(td);
+        productUnitsTableBody.appendChild(loadingRow);
+      }
 
       try {
-        let allUnits = [];
-        let unitPage = 1;
-        let totalPages = 1;
+        const units = await fetchAllProductUnits(productId);
 
-        do {
-          const res = await fetch(`/api/inventory/products/${encodeURIComponent(productId)}/units?page=${unitPage}&limit=100`);
-          const json = await res.json();
-          if (json.success && json.data) {
-            allUnits = allUnits.concat(json.data.items);
-            totalPages = json.data.totalPages || 1;
-            unitPage++;
-          } else {
-            showAlert(json.message || 'فشل في تحميل وحدات المنتج');
-            break;
-          }
-        } while (unitPage <= totalPages);
-
-        productUnitsTableBody.textContent = '';
-        currentUnitsList = allUnits;
+        // Update currentUnitsList and UI only after complete success
+        currentUnitsList = units;
 
         if (unitsCountPill) unitsCountPill.textContent = String(currentUnitsList.length);
 
-          if (currentUnitsList.length === 0) {
-            const emptyRow = document.createElement('tr');
-            const emptyTd = document.createElement('td');
-            emptyTd.colSpan = 7;
-            emptyTd.className = 'text-center py-4 text-muted';
-            emptyTd.textContent = 'لا توجد وحدات معرّفة لهذا المنتج.';
-            emptyRow.appendChild(emptyTd);
-            productUnitsTableBody.appendChild(emptyRow);
-            return;
+        productUnitsTableBody.textContent = '';
+
+        if (currentUnitsList.length === 0) {
+          const emptyRow = document.createElement('tr');
+          const emptyTd = document.createElement('td');
+          emptyTd.colSpan = 7;
+          emptyTd.className = 'text-center py-4 text-muted';
+          emptyTd.textContent = 'لا توجد وحدات معرّفة لهذا المنتج.';
+          emptyRow.appendChild(emptyTd);
+          productUnitsTableBody.appendChild(emptyRow);
+          return;
+        }
+
+        currentUnitsList.forEach((unit) => {
+          const tr = document.createElement('tr');
+
+          // Name
+          const tdName = document.createElement('td');
+          tdName.className = 'ps-4 fw-bold';
+          tdName.textContent = unit.name;
+          tr.appendChild(tdName);
+
+          // Unit Type
+          const tdType = document.createElement('td');
+          if (unit.isBase) {
+            const baseBadge = document.createElement('span');
+            baseBadge.className = 'badge bg-success text-white';
+            baseBadge.textContent = 'الوحدة الأساسية';
+            tdType.appendChild(baseBadge);
+          } else {
+            const addBadge = document.createElement('span');
+            addBadge.className = 'badge bg-light text-muted border';
+            addBadge.textContent = 'وحدة إضافية';
+            tdType.appendChild(addBadge);
+          }
+          tr.appendChild(tdType);
+
+          // Formula
+          const tdFormula = document.createElement('td');
+          if (unit.isBase) {
+            tdFormula.className = 'text-muted';
+            tdFormula.textContent = 'مرجع القياس الأساسي';
+          } else {
+            const eqSpan = document.createElement('span');
+            eqSpan.className = 'fw-bold text-dark';
+            eqSpan.textContent = `1 ${unit.name} = ${unit.conversionQuantity} × ${unit.equivalentToUnitName || 'وحدة'}`;
+            tdFormula.appendChild(eqSpan);
+          }
+          tr.appendChild(tdFormula);
+
+          // Price
+          const tdPrice = document.createElement('td');
+          tdPrice.className = 'font-monospace fw-bold';
+          tdPrice.textContent = unit.price;
+          tr.appendChild(tdPrice);
+
+          // Barcode
+          const tdBarcode = document.createElement('td');
+          if (unit.barcode) {
+            const bcBadge = document.createElement('span');
+            bcBadge.className = 'badge bg-light text-dark border font-monospace';
+            bcBadge.textContent = unit.barcode;
+            tdBarcode.appendChild(bcBadge);
+          } else {
+            tdBarcode.className = 'text-muted';
+            tdBarcode.textContent = '--';
+          }
+          tr.appendChild(tdBarcode);
+
+          // Specifications
+          const tdSpecs = document.createElement('td');
+          if (unit.specifications && unit.specifications.length > 0) {
+            const specBadgesDiv = document.createElement('div');
+            specBadgesDiv.className = 'd-flex flex-wrap gap-1';
+            unit.specifications.forEach((s) => {
+              const sBadge = document.createElement('span');
+              sBadge.className = 'badge bg-light text-dark border';
+              sBadge.textContent = s.unit ? `${s.name}: ${s.value} ${s.unit}` : `${s.name}: ${s.value}`;
+              specBadgesDiv.appendChild(sBadge);
+            });
+            tdSpecs.appendChild(specBadgesDiv);
+          } else {
+            tdSpecs.className = 'text-muted';
+            tdSpecs.textContent = '--';
+          }
+          tr.appendChild(tdSpecs);
+
+          // Actions
+          const tdActions = document.createElement('td');
+          tdActions.className = 'text-end pe-4';
+
+          if (permissions.canUpdateProduct) {
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'btn btn-sm btn-outline-primary rounded-pill px-3 me-1';
+            editBtn.textContent = 'تعديل';
+            editBtn.addEventListener('click', () => openEditUnitModal(unit));
+            tdActions.appendChild(editBtn);
+
+            // Base unit cannot be deleted
+            if (!unit.isBase) {
+              const delBtn = document.createElement('button');
+              delBtn.type = 'button';
+              delBtn.className = 'btn btn-sm btn-outline-danger rounded-pill px-3';
+              delBtn.textContent = 'أرشفة';
+              delBtn.addEventListener('click', () => handleDeleteUnit(unit));
+              tdActions.appendChild(delBtn);
+            }
           }
 
-          currentUnitsList.forEach((unit) => {
-            const tr = document.createElement('tr');
-
-            // Name
-            const tdName = document.createElement('td');
-            tdName.className = 'ps-4 fw-bold';
-            tdName.textContent = unit.name;
-            tr.appendChild(tdName);
-
-            // Unit Type
-            const tdType = document.createElement('td');
-            if (unit.isBase) {
-              const baseBadge = document.createElement('span');
-              baseBadge.className = 'badge bg-success text-white';
-              baseBadge.textContent = 'الوحدة الأساسية';
-              tdType.appendChild(baseBadge);
-            } else {
-              const addBadge = document.createElement('span');
-              addBadge.className = 'badge bg-light text-muted border';
-              addBadge.textContent = 'وحدة إضافية';
-              tdType.appendChild(addBadge);
-            }
-            tr.appendChild(tdType);
-
-            // Formula
-            const tdFormula = document.createElement('td');
-            if (unit.isBase) {
-              tdFormula.className = 'text-muted';
-              tdFormula.textContent = 'مرجع القياس الأساسي';
-            } else {
-              const eqSpan = document.createElement('span');
-              eqSpan.className = 'fw-bold text-dark';
-              eqSpan.textContent = `1 ${unit.name} = ${unit.conversionQuantity} × ${unit.equivalentToUnitName || 'وحدة'}`;
-              tdFormula.appendChild(eqSpan);
-            }
-            tr.appendChild(tdFormula);
-
-            // Price
-            const tdPrice = document.createElement('td');
-            tdPrice.className = 'font-monospace fw-bold';
-            tdPrice.textContent = unit.price;
-            tr.appendChild(tdPrice);
-
-            // Barcode
-            const tdBarcode = document.createElement('td');
-            if (unit.barcode) {
-              const bcBadge = document.createElement('span');
-              bcBadge.className = 'badge bg-light text-dark border font-monospace';
-              bcBadge.textContent = unit.barcode;
-              tdBarcode.appendChild(bcBadge);
-            } else {
-              tdBarcode.className = 'text-muted';
-              tdBarcode.textContent = '--';
-            }
-            tr.appendChild(tdBarcode);
-
-            // Specifications
-            const tdSpecs = document.createElement('td');
-            if (unit.specifications && unit.specifications.length > 0) {
-              const specBadgesDiv = document.createElement('div');
-              specBadgesDiv.className = 'd-flex flex-wrap gap-1';
-              unit.specifications.forEach((s) => {
-                const sBadge = document.createElement('span');
-                sBadge.className = 'badge bg-light text-dark border';
-                sBadge.textContent = s.unit ? `${s.name}: ${s.value} ${s.unit}` : `${s.name}: ${s.value}`;
-                specBadgesDiv.appendChild(sBadge);
-              });
-              tdSpecs.appendChild(specBadgesDiv);
-            } else {
-              tdSpecs.className = 'text-muted';
-              tdSpecs.textContent = '--';
-            }
-            tr.appendChild(tdSpecs);
-
-            // Actions
-            const tdActions = document.createElement('td');
-            tdActions.className = 'text-end pe-4';
-
-            if (permissions.canUpdateProduct) {
-              const editBtn = document.createElement('button');
-              editBtn.type = 'button';
-              editBtn.className = 'btn btn-sm btn-outline-primary rounded-pill px-3 me-1';
-              editBtn.textContent = 'تعديل';
-              editBtn.addEventListener('click', () => openEditUnitModal(unit));
-              tdActions.appendChild(editBtn);
-
-              // Base unit cannot be deleted
-              if (!unit.isBase) {
-                const delBtn = document.createElement('button');
-                delBtn.type = 'button';
-                delBtn.className = 'btn btn-sm btn-outline-danger rounded-pill px-3';
-                delBtn.textContent = 'أرشفة';
-                delBtn.addEventListener('click', () => handleDeleteUnit(unit));
-                tdActions.appendChild(delBtn);
-              }
-            }
-
-            tr.appendChild(tdActions);
-            productUnitsTableBody.appendChild(tr);
-          });
-        }
+          tr.appendChild(tdActions);
+          productUnitsTableBody.appendChild(tr);
+        });
       } catch (err) {
-        showAlert('حدث خطأ أثناء تحميل وحدات المنتج');
+        console.error('Failed to load product units:', err);
+        showAlert('فشل في تحميل جميع وحدات المنتج. لم يتم اعتماد بيانات جزئية حفاظاً على سلامة علاقات التحويل.');
+
+        if (!hadExistingData) {
+          productUnitsTableBody.textContent = '';
+          const errRow = document.createElement('tr');
+          const errTd = document.createElement('td');
+          errTd.colSpan = 7;
+          errTd.className = 'text-center py-4 text-danger';
+          errTd.textContent = 'تعذر تحميل وحدات القياس. يرجى إعادة المحاولة.';
+          errRow.appendChild(errTd);
+          productUnitsTableBody.appendChild(errRow);
+        }
       }
     }
 
