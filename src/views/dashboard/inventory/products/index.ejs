@@ -1,104 +1,171 @@
-<div class="container-fluid">
-  <!-- Page Header -->
-  <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
-    <div>
-      <h3 class="fw-bold mb-1" style="color: #2D3436;">
-        <i class="fa-solid fa-box-open me-2" style="color: #10AC84;"></i> دليل المنتجات والمواد
-      </h3>
-      <p class="text-muted mb-0">كتالوج المواد والمنتجات ووحدات القياس المرجعية</p>
-    </div>
-    <div class="d-flex gap-2">
-      <% if (typeof canCreateProduct !== 'undefined' && canCreateProduct) { %>
-        <a href="/inventory/products/create" class="btn btn-primary rounded-pill px-4 fw-bold" style="background-color: #10AC84; border-color: #10AC84;">
-          <i class="fa-solid fa-plus me-1"></i> إضافة منتج جديد
-        </a>
-      <% } %>
-    </div>
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+  <div>
+    <h3 class="fw-bold mb-1" style="color: #1F2937;">المنتجات <i class="fa-solid fa-boxes-stacked text-muted fs-5 ms-2"></i></h3>
+    <p class="text-muted mb-0 small">إدارة كتالوج المنتجات والمواد ووحدات القياس</p>
   </div>
+  <div class="d-flex align-items-center gap-2">
+    <!-- Mobile Category Toggle Button -->
+    <button class="btn btn-outline-secondary d-lg-none d-inline-flex align-items-center gap-2 px-3 py-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#productCategoryOffcanvas" aria-controls="productCategoryOffcanvas">
+      <i class="fa-solid fa-folder-tree"></i>
+      <span>الفئات</span>
+      <span class="badge bg-secondary rounded-pill" id="mobileSelectedCategoryBadge">الكل</span>
+    </button>
+    <% if (typeof canCreateProduct !== 'undefined' && canCreateProduct) { %>
+      <a href="/inventory/products/create" class="btn btn-primary btn-module-primary d-inline-flex align-items-center gap-2 shadow-sm px-4 py-2">
+        <i class="fa-solid fa-plus"></i>
+        <span>إضافة منتج</span>
+      </a>
+    <% } %>
+  </div>
+</div>
 
-  <!-- Filter & Search Card -->
-  <div class="card border-0 shadow-sm rounded-4 mb-4">
-    <div class="card-body p-3">
-      <div class="row g-2 align-items-center">
-        <!-- Search Input -->
-        <div class="col-12 col-md-5">
-          <div class="input-group">
-            <span class="input-group-text bg-light border-0"><i class="fa-solid fa-search text-muted"></i></span>
-            <input type="text" id="productSearchInput" class="form-control bg-light border-0" placeholder="بحث بالاسم، الرمز، الباركود، مكان الوجود...">
+<!-- Alert Container -->
+<div id="productAlertContainer"></div>
+
+<!-- Main Content Grid: Category Tree Panel + Products Table -->
+<div class="row g-4">
+  <!-- Right Column in RTL: Category Tree Filter Panel (Desktop) -->
+  <div class="col-lg-4 col-xl-3 d-none d-lg-block">
+    <div class="card border-0 shadow-sm" style="border-radius: 12px; position: sticky; top: 76px;">
+      <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+        <h6 class="fw-bold mb-0 text-dark">
+          <i class="fa-solid fa-folder-tree text-muted me-2"></i> فئات المنتجات
+        </h6>
+        <span class="badge bg-light text-muted border small" id="desktopCategoryCountBadge">0</span>
+      </div>
+      <div class="card-body p-3">
+        <!-- Search in Tree -->
+        <div class="mb-3">
+          <div class="input-group input-group-sm">
+            <span class="input-group-text bg-white border-end-0 text-muted"><i class="fa-solid fa-magnifying-glass"></i></span>
+            <input type="text" id="categoryTreeSearchInput" class="form-control border-start-0 ps-0" placeholder="بحث في الفئات...">
           </div>
         </div>
 
-        <!-- Category Filter -->
-        <div class="col-12 col-sm-6 col-md-3">
-          <select id="categoryFilterSelect" class="form-select bg-light border-0">
-            <option value="">-- جميع الفئات --</option>
-          </select>
+        <!-- All Categories / Reset Filter Option -->
+        <div class="category-tree-item active mb-2 px-3 py-2 rounded-3" id="allCategoriesOption" data-category-id="" role="button">
+          <i class="fa-solid fa-boxes-stacked me-2"></i>
+          <span class="flex-grow-1">جميع المنتجات</span>
         </div>
 
-        <!-- Status Filter -->
-        <div class="col-12 col-sm-6 col-md-2">
-          <select id="statusFilterSelect" class="form-select bg-light border-0">
-            <option value="all">جميع الحالات</option>
-            <option value="active" selected>نشط فقط</option>
-            <option value="inactive">معطل فقط</option>
-          </select>
-        </div>
+        <hr class="my-2 text-muted">
 
-        <!-- Refresh Button -->
-        <div class="col-12 col-md-2 d-flex justify-content-end">
-          <button type="button" id="btnRefreshProducts" class="btn btn-outline-secondary rounded-pill px-3 w-100">
-            <i class="fa-solid fa-rotate me-1"></i> تحديث
-          </button>
+        <!-- Tree Nodes List -->
+        <div id="categoryTreeNodesContainer" class="d-flex flex-column gap-1 overflow-auto" style="max-height: calc(100vh - 280px);">
+          <div class="text-center py-4 text-muted small" id="categoryTreeLoading">
+            <div class="spinner-border spinner-border-sm text-secondary me-1" role="status"></div>
+            جاري تحميل شجرة الفئات...
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Alert Container -->
-  <div id="productAlertContainer"></div>
-
-  <!-- Products Table Card -->
-  <div class="card border-0 shadow-sm rounded-4">
-    <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
-      <h6 class="fw-bold mb-0 text-dark">
-        <i class="fa-solid fa-list me-2 text-muted"></i> قائمة المنتجات
-      </h6>
-      <span class="badge bg-light text-muted border" id="productsCountBadge">0 منتج</span>
+  <!-- Left Column in RTL: Products Table Area -->
+  <div class="col-12 col-lg-8 col-xl-9">
+    <!-- Search & Filter Card -->
+    <div class="card border-0 shadow-sm mb-4" style="border-radius: 12px;">
+      <div class="card-body p-3">
+        <form id="productSearchForm" class="row g-2 align-items-center">
+          <div class="col-md-6 col-lg-5">
+            <div class="input-group">
+              <span class="input-group-text bg-white border-end-0 text-muted"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input type="text" id="productSearchInput" class="form-control border-start-0 ps-0" placeholder="بحث بالاسم، الرمز، الباركود، مكان الوجود...">
+            </div>
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <select id="statusFilterSelect" class="form-select">
+              <option value="all">جميع الحالات</option>
+              <option value="active" selected>نشط فقط</option>
+              <option value="inactive">معطل فقط</option>
+            </select>
+          </div>
+          <div class="col-auto d-flex gap-2">
+            <button type="submit" class="btn btn-outline-secondary px-3">بحث</button>
+            <button type="button" id="btnClearProductSearch" class="btn btn-link text-muted text-decoration-none d-none">إلغاء البحث</button>
+          </div>
+        </form>
+      </div>
     </div>
-    <div class="card-body p-0">
+
+    <!-- Active Filter Info (Shows current category filter) -->
+    <div id="activeCategoryFilterBar" class="d-none align-items-center justify-content-between alert alert-light border py-2 px-3 mb-3 rounded-3 shadow-sm">
+      <div class="d-flex align-items-center gap-2 small">
+        <span class="text-muted">الفئة المحددة:</span>
+        <strong id="activeCategoryFilterName" class="text-dark"></strong>
+      </div>
+      <button type="button" class="btn btn-sm btn-link text-muted p-0 text-decoration-none" id="btnResetCategoryFilter">
+        <i class="fa-solid fa-xmark me-1"></i> عرض جميع المنتجات
+      </button>
+    </div>
+
+    <!-- Products Table Card -->
+    <div class="card border-0 shadow-sm" style="border-radius: 12px; overflow: hidden;">
       <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
-          <thead class="table-light text-muted" style="font-size: 0.9rem;">
-            <tr>
-              <th class="ps-4">اسم المنتج</th>
-              <th>الرمز</th>
-              <th>الفئة</th>
-              <th>الوحدة الأساسية</th>
-              <th>عدد الوحدات</th>
-              <th>مكان وجود المادة</th>
-              <th>الحالة</th>
-              <th class="text-end pe-4">الإجراءات</th>
+          <thead class="table-light">
+            <tr class="text-muted small">
+              <th scope="col" class="py-3 px-4">المنتج</th>
+              <th scope="col" class="py-3">الرمز</th>
+              <th scope="col" class="py-3">الفئة</th>
+              <th scope="col" class="py-3">الوحدة الأساسية</th>
+              <th scope="col" class="py-3 text-center">عدد الوحدات</th>
+              <th scope="col" class="py-3">مكان وجود المادة</th>
+              <th scope="col" class="py-3 text-center">الحالة</th>
+              <th scope="col" class="py-3 text-center px-4">الإجراءات</th>
             </tr>
           </thead>
           <tbody id="productsTableBody">
             <tr>
               <td colspan="8" class="text-center py-5 text-muted">
-                <div class="spinner-border spinner-border-sm text-success me-2" role="status"></div>
+                <div class="spinner-border spinner-border-sm text-secondary me-2" role="status"></div>
                 جاري تحميل المنتجات...
               </td>
             </tr>
           </tbody>
         </table>
       </div>
+
+      <!-- Pagination Footer -->
+      <div class="card-footer bg-white border-top d-flex flex-wrap justify-content-between align-items-center py-3 px-4">
+        <div class="text-muted small" id="paginationInfo">
+          جاري التحميل...
+        </div>
+        <nav aria-label="Products Pagination">
+          <ul class="pagination pagination-sm mb-0" id="productsPagination"></ul>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mobile Category Offcanvas Drawer -->
+<div class="offcanvas offcanvas-start d-lg-none" tabindex="-1" id="productCategoryOffcanvas" aria-labelledby="productCategoryOffcanvasLabel">
+  <div class="offcanvas-header border-bottom py-3">
+    <h5 class="offcanvas-title fw-bold" id="productCategoryOffcanvasLabel">
+      <i class="fa-solid fa-folder-tree text-muted me-2"></i> تصفية حسب الفئة
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body p-3">
+    <!-- Search in mobile tree -->
+    <div class="mb-3">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text bg-white border-end-0 text-muted"><i class="fa-solid fa-magnifying-glass"></i></span>
+        <input type="text" id="mobileCategoryTreeSearchInput" class="form-control border-start-0 ps-0" placeholder="بحث في الفئات...">
+      </div>
     </div>
 
-    <!-- Pagination Footer -->
-    <div class="card-footer bg-white border-top py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
-      <div class="text-muted small" id="paginationInfo">عرض 0 من 0</div>
-      <nav aria-label="Products Pagination">
-        <ul class="pagination pagination-sm mb-0 justify-content-end" id="productsPagination"></ul>
-      </nav>
+    <!-- All Products Option for mobile -->
+    <div class="category-tree-item active mb-2 px-3 py-2 rounded-3" id="mobileAllCategoriesOption" data-category-id="" role="button">
+      <i class="fa-solid fa-boxes-stacked me-2"></i>
+      <span class="flex-grow-1">جميع المنتجات</span>
     </div>
+
+    <hr class="my-2 text-muted">
+
+    <!-- Mobile Tree Nodes List -->
+    <div id="mobileCategoryTreeNodesContainer" class="d-flex flex-column gap-1 overflow-auto"></div>
   </div>
 </div>
 
@@ -110,3 +177,4 @@
   };
 </script>
 <script src="/js/inventory-products.js"></script>
+

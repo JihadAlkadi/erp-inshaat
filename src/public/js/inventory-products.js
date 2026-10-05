@@ -1,6 +1,7 @@
 /**
  * Inventory Products & Units Management Script
- * Handles product catalog listing, creation with base unit, editing, unit conversion graph mutations.
+ * Handles product catalog listing, category tree filtering (desktop & mobile offcanvas),
+ * creation with base unit, editing, and unit conversion graph mutations.
  * Security: Uses window.erpFetch for all mutations and native DOM APIs to prevent XSS.
  */
 
@@ -106,10 +107,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /**
    * Helper to collect specifications from a container.
-   * Returns validation result:
-   * - If both name and value are empty: row is ignored.
-   * - If name provided but value empty: invalid.
-   * - If value provided but name empty: invalid.
    */
   function collectSpecifications(container) {
     if (!container) return { valid: true, specifications: null };
@@ -204,17 +201,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Populate category options dropdown (preserving inactive current category).
-   * Rebuilds select only after 100% of pages are successfully fetched (fail-closed).
+   * Populate category options dropdown for product forms.
    */
   async function loadCategoryOptionsForProduct(selectElement, selectedId = '', currentCategoryName = '') {
     if (!selectElement) return;
 
     try {
-      // 1. Fetch all pages first into temporary array
       const options = await fetchAllActiveCategoryOptions();
 
-      // 2. Only rebuild select after complete success
       while (selectElement.options.length > 1) {
         selectElement.remove(1);
       }
@@ -250,18 +244,291 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
 
   const productsTableBody = document.getElementById('productsTableBody');
+  const productSearchForm = document.getElementById('productSearchForm');
   const productSearchInput = document.getElementById('productSearchInput');
-  const categoryFilterSelect = document.getElementById('categoryFilterSelect');
   const statusFilterSelect = document.getElementById('statusFilterSelect');
-  const btnRefreshProducts = document.getElementById('btnRefreshProducts');
-  const productsCountBadge = document.getElementById('productsCountBadge');
+  const btnClearProductSearch = document.getElementById('btnClearProductSearch');
   const productsPagination = document.getElementById('productsPagination');
   const paginationInfo = document.getElementById('paginationInfo');
 
+  // Category Tree Filter Elements (Desktop & Mobile)
+  const categoryTreeNodesContainer = document.getElementById('categoryTreeNodesContainer');
+  const categoryTreeLoading = document.getElementById('categoryTreeLoading');
+  const desktopCategoryCountBadge = document.getElementById('desktopCategoryCountBadge');
+  const categoryTreeSearchInput = document.getElementById('categoryTreeSearchInput');
+  const allCategoriesOption = document.getElementById('allCategoriesOption');
+
+  const mobileCategoryTreeNodesContainer = document.getElementById('mobileCategoryTreeNodesContainer');
+  const mobileCategoryTreeSearchInput = document.getElementById('mobileCategoryTreeSearchInput');
+  const mobileAllCategoriesOption = document.getElementById('mobileAllCategoriesOption');
+  const mobileSelectedCategoryBadge = document.getElementById('mobileSelectedCategoryBadge');
+  const productCategoryOffcanvasEl = document.getElementById('productCategoryOffcanvas');
+
+  const activeCategoryFilterBar = document.getElementById('activeCategoryFilterBar');
+  const activeCategoryFilterName = document.getElementById('activeCategoryFilterName');
+  const btnResetCategoryFilter = document.getElementById('btnResetCategoryFilter');
+
   let currentPage = 1;
-  const pageLimit = 20;
+  const pageLimit = 15;
+  let selectedCategoryId = '';
   let listSearchTimeout = null;
 
+  /**
+   * Builds and initializes category tree in desktop panel & mobile offcanvas.
+   */
+  async function initCategoryTree() {
+    if (!categoryTreeNodesContainer && !mobileCategoryTreeNodesContainer) return;
+
+    try {
+      const allCategories = await fetchAllActiveCategoryOptions();
+
+      if (desktopCategoryCountBadge) {
+        desktopCategoryCountBadge.textContent = String(allCategories.length);
+      }
+
+      if (categoryTreeLoading) {
+        categoryTreeLoading.remove();
+      }
+
+      // Group categories into parent-to-children structure
+      const childrenMap = new Map();
+      const rootCategories = [];
+
+      allCategories.forEach((cat) => {
+        if (!cat.parentId) {
+          rootCategories.push(cat);
+        } else {
+          if (!childrenMap.has(cat.parentId)) {
+            childrenMap.set(cat.parentId, []);
+          }
+          childrenMap.get(cat.parentId).push(cat);
+        }
+      });
+
+      // Render Tree Node DOM function
+      function createTreeNode(cat, isMobile) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'category-tree-node-wrapper mb-1';
+        wrapper.dataset.categoryId = cat.id;
+        wrapper.dataset.categoryName = cat.name.toLowerCase();
+
+        const item = document.createElement('div');
+        item.className = 'category-tree-item d-flex align-items-center justify-content-between px-2 py-2 rounded-2';
+        item.dataset.categoryId = cat.id;
+        item.role = 'button';
+
+        const children = childrenMap.get(cat.id) || [];
+        const hasChildren = children.length > 0;
+
+        const leftSide = document.createElement('div');
+        leftSide.className = 'd-flex align-items-center gap-2 flex-grow-1 overflow-hidden';
+
+        if (hasChildren) {
+          const toggleBtn = document.createElement('button');
+          toggleBtn.type = 'button';
+          toggleBtn.className = 'category-tree-toggle btn btn-link p-0 text-muted';
+          const chevron = document.createElement('i');
+          chevron.className = 'fa-solid fa-chevron-left small';
+          toggleBtn.appendChild(chevron);
+          leftSide.appendChild(toggleBtn);
+
+          toggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const sublist = wrapper.querySelector('.category-tree-sublist');
+            if (sublist) {
+              const isCollapsed = sublist.classList.contains('d-none');
+              if (isCollapsed) {
+                sublist.classList.remove('d-none');
+                toggleBtn.classList.add('expanded');
+                chevron.className = 'fa-solid fa-chevron-down small';
+              } else {
+                sublist.classList.add('d-none');
+                toggleBtn.classList.remove('expanded');
+                chevron.className = 'fa-solid fa-chevron-left small';
+              }
+            }
+          });
+        } else {
+          const spacer = document.createElement('span');
+          spacer.style.width = '14px';
+          spacer.style.display = 'inline-block';
+          leftSide.appendChild(spacer);
+        }
+
+        const folderIcon = document.createElement('i');
+        folderIcon.className = hasChildren ? 'fa-solid fa-folder text-warning me-1' : 'fa-regular fa-folder text-muted me-1';
+        leftSide.appendChild(folderIcon);
+
+        const label = document.createElement('span');
+        label.className = 'category-name-text text-truncate';
+        label.textContent = cat.name;
+        leftSide.appendChild(label);
+
+        item.appendChild(leftSide);
+
+        if (cat.productCount > 0) {
+          const countBadge = document.createElement('span');
+          countBadge.className = 'badge bg-light text-muted border small';
+          countBadge.textContent = String(cat.productCount);
+          item.appendChild(countBadge);
+        }
+
+        // Click handler to filter products
+        item.addEventListener('click', () => {
+          selectCategory(cat.id, cat.name);
+        });
+
+        wrapper.appendChild(item);
+
+        // Sublist if has children
+        if (hasChildren) {
+          const sublist = document.createElement('div');
+          sublist.className = 'category-tree-sublist ps-3 d-none border-start border-2 ms-2 mt-1';
+          children.forEach((child) => {
+            sublist.appendChild(createTreeNode(child, isMobile));
+          });
+          wrapper.appendChild(sublist);
+        }
+
+        return wrapper;
+      }
+
+      // Populate desktop tree
+      if (categoryTreeNodesContainer) {
+        categoryTreeNodesContainer.textContent = '';
+        if (rootCategories.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'text-center py-4 text-muted small';
+          empty.textContent = 'لا توجد فئات حتى الآن';
+          categoryTreeNodesContainer.appendChild(empty);
+        } else {
+          rootCategories.forEach((root) => {
+            categoryTreeNodesContainer.appendChild(createTreeNode(root, false));
+          });
+        }
+      }
+
+      // Populate mobile tree
+      if (mobileCategoryTreeNodesContainer) {
+        mobileCategoryTreeNodesContainer.textContent = '';
+        if (rootCategories.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'text-center py-4 text-muted small';
+          empty.textContent = 'لا توجد فئات حتى الآن';
+          mobileCategoryTreeNodesContainer.appendChild(empty);
+        } else {
+          rootCategories.forEach((root) => {
+            mobileCategoryTreeNodesContainer.appendChild(createTreeNode(root, true));
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to initialize category tree:', err);
+      if (categoryTreeNodesContainer) {
+        categoryTreeNodesContainer.textContent = '';
+        const errMsg = document.createElement('div');
+        errMsg.className = 'text-center py-3 text-danger small';
+        errMsg.textContent = 'تعذر تحميل شجرة الفئات';
+        categoryTreeNodesContainer.appendChild(errMsg);
+      }
+    }
+  }
+
+  /**
+   * Selects a category, highlights it, updates badges/filter bar, and triggers loadProducts.
+   */
+  function selectCategory(categoryId, categoryName) {
+    selectedCategoryId = categoryId;
+
+    // Update active class on desktop & mobile tree items
+    const allTreeItems = document.querySelectorAll('.category-tree-item');
+    allTreeItems.forEach((el) => {
+      if (el.dataset.categoryId === categoryId) {
+        el.classList.add('active');
+      } else {
+        el.classList.remove('active');
+      }
+    });
+
+    if (categoryId) {
+      if (allCategoriesOption) allCategoriesOption.classList.remove('active');
+      if (mobileAllCategoriesOption) mobileAllCategoriesOption.classList.remove('active');
+
+      if (activeCategoryFilterBar) activeCategoryFilterBar.classList.remove('d-none');
+      if (activeCategoryFilterName) activeCategoryFilterName.textContent = categoryName;
+      if (mobileSelectedCategoryBadge) mobileSelectedCategoryBadge.textContent = categoryName;
+    } else {
+      if (allCategoriesOption) allCategoriesOption.classList.add('active');
+      if (mobileAllCategoriesOption) mobileAllCategoriesOption.classList.add('active');
+
+      if (activeCategoryFilterBar) activeCategoryFilterBar.classList.add('d-none');
+      if (mobileSelectedCategoryBadge) mobileSelectedCategoryBadge.textContent = 'الكل';
+    }
+
+    // Close mobile offcanvas if open
+    if (productCategoryOffcanvasEl) {
+      const offcanvasInstance = bootstrap.Offcanvas.getInstance(productCategoryOffcanvasEl);
+      if (offcanvasInstance) {
+        offcanvasInstance.hide();
+      }
+    }
+
+    loadProducts(1);
+  }
+
+  /**
+   * Filters tree nodes by search text.
+   */
+  function filterTreeNodes(container, query) {
+    if (!container) return;
+    const term = query.trim().toLowerCase();
+    const wrappers = container.querySelectorAll('.category-tree-node-wrapper');
+
+    wrappers.forEach((wrap) => {
+      const name = wrap.dataset.categoryName || '';
+      if (!term || name.includes(term)) {
+        wrap.classList.remove('d-none');
+      } else {
+        wrap.classList.add('d-none');
+      }
+    });
+  }
+
+  // Tree search events
+  if (categoryTreeSearchInput) {
+    categoryTreeSearchInput.addEventListener('input', (e) => {
+      filterTreeNodes(categoryTreeNodesContainer, e.target.value);
+    });
+  }
+
+  if (mobileCategoryTreeSearchInput) {
+    mobileCategoryTreeSearchInput.addEventListener('input', (e) => {
+      filterTreeNodes(mobileCategoryTreeNodesContainer, e.target.value);
+    });
+  }
+
+  // "All Products" reset button handlers
+  if (allCategoriesOption) {
+    allCategoriesOption.addEventListener('click', () => {
+      selectCategory('', '');
+    });
+  }
+
+  if (mobileAllCategoriesOption) {
+    mobileAllCategoriesOption.addEventListener('click', () => {
+      selectCategory('', '');
+    });
+  }
+
+  if (btnResetCategoryFilter) {
+    btnResetCategoryFilter.addEventListener('click', () => {
+      selectCategory('', '');
+    });
+  }
+
+  /**
+   * Loads products table with search, categoryId filter, and pagination.
+   */
   async function loadProducts(page = 1) {
     if (!productsTableBody) return;
 
@@ -273,7 +540,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loadingTd.colSpan = 8;
     loadingTd.className = 'text-center py-5 text-muted';
     const spin = document.createElement('div');
-    spin.className = 'spinner-border spinner-border-sm text-success me-2';
+    spin.className = 'spinner-border spinner-border-sm text-secondary me-2';
+    spin.setAttribute('role', 'status');
     loadingTd.appendChild(spin);
     const txt = document.createElement('span');
     txt.textContent = 'جاري تحميل المنتجات...';
@@ -282,7 +550,6 @@ document.addEventListener('DOMContentLoaded', () => {
     productsTableBody.appendChild(loadingRow);
 
     const search = productSearchInput ? productSearchInput.value.trim() : '';
-    const categoryId = categoryFilterSelect ? categoryFilterSelect.value : '';
     const status = statusFilterSelect ? statusFilterSelect.value : 'active';
 
     const params = new URLSearchParams({
@@ -291,10 +558,13 @@ document.addEventListener('DOMContentLoaded', () => {
       status,
     });
     if (search) params.append('search', search);
-    if (categoryId) params.append('categoryId', categoryId);
+    if (selectedCategoryId) params.append('categoryId', selectedCategoryId);
 
     try {
       const res = await fetch(`/api/inventory/products?${params.toString()}`);
+      if (!res.ok) {
+        throw new Error(`HTTP error ${res.status}`);
+      }
       const json = await res.json();
 
       productsTableBody.textContent = '';
@@ -302,7 +572,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (json.success && json.data) {
         const { items, total, totalPages } = json.data;
 
-        if (productsCountBadge) productsCountBadge.textContent = `${total} منتج`;
         if (paginationInfo) {
           const from = total === 0 ? 0 : (page - 1) * pageLimit + 1;
           const to = Math.min(total, page * pageLimit);
@@ -324,14 +593,40 @@ document.addEventListener('DOMContentLoaded', () => {
         items.forEach((p) => {
           const tr = document.createElement('tr');
 
-          // Name
+          // Product Name & Description (Matching System Users pattern)
           const tdName = document.createElement('td');
-          tdName.className = 'ps-4 fw-bold';
-          tdName.textContent = p.name;
+          tdName.className = 'py-3 px-4';
+          const nameWrap = document.createElement('div');
+          nameWrap.className = 'd-flex align-items-center gap-2';
+
+          const iconBox = document.createElement('div');
+          iconBox.className = 'bg-light text-muted p-2 rounded-3 d-flex align-items-center justify-content-center';
+          iconBox.style.width = '36px';
+          iconBox.style.height = '36px';
+          const icon = document.createElement('i');
+          icon.className = 'fa-solid fa-cube text-muted';
+          iconBox.appendChild(icon);
+          nameWrap.appendChild(iconBox);
+
+          const textWrap = document.createElement('div');
+          const nameStrong = document.createElement('strong');
+          nameStrong.className = 'text-dark d-block';
+          nameStrong.textContent = p.name;
+          textWrap.appendChild(nameStrong);
+          if (p.description) {
+            const descSmall = document.createElement('small');
+            descSmall.className = 'text-muted d-block text-truncate';
+            descSmall.style.maxWidth = '250px';
+            descSmall.textContent = p.description;
+            textWrap.appendChild(descSmall);
+          }
+          nameWrap.appendChild(textWrap);
+          tdName.appendChild(nameWrap);
           tr.appendChild(tdName);
 
           // Code
           const tdCode = document.createElement('td');
+          tdCode.className = 'py-3';
           const codeBadge = document.createElement('span');
           codeBadge.className = 'badge bg-light text-muted border font-monospace';
           codeBadge.textContent = p.code;
@@ -340,59 +635,77 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // Category
           const tdCat = document.createElement('td');
-          tdCat.className = 'text-muted';
+          tdCat.className = 'py-3 text-muted small';
           tdCat.textContent = p.categoryName || '-- غير مصنف --';
           tr.appendChild(tdCat);
 
           // Base Unit
           const tdBase = document.createElement('td');
+          tdBase.className = 'py-3';
           const baseBadge = document.createElement('span');
-          baseBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success';
+          baseBadge.className = 'badge bg-secondary bg-opacity-10 text-dark border';
           baseBadge.textContent = p.baseUnitName || 'غير متسق';
           tdBase.appendChild(baseBadge);
           tr.appendChild(tdBase);
 
           // Unit Count
           const tdUnits = document.createElement('td');
-          tdUnits.textContent = `${p.unitCount} وحدة`;
+          tdUnits.className = 'py-3 text-center';
+          const unitBadge = document.createElement('span');
+          unitBadge.className = 'badge bg-light text-dark border';
+          unitBadge.textContent = `${p.unitCount} وحدة`;
+          tdUnits.appendChild(unitBadge);
           tr.appendChild(tdUnits);
 
           // Location
           const tdLoc = document.createElement('td');
-          tdLoc.className = 'text-muted small';
+          tdLoc.className = 'py-3 text-muted small';
           tdLoc.textContent = p.locationName || '--';
           tr.appendChild(tdLoc);
 
           // Status
           const tdStatus = document.createElement('td');
+          tdStatus.className = 'py-3 text-center';
           const stBadge = document.createElement('span');
-          stBadge.className = p.isActive ? 'badge bg-success bg-opacity-10 text-success border border-success' : 'badge bg-secondary bg-opacity-10 text-secondary border';
+          stBadge.className = p.isActive
+            ? 'badge bg-success bg-opacity-10 text-success border border-success'
+            : 'badge bg-secondary bg-opacity-10 text-secondary border';
           stBadge.textContent = p.isActive ? 'نشط' : 'معطل';
           tdStatus.appendChild(stBadge);
           tr.appendChild(tdStatus);
 
           // Actions
           const tdActions = document.createElement('td');
-          tdActions.className = 'text-end pe-4';
+          tdActions.className = 'py-3 text-center px-4';
+          const actionGroup = document.createElement('div');
+          actionGroup.className = 'd-flex justify-content-center gap-1';
 
           if (permissions.canUpdateProduct) {
             const editBtn = document.createElement('a');
             editBtn.href = `/inventory/products/${encodeURIComponent(p.id)}/edit`;
-            editBtn.className = 'btn btn-sm btn-outline-primary rounded-pill px-3 me-1';
-            editBtn.textContent = 'تعديل';
-            tdActions.appendChild(editBtn);
+            editBtn.className = 'btn btn-sm btn-outline-primary';
+            editBtn.title = 'تعديل المنتج';
+            const editIcon = document.createElement('i');
+            editIcon.className = 'fa-solid fa-pen';
+            editBtn.appendChild(editIcon);
+            actionGroup.appendChild(editBtn);
           }
 
           if (permissions.canDeleteProduct) {
             const delBtn = document.createElement('button');
             delBtn.type = 'button';
-            delBtn.className = 'btn btn-sm btn-outline-danger rounded-pill px-3';
-            delBtn.textContent = 'أرشفة';
+            delBtn.className = 'btn btn-sm btn-outline-danger';
+            delBtn.title = 'أرشفة المنتج';
+            const delIcon = document.createElement('i');
+            delIcon.className = 'fa-solid fa-box-archive';
+            delBtn.appendChild(delIcon);
             delBtn.addEventListener('click', () => handleDeleteProduct(p));
-            tdActions.appendChild(delBtn);
+            actionGroup.appendChild(delBtn);
           }
 
+          tdActions.appendChild(actionGroup);
           tr.appendChild(tdActions);
+
           productsTableBody.appendChild(tr);
         });
 
@@ -401,6 +714,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showAlert(json.message || 'فشل في تحميل المنتجات');
       }
     } catch (err) {
+      console.error('Error loading products:', err);
       showAlert('حدث خطأ أثناء الاتصال بالخادم لتحميل قائمة المنتجات');
     }
   }
@@ -425,7 +739,7 @@ document.addEventListener('DOMContentLoaded', () => {
     prevLi.appendChild(prevA);
     productsPagination.appendChild(prevLi);
 
-    // Page numbers (up to 5 pages around current)
+    // Page numbers
     const start = Math.max(1, page - 2);
     const end = Math.min(totalPages, page + 2);
 
@@ -481,27 +795,51 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Initialize Product Listing
   if (productsTableBody) {
-    loadCategoryOptionsForProduct(categoryFilterSelect);
+    initCategoryTree();
     loadProducts(1);
 
-    if (productSearchInput) {
-      productSearchInput.addEventListener('input', () => {
-        clearTimeout(listSearchTimeout);
-        listSearchTimeout = setTimeout(() => loadProducts(1), 300);
+    if (productSearchForm) {
+      productSearchForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const term = productSearchInput ? productSearchInput.value.trim() : '';
+        if (btnClearProductSearch) {
+          if (term) {
+            btnClearProductSearch.classList.remove('d-none');
+          } else {
+            btnClearProductSearch.classList.add('d-none');
+          }
+        }
+        loadProducts(1);
       });
     }
 
-    if (categoryFilterSelect) {
-      categoryFilterSelect.addEventListener('change', () => loadProducts(1));
+    if (productSearchInput) {
+      productSearchInput.addEventListener('input', (e) => {
+        const term = e.target.value.trim();
+        clearTimeout(listSearchTimeout);
+        if (btnClearProductSearch) {
+          if (term) {
+            btnClearProductSearch.classList.remove('d-none');
+          } else {
+            btnClearProductSearch.classList.add('d-none');
+          }
+        }
+        listSearchTimeout = setTimeout(() => loadProducts(1), 350);
+      });
+    }
+
+    if (btnClearProductSearch) {
+      btnClearProductSearch.addEventListener('click', () => {
+        if (productSearchInput) productSearchInput.value = '';
+        btnClearProductSearch.classList.add('d-none');
+        loadProducts(1);
+      });
     }
 
     if (statusFilterSelect) {
       statusFilterSelect.addEventListener('change', () => loadProducts(1));
-    }
-
-    if (btnRefreshProducts) {
-      btnRefreshProducts.addEventListener('click', () => loadProducts(currentPage));
     }
   }
 
@@ -602,7 +940,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const json = await res.json();
 
         if (json.success && json.data) {
-          // Direct redirect to edit units page
           window.location.href = `/inventory/products/${encodeURIComponent(json.data.id)}/edit#units`;
         } else {
           showAlert(json.message || 'فشل في إنشاء المنتج');
@@ -672,7 +1009,12 @@ document.addEventListener('DOMContentLoaded', () => {
           const subTitleEl = document.getElementById('productHeaderSubtitle');
           const codeBadge = document.getElementById('productCodeBadge');
 
-          if (titleEl) titleEl.textContent = `تعديل: ${currentProductData.name}`;
+          if (titleEl) {
+            titleEl.textContent = `تعديل: ${currentProductData.name}`;
+            const boxIcon = document.createElement('i');
+            boxIcon.className = 'fa-solid fa-box-open text-muted fs-5 ms-2';
+            titleEl.appendChild(boxIcon);
+          }
           if (subTitleEl) subTitleEl.textContent = `الكود: ${currentProductData.code} | الوحدة الأساسية: ${currentProductData.baseUnitName}`;
           if (codeBadge) codeBadge.textContent = currentProductData.code;
 
@@ -747,7 +1089,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return allUnits;
     }
 
-    // Load Product Units (Fetch all pages without truncation, fail-closed)
+    // Load Product Units
     async function loadProductUnits() {
       if (!productUnitsTableBody) return;
 
@@ -757,7 +1099,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const loadingRow = document.createElement('tr');
         const td = document.createElement('td');
         td.colSpan = 7;
-        td.className = 'text-center py-4 text-muted';
+        td.className = 'text-center py-5 text-muted';
         td.textContent = 'جاري تحميل وحدات القياس...';
         loadingRow.appendChild(td);
         productUnitsTableBody.appendChild(loadingRow);
@@ -766,7 +1108,6 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const units = await fetchAllProductUnits(productId);
 
-        // Update currentUnitsList and UI only after complete success
         currentUnitsList = units;
 
         if (unitsCountPill) unitsCountPill.textContent = String(currentUnitsList.length);
@@ -777,7 +1118,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const emptyRow = document.createElement('tr');
           const emptyTd = document.createElement('td');
           emptyTd.colSpan = 7;
-          emptyTd.className = 'text-center py-4 text-muted';
+          emptyTd.className = 'text-center py-5 text-muted';
           emptyTd.textContent = 'لا توجد وحدات معرّفة لهذا المنتج.';
           emptyRow.appendChild(emptyTd);
           productUnitsTableBody.appendChild(emptyRow);
@@ -789,15 +1130,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // Name
           const tdName = document.createElement('td');
-          tdName.className = 'ps-4 fw-bold';
+          tdName.className = 'py-3 px-4 fw-bold';
           tdName.textContent = unit.name;
           tr.appendChild(tdName);
 
           // Unit Type
           const tdType = document.createElement('td');
+          tdType.className = 'py-3';
           if (unit.isBase) {
             const baseBadge = document.createElement('span');
-            baseBadge.className = 'badge bg-success text-white';
+            baseBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success';
             baseBadge.textContent = 'الوحدة الأساسية';
             tdType.appendChild(baseBadge);
           } else {
@@ -810,12 +1152,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // Formula
           const tdFormula = document.createElement('td');
+          tdFormula.className = 'py-3';
           if (unit.isBase) {
-            tdFormula.className = 'text-muted';
+            tdFormula.className = 'py-3 text-muted small';
             tdFormula.textContent = 'مرجع القياس الأساسي';
           } else {
             const eqSpan = document.createElement('span');
-            eqSpan.className = 'fw-bold text-dark';
+            eqSpan.className = 'fw-bold text-dark small';
             eqSpan.textContent = `1 ${unit.name} = ${unit.conversionQuantity} × ${unit.equivalentToUnitName || 'وحدة'}`;
             tdFormula.appendChild(eqSpan);
           }
@@ -823,65 +1166,77 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // Price
           const tdPrice = document.createElement('td');
-          tdPrice.className = 'font-monospace fw-bold';
+          tdPrice.className = 'py-3 font-monospace fw-bold';
           tdPrice.textContent = unit.price;
           tr.appendChild(tdPrice);
 
           // Barcode
           const tdBarcode = document.createElement('td');
+          tdBarcode.className = 'py-3';
           if (unit.barcode) {
             const bcBadge = document.createElement('span');
             bcBadge.className = 'badge bg-light text-dark border font-monospace';
             bcBadge.textContent = unit.barcode;
             tdBarcode.appendChild(bcBadge);
           } else {
-            tdBarcode.className = 'text-muted';
+            tdBarcode.className = 'py-3 text-muted small';
             tdBarcode.textContent = '--';
           }
           tr.appendChild(tdBarcode);
 
           // Specifications
           const tdSpecs = document.createElement('td');
+          tdSpecs.className = 'py-3';
           if (unit.specifications && unit.specifications.length > 0) {
             const specBadgesDiv = document.createElement('div');
             specBadgesDiv.className = 'd-flex flex-wrap gap-1';
             unit.specifications.forEach((s) => {
               const sBadge = document.createElement('span');
-              sBadge.className = 'badge bg-light text-dark border';
+              sBadge.className = 'badge bg-light text-dark border small';
               sBadge.textContent = s.unit ? `${s.name}: ${s.value} ${s.unit}` : `${s.name}: ${s.value}`;
               specBadgesDiv.appendChild(sBadge);
             });
             tdSpecs.appendChild(specBadgesDiv);
           } else {
-            tdSpecs.className = 'text-muted';
+            tdSpecs.className = 'py-3 text-muted small';
             tdSpecs.textContent = '--';
           }
           tr.appendChild(tdSpecs);
 
           // Actions
           const tdActions = document.createElement('td');
-          tdActions.className = 'text-end pe-4';
+          tdActions.className = 'py-3 text-center px-4';
+          const actionGroup = document.createElement('div');
+          actionGroup.className = 'd-flex justify-content-center gap-1';
 
           if (permissions.canUpdateProduct) {
             const editBtn = document.createElement('button');
             editBtn.type = 'button';
-            editBtn.className = 'btn btn-sm btn-outline-primary rounded-pill px-3 me-1';
-            editBtn.textContent = 'تعديل';
+            editBtn.className = 'btn btn-sm btn-outline-primary';
+            editBtn.title = 'تعديل الوحدة';
+            const editIcon = document.createElement('i');
+            editIcon.className = 'fa-solid fa-pen';
+            editBtn.appendChild(editIcon);
             editBtn.addEventListener('click', () => openEditUnitModal(unit));
-            tdActions.appendChild(editBtn);
+            actionGroup.appendChild(editBtn);
 
             // Base unit cannot be deleted
             if (!unit.isBase) {
               const delBtn = document.createElement('button');
               delBtn.type = 'button';
-              delBtn.className = 'btn btn-sm btn-outline-danger rounded-pill px-3';
-              delBtn.textContent = 'أرشفة';
+              delBtn.className = 'btn btn-sm btn-outline-danger';
+              delBtn.title = 'أرشفة الوحدة';
+              const delIcon = document.createElement('i');
+              delIcon.className = 'fa-solid fa-box-archive';
+              delBtn.appendChild(delIcon);
               delBtn.addEventListener('click', () => handleDeleteUnit(unit));
-              tdActions.appendChild(delBtn);
+              actionGroup.appendChild(delBtn);
             }
           }
 
+          tdActions.appendChild(actionGroup);
           tr.appendChild(tdActions);
+
           productUnitsTableBody.appendChild(tr);
         });
       } catch (err) {
@@ -893,7 +1248,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const errRow = document.createElement('tr');
           const errTd = document.createElement('td');
           errTd.colSpan = 7;
-          errTd.className = 'text-center py-4 text-danger';
+          errTd.className = 'text-center py-5 text-danger';
           errTd.textContent = 'تعذر تحميل وحدات القياس. يرجى إعادة المحاولة.';
           errRow.appendChild(errTd);
           productUnitsTableBody.appendChild(errRow);
@@ -984,7 +1339,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (addUnitForm) addUnitForm.reset();
         if (unitSpecsContainer) unitSpecsContainer.textContent = '';
 
-        // Populate equivalent units options with current units of this product
         if (newUnitEquivalentSelect) {
           while (newUnitEquivalentSelect.options.length > 1) {
             newUnitEquivalentSelect.remove(1);
@@ -1221,7 +1575,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (convSection) convSection.classList.remove('d-none');
         if (convInput) convInput.value = unit.conversionQuantity || '';
 
-        // Populate equivalent units options (excluding self)
         if (editUnitEquivalentSelect) {
           while (editUnitEquivalentSelect.options.length > 1) {
             editUnitEquivalentSelect.remove(1);
@@ -1239,7 +1592,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      // Populate specs
       if (editUnitSpecsContainer) {
         editUnitSpecsContainer.textContent = '';
         if (unit.specifications && unit.specifications.length > 0) {

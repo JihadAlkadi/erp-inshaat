@@ -18,6 +18,9 @@
   <style>
     :root {
       --primary-color: <%= locals.themeColor || '#714B67' %>; /* Dynamic Theme Color */
+      --module-accent: <%= locals.themeColor || '#714B67' %>;
+      --module-accent-subtle: <%= (locals.themeColor || '#714B67') === '#10AC84' ? 'rgba(16, 172, 132, 0.08)' : 'rgba(113, 75, 103, 0.08)' %>;
+      --module-accent-hover: <%= (locals.themeColor || '#714B67') === '#10AC84' ? '#0E9B76' : '#5A3B52' %>;
     }
     body { font-family: 'Cairo', sans-serif; background-color: #F9FAFB; overflow-x: hidden; }
     .odoo-navbar { background-color: var(--primary-color); border-bottom: 1px solid rgba(0,0,0,0.1); }

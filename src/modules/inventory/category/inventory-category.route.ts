@@ -15,6 +15,14 @@ const inventoryCategoryApiRouter: Router = Router();
 
 inventoryCategoryApiRouter.use(requireApiAuth);
 
+// GET /api/inventory/categories - List / search categories (paginated)
+inventoryCategoryApiRouter.get(
+  '/',
+  requirePermission(SystemPermission.INVENTORY_CATEGORY_VIEW),
+  validateQueryDto(ListInventoryCategoriesQueryDto),
+  inventoryCategoryController.searchCategories
+);
+
 // GET /api/inventory/categories/roots - List root categories (paginated)
 inventoryCategoryApiRouter.get(
   '/roots',

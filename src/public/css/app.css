@@ -664,3 +664,127 @@ a {
   color: var(--app-muted);
   margin-bottom: 1.5rem;
 }
+
+/* ==========================================================================
+   Unified Module Management Styles (System & Inventory Catalog)
+   ========================================================================== */
+.module-sidebar {
+  background-color: #ffffff;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  height: calc(100vh - 56px);
+  padding-top: 15px;
+  overflow-y: auto;
+  width: 250px;
+  flex-shrink: 0;
+}
+
+.module-sidebar .nav-link {
+  color: #4B5563;
+  padding: 10px 20px;
+  font-weight: 600;
+  border-radius: 8px;
+  margin: 2px 10px;
+  transition: all 0.2s;
+}
+
+.module-sidebar .nav-link:hover,
+.module-sidebar .nav-link.active {
+  background-color: var(--module-accent-subtle, rgba(113, 75, 103, 0.08));
+  color: var(--module-accent, #714B67);
+}
+
+.module-sidebar .nav-link i {
+  width: 30px;
+  text-align: center;
+}
+
+@media (max-width: 767.98px) {
+  .module-sidebar {
+    border-left: none;
+    height: 100%;
+    padding-top: 0;
+  }
+}
+
+/* Management Action Buttons using module theme */
+.btn-module-primary {
+  background-color: var(--module-accent, #714B67) !important;
+  border-color: var(--module-accent, #714B67) !important;
+  color: #ffffff !important;
+}
+
+.btn-module-primary:hover,
+.btn-module-primary:focus {
+  background-color: var(--module-accent-hover, #5A3B52) !important;
+  border-color: var(--module-accent-hover, #5A3B52) !important;
+  color: #ffffff !important;
+}
+
+/* Pagination Active State with module theme */
+.pagination .page-item.active .page-link {
+  background-color: var(--module-accent, #714B67) !important;
+  border-color: var(--module-accent, #714B67) !important;
+  color: #ffffff !important;
+}
+
+/* Category Filter Tree Panel in Products Page */
+.category-tree-panel {
+  background-color: var(--app-card-bg, #ffffff);
+  border: 1px solid var(--app-border, #E5E7EB);
+  border-radius: 12px;
+  box-shadow: var(--app-shadow-sm);
+  overflow: hidden;
+}
+
+.category-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  color: #4B5563;
+  font-weight: 500;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.category-tree-item:hover {
+  background-color: var(--module-accent-subtle, rgba(16, 172, 132, 0.08));
+  color: var(--module-accent, #10AC84);
+}
+
+.category-tree-item.active {
+  background-color: var(--module-accent-subtle, rgba(16, 172, 132, 0.12));
+  color: var(--module-accent, #10AC84);
+  font-weight: 700;
+}
+
+.category-tree-toggle {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #9CA3AF;
+  transition: transform 0.2s ease, color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.category-tree-toggle:hover {
+  color: var(--module-accent, #10AC84);
+}
+
+.category-tree-toggle.expanded i {
+  transform: rotate(90deg);
+}
+
+.category-tree-sublist {
+  padding-right: 1.25rem;
+  margin-top: 2px;
+  border-right: 1px dashed rgba(0, 0, 0, 0.1);
+}
+

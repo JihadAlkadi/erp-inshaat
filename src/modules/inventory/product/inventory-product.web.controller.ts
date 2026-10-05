@@ -23,8 +23,8 @@ export class InventoryProductWebController {
 
       res.render('dashboard/inventory/products/index', {
         layout: 'dashboard/inventory/layout',
-        title: 'دليل المنتجات',
-        appName: 'إدارة المستودعات',
+        title: 'المنتجات',
+        appName: 'كتالوج المنتجات',
         themeColor: '#10AC84',
         activeTab: 'products',
         user: currentUser,
@@ -49,7 +49,7 @@ export class InventoryProductWebController {
       res.render('dashboard/inventory/products/create', {
         layout: 'dashboard/inventory/layout',
         title: 'إضافة منتج جديد',
-        appName: 'إدارة المستودعات',
+        appName: 'كتالوج المنتجات',
         themeColor: '#10AC84',
         activeTab: 'products',
         user: currentUser,
@@ -77,7 +77,7 @@ export class InventoryProductWebController {
       res.render('dashboard/inventory/products/edit', {
         layout: 'dashboard/inventory/layout',
         title: 'تعديل المنتج',
-        appName: 'إدارة المستودعات',
+        appName: 'كتالوج المنتجات',
         themeColor: '#10AC84',
         activeTab: 'products',
         user: currentUser,

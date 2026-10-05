@@ -23,8 +23,8 @@ export class InventoryCategoryWebController {
 
       res.render('dashboard/inventory/categories/index', {
         layout: 'dashboard/inventory/layout',
-        title: 'شجرة الفئات',
-        appName: 'إدارة المستودعات',
+        title: 'إدارة الفئات',
+        appName: 'كتالوج المنتجات',
         themeColor: '#10AC84',
         activeTab: 'categories',
         user: currentUser,
@@ -50,7 +50,7 @@ export class InventoryCategoryWebController {
       res.render('dashboard/inventory/categories/create', {
         layout: 'dashboard/inventory/layout',
         title: 'إضافة فئة جديدة',
-        appName: 'إدارة المستودعات',
+        appName: 'كتالوج المنتجات',
         themeColor: '#10AC84',
         activeTab: 'categories',
         user: currentUser,
@@ -75,7 +75,7 @@ export class InventoryCategoryWebController {
       res.render('dashboard/inventory/categories/edit', {
         layout: 'dashboard/inventory/layout',
         title: 'تعديل الفئة',
-        appName: 'إدارة المستودعات',
+        appName: 'كتالوج المنتجات',
         themeColor: '#10AC84',
         activeTab: 'categories',
         user: currentUser,

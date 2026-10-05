@@ -1,20 +1,20 @@
 /**
  * Inventory Categories Management Script
- * Handles category tree view, lazy-loading child nodes, search, create, edit, and soft delete.
+ * Handles categories table view, search, pagination, create, edit, and soft delete.
  * Security: Uses window.erpFetch for all mutations and native DOM APIs to prevent XSS.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  const treeContainer = document.getElementById('categoryTreeContainer');
-  const treeStatusBadge = document.getElementById('treeStatusBadge');
+  // Table & Listing Elements
+  const categoriesTableBody = document.getElementById('categoriesTableBody');
+  const categorySearchForm = document.getElementById('categorySearchForm');
   const categorySearchInput = document.getElementById('categorySearchInput');
-  const btnRefreshTree = document.getElementById('btnRefreshTree');
-  const searchResultsArea = document.getElementById('searchResultsArea');
-  const searchResultsTableBody = document.getElementById('searchResultsTableBody');
   const btnClearSearch = document.getElementById('btnClearSearch');
+  const categoriesPagination = document.getElementById('categoriesPagination');
+  const categoriesPaginationInfo = document.getElementById('categoriesPaginationInfo');
   const alertContainer = document.getElementById('categoryAlertContainer') || document.getElementById('categoryFormAlertContainer');
 
-  // Form elements (if on create or edit page)
+  // Form Elements (if on create or edit page)
   const createCategoryForm = document.getElementById('createCategoryForm');
   const editCategoryForm = document.getElementById('editCategoryForm');
   const categoryParentSelect = document.getElementById('categoryParentId');
@@ -24,6 +24,10 @@ document.addEventListener('DOMContentLoaded', () => {
     canUpdateCategory: false,
     canDeleteCategory: false,
   };
+
+  let currentPage = 1;
+  let currentSearch = '';
+  let searchDebounceTimeout = null;
 
   /**
    * Helper to show Bootstrap alert safely without innerHTML XSS.
@@ -110,10 +114,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!categoryParentSelect) return;
 
     try {
-      // 1. Fetch all pages first into temporary array
       const options = await fetchAllActiveCategoryOptions();
 
-      // 2. Only rebuild select after complete success
       while (categoryParentSelect.options.length > 1) {
         categoryParentSelect.remove(1);
       }
@@ -122,7 +124,6 @@ document.addEventListener('DOMContentLoaded', () => {
       let selectedFound = false;
 
       options.forEach((cat) => {
-        // Do not include the current category itself in edit mode (self-parent prevention)
         if (currentCategoryId && cat.id === currentCategoryId) {
           return;
         }
@@ -137,7 +138,6 @@ document.addEventListener('DOMContentLoaded', () => {
         categoryParentSelect.appendChild(opt);
       });
 
-      // If current parent is inactive (not returned in options), preserve it
       if (selectedId && !selectedFound && selectedId !== currentCategoryId) {
         const inactiveOpt = document.createElement('option');
         inactiveOpt.value = selectedId;
@@ -151,282 +151,258 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- Category Tree Logic ---
+  // ==========================================
+  // 1. CATEGORIES MANAGEMENT TABLE LOGIC
+  // ==========================================
 
-  /**
-   * Builds a single Category Node DOM element.
-   */
-  function createCategoryNodeElement(category, level = 0) {
-    const nodeWrapper = document.createElement('div');
-    nodeWrapper.className = 'tree-node-wrapper';
-    nodeWrapper.dataset.categoryId = category.id;
+  async function loadCategories(page = 1, search = '') {
+    if (!categoriesTableBody) return;
 
-    const nodeItem = document.createElement('div');
-    nodeItem.className = 'tree-node-item d-flex justify-content-between align-items-center';
+    currentPage = page;
+    currentSearch = search;
 
-    // Left info section
-    const leftDiv = document.createElement('div');
-    leftDiv.className = 'd-flex align-items-center gap-2';
-
-    // Toggle button or spacer
-    if (category.hasChildren) {
-      const toggleBtn = document.createElement('button');
-      toggleBtn.type = 'button';
-      toggleBtn.className = 'tree-toggle-btn';
-      toggleBtn.dataset.categoryId = category.id;
-      toggleBtn.dataset.loaded = 'false';
-      toggleBtn.dataset.expanded = 'false';
-
-      const icon = document.createElement('i');
-      icon.className = 'fa-solid fa-chevron-left';
-      toggleBtn.appendChild(icon);
-
-      toggleBtn.addEventListener('click', () => handleToggleChildren(toggleBtn, nodeWrapper, level + 1));
-      leftDiv.appendChild(toggleBtn);
-    } else {
-      const spacer = document.createElement('span');
-      spacer.style.width = '24px';
-      spacer.style.display = 'inline-block';
-      leftDiv.appendChild(spacer);
-    }
-
-    // Folder Icon
-    const folderIcon = document.createElement('i');
-    folderIcon.className = category.hasChildren ? 'fa-solid fa-folder text-warning me-1' : 'fa-regular fa-folder text-muted me-1';
-    leftDiv.appendChild(folderIcon);
-
-    // Name
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'fw-bold text-dark';
-    nameSpan.textContent = category.name;
-    leftDiv.appendChild(nameSpan);
-
-    // Code Badge
-    const codeBadge = document.createElement('span');
-    codeBadge.className = 'badge bg-light text-muted border font-monospace ms-1';
-    codeBadge.textContent = category.code;
-    leftDiv.appendChild(codeBadge);
-
-    // Status Badge
-    const statusBadge = document.createElement('span');
-    statusBadge.className = category.isActive ? 'badge bg-success bg-opacity-10 text-success border border-success ms-1' : 'badge bg-secondary bg-opacity-10 text-secondary border ms-1';
-    statusBadge.textContent = category.isActive ? 'نشطة' : 'معطلة';
-    leftDiv.appendChild(statusBadge);
-
-    // Product Count Badge
-    if (category.productCount > 0) {
-      const productBadge = document.createElement('span');
-      productBadge.className = 'badge bg-info bg-opacity-10 text-info border border-info ms-1';
-      productBadge.textContent = `${category.productCount} منتج`;
-      leftDiv.appendChild(productBadge);
-    }
-
-    nodeItem.appendChild(leftDiv);
-
-    // Right Actions section
-    const rightDiv = document.createElement('div');
-    rightDiv.className = 'd-flex gap-1 align-items-center';
-
-    // Add subcategory button
-    if (permissions.canCreateCategory) {
-      const addSubBtn = document.createElement('a');
-      addSubBtn.href = `/inventory/categories/create?parentId=${encodeURIComponent(category.id)}`;
-      addSubBtn.className = 'btn btn-sm btn-outline-success border-0';
-      addSubBtn.title = 'إضافة فئة فرعية';
-      const addIcon = document.createElement('i');
-      addIcon.className = 'fa-solid fa-plus';
-      addSubBtn.appendChild(addIcon);
-      rightDiv.appendChild(addSubBtn);
-    }
-
-    // Edit button
-    if (permissions.canUpdateCategory) {
-      const editBtn = document.createElement('a');
-      editBtn.href = `/inventory/categories/${encodeURIComponent(category.id)}/edit`;
-      editBtn.className = 'btn btn-sm btn-outline-primary border-0';
-      editBtn.title = 'تعديل الفئة';
-      const editIcon = document.createElement('i');
-      editIcon.className = 'fa-solid fa-pen';
-      editBtn.appendChild(editIcon);
-      rightDiv.appendChild(editBtn);
-    }
-
-    // Archive button
-    if (permissions.canDeleteCategory) {
-      const deleteBtn = document.createElement('button');
-      deleteBtn.type = 'button';
-      deleteBtn.className = 'btn btn-sm btn-outline-danger border-0';
-      deleteBtn.title = 'أرشفة الفئة';
-      const delIcon = document.createElement('i');
-      delIcon.className = 'fa-solid fa-box-archive';
-      deleteBtn.appendChild(delIcon);
-      deleteBtn.addEventListener('click', () => handleDeleteCategory(category));
-      rightDiv.appendChild(deleteBtn);
-    }
-
-    nodeItem.appendChild(rightDiv);
-    nodeWrapper.appendChild(nodeItem);
-
-    // Container for children
-    if (category.hasChildren) {
-      const childrenContainer = document.createElement('div');
-      childrenContainer.className = 'tree-children-container d-none';
-      nodeWrapper.appendChild(childrenContainer);
-    }
-
-    return nodeWrapper;
-  }
-
-  /**
-   * Handles expanding and collapsing a tree node with pagination load more support.
-   */
-  async function handleToggleChildren(toggleBtn, nodeWrapper, level) {
-    const childrenContainer = nodeWrapper.querySelector('.tree-children-container');
-    if (!childrenContainer) return;
-
-    const isExpanded = toggleBtn.dataset.expanded === 'true';
-    const isLoaded = toggleBtn.dataset.loaded === 'true';
-    const categoryId = toggleBtn.dataset.categoryId;
-
-    if (isExpanded) {
-      // Collapse
-      childrenContainer.classList.add('d-none');
-      toggleBtn.classList.remove('expanded');
-      toggleBtn.dataset.expanded = 'false';
-    } else {
-      // Expand
-      if (!isLoaded) {
-        toggleBtn.disabled = true;
-        let childPage = 1;
-        const childLimit = 50;
-
-        async function fetchChildrenPage(page) {
-          try {
-            const res = await fetch(`/api/inventory/categories/${encodeURIComponent(categoryId)}/children?page=${page}&limit=${childLimit}`);
-            const json = await res.json();
-
-            if (json.success && json.data) {
-              if (page === 1) {
-                childrenContainer.textContent = '';
-              }
-              // Remove old load more button if exists
-              const oldBtn = childrenContainer.querySelector('.btn-load-more-children');
-              if (oldBtn) oldBtn.remove();
-
-              json.data.items.forEach((child) => {
-                childrenContainer.appendChild(createCategoryNodeElement(child, level));
-              });
-
-              if (json.data.page < json.data.totalPages) {
-                const loadMoreBtn = document.createElement('button');
-                loadMoreBtn.type = 'button';
-                loadMoreBtn.className = 'btn btn-sm btn-link text-decoration-none text-muted my-1 ps-4 btn-load-more-children';
-                loadMoreBtn.textContent = `تحميل المزيد (${json.data.total - page * childLimit} متبقية)...`;
-                loadMoreBtn.addEventListener('click', () => {
-                  childPage++;
-                  fetchChildrenPage(childPage);
-                });
-                childrenContainer.appendChild(loadMoreBtn);
-              }
-
-              toggleBtn.dataset.loaded = 'true';
-            } else {
-              showAlert(json.message || 'فشل في تحميل الفئات الفرعية');
-            }
-          } catch (err) {
-            showAlert('حدث خطأ أثناء تحميل الفئات الفرعية');
-          } finally {
-            toggleBtn.disabled = false;
-          }
-        }
-
-        await fetchChildrenPage(1);
-      }
-
-      childrenContainer.classList.remove('d-none');
-      toggleBtn.classList.add('expanded');
-      toggleBtn.dataset.expanded = 'true';
-    }
-  }
-
-  /**
-   * Loads root categories into tree container with pagination load more support.
-   */
-  async function loadRootCategories() {
-    if (!treeContainer) return;
-
-    treeContainer.textContent = '';
+    // Show loading spinner row
+    categoriesTableBody.textContent = '';
+    const loadingRow = document.createElement('tr');
+    const loadingTd = document.createElement('td');
+    loadingTd.colSpan = 7;
+    loadingTd.className = 'text-center py-5 text-muted';
     const spinner = document.createElement('div');
-    spinner.className = 'text-center py-4 text-muted';
-    const spinIcon = document.createElement('div');
-    spinIcon.className = 'spinner-border spinner-border-sm text-success me-2';
-    spinner.appendChild(spinIcon);
+    spinner.className = 'spinner-border spinner-border-sm text-secondary me-2';
+    spinner.setAttribute('role', 'status');
+    loadingTd.appendChild(spinner);
     const spinnerText = document.createElement('span');
-    spinnerText.textContent = 'جاري تحميل شجرة الفئات...';
-    spinner.appendChild(spinnerText);
-    treeContainer.appendChild(spinner);
+    spinnerText.textContent = 'جاري تحميل الفئات...';
+    loadingTd.appendChild(spinnerText);
+    loadingRow.appendChild(loadingTd);
+    categoriesTableBody.appendChild(loadingRow);
 
-    if (treeStatusBadge) treeStatusBadge.textContent = 'جاري التحميل...';
-
-    let rootPage = 1;
-    const rootLimit = 50;
-
-    async function fetchRootsPage(page) {
-      try {
-        const res = await fetch(`/api/inventory/categories/roots?page=${page}&limit=${rootLimit}`);
-        const json = await res.json();
-
-        if (page === 1) {
-          treeContainer.textContent = '';
-        }
-        // Remove old load more button if present
-        const oldRootBtn = treeContainer.querySelector('.btn-load-more-roots');
-        if (oldRootBtn) oldRootBtn.remove();
-
-        if (json.success && json.data) {
-          const roots = json.data.items;
-          if (treeStatusBadge) treeStatusBadge.textContent = `${json.data.total} فئة رئيسية`;
-
-          if (page === 1 && roots.length === 0) {
-            const emptyDiv = document.createElement('div');
-            emptyDiv.className = 'text-center py-5 text-muted';
-            emptyDiv.textContent = 'لا توجد فئات بعد. ابدأ بإضافة فئة رئيسية.';
-            treeContainer.appendChild(emptyDiv);
-            return;
-          }
-
-          roots.forEach((root) => {
-            treeContainer.appendChild(createCategoryNodeElement(root, 0));
-          });
-
-          if (json.data.page < json.data.totalPages) {
-            const loadMoreRootsBtn = document.createElement('div');
-            loadMoreRootsBtn.className = 'text-center my-3 btn-load-more-roots';
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'btn btn-sm btn-outline-secondary rounded-pill px-4';
-            btn.textContent = `تحميل المزيد من الفئات الرئيسية (${json.data.total - page * rootLimit} متبقية)...`;
-            btn.addEventListener('click', () => {
-              rootPage++;
-              fetchRootsPage(rootPage);
-            });
-            loadMoreRootsBtn.appendChild(btn);
-            treeContainer.appendChild(loadMoreRootsBtn);
-          }
-        } else {
-          showAlert(json.message || 'فشل في تحميل الفئات');
-        }
-      } catch (err) {
-        showAlert('حدث خطأ أثناء الاتصال بالخادم لتحميل الفئات');
+    try {
+      const queryParams = new URLSearchParams({
+        page: String(page),
+        limit: '15',
+      });
+      if (search && search.trim() !== '') {
+        queryParams.set('search', search.trim());
       }
-    }
 
-    await fetchRootsPage(1);
+      const res = await fetch(`/api/inventory/categories?${queryParams.toString()}`);
+      if (!res.ok) {
+        throw new Error(`HTTP error ${res.status}`);
+      }
+      const json = await res.json();
+
+      categoriesTableBody.textContent = '';
+
+      if (json.success && json.data) {
+        const { items, total, totalPages, page: currentResPage } = json.data;
+
+        if (items.length === 0) {
+          const emptyRow = document.createElement('tr');
+          const emptyTd = document.createElement('td');
+          emptyTd.colSpan = 7;
+          emptyTd.className = 'text-center py-5 text-muted';
+          emptyTd.textContent = search ? 'لم يتم العثور على فئات مطابقة للبحث' : 'لا توجد فئات حتى الآن. ابدأ بإضافة فئة جديدة.';
+          emptyRow.appendChild(emptyTd);
+          categoriesTableBody.appendChild(emptyRow);
+
+          if (categoriesPaginationInfo) {
+            categoriesPaginationInfo.textContent = 'لا توجد نتائج';
+          }
+          if (categoriesPagination) {
+            categoriesPagination.textContent = '';
+          }
+          return;
+        }
+
+        items.forEach((cat) => {
+          const tr = document.createElement('tr');
+
+          // Name
+          const tdName = document.createElement('td');
+          tdName.className = 'py-3 px-4';
+          const nameWrap = document.createElement('div');
+          nameWrap.className = 'd-flex align-items-center gap-2';
+
+          const iconWrap = document.createElement('div');
+          iconWrap.className = 'bg-light text-muted p-2 rounded-3 d-flex align-items-center justify-content-center';
+          iconWrap.style.width = '36px';
+          iconWrap.style.height = '36px';
+          const icon = document.createElement('i');
+          icon.className = 'fa-solid fa-folder text-muted';
+          iconWrap.appendChild(icon);
+          nameWrap.appendChild(iconWrap);
+
+          const textWrap = document.createElement('div');
+          const nameStrong = document.createElement('strong');
+          nameStrong.className = 'text-dark d-block';
+          nameStrong.textContent = cat.name;
+          textWrap.appendChild(nameStrong);
+          if (cat.description) {
+            const descSmall = document.createElement('small');
+            descSmall.className = 'text-muted d-block text-truncate';
+            descSmall.style.maxWidth = '250px';
+            descSmall.textContent = cat.description;
+            textWrap.appendChild(descSmall);
+          }
+          nameWrap.appendChild(textWrap);
+          tdName.appendChild(nameWrap);
+          tr.appendChild(tdName);
+
+          // Code
+          const tdCode = document.createElement('td');
+          tdCode.className = 'py-3';
+          const codeBadge = document.createElement('span');
+          codeBadge.className = 'badge bg-light text-muted border font-monospace';
+          codeBadge.textContent = cat.code;
+          tdCode.appendChild(codeBadge);
+          tr.appendChild(tdCode);
+
+          // Parent Category
+          const tdParent = document.createElement('td');
+          tdParent.className = 'py-3 text-muted small';
+          if (cat.parentId && cat.parentName) {
+            tdParent.textContent = cat.parentName;
+          } else {
+            const rootBadge = document.createElement('span');
+            rootBadge.className = 'badge bg-light text-dark border';
+            rootBadge.textContent = 'فئة رئيسية';
+            tdParent.appendChild(rootBadge);
+          }
+          tr.appendChild(tdParent);
+
+          // Products Count
+          const tdProducts = document.createElement('td');
+          tdProducts.className = 'py-3 text-center';
+          const prodBadge = document.createElement('span');
+          prodBadge.className = 'badge bg-light text-dark border';
+          prodBadge.textContent = String(cat.productCount || 0);
+          tdProducts.appendChild(prodBadge);
+          tr.appendChild(tdProducts);
+
+          // Subcategories Count
+          const tdChildren = document.createElement('td');
+          tdChildren.className = 'py-3 text-center';
+          const childBadge = document.createElement('span');
+          childBadge.className = 'badge bg-light text-dark border';
+          childBadge.textContent = String(cat.childrenCount || 0);
+          tdChildren.appendChild(childBadge);
+          tr.appendChild(tdChildren);
+
+          // Status
+          const tdStatus = document.createElement('td');
+          tdStatus.className = 'py-3 text-center';
+          const stBadge = document.createElement('span');
+          stBadge.className = cat.isActive
+            ? 'badge bg-success bg-opacity-10 text-success border border-success'
+            : 'badge bg-secondary bg-opacity-10 text-secondary border';
+          stBadge.textContent = cat.isActive ? 'نشط' : 'معطل';
+          tdStatus.appendChild(stBadge);
+          tr.appendChild(tdStatus);
+
+          // Actions
+          const tdActions = document.createElement('td');
+          tdActions.className = 'py-3 text-center px-4';
+          const actionGroup = document.createElement('div');
+          actionGroup.className = 'd-flex justify-content-center gap-1';
+
+          if (permissions.canUpdateCategory) {
+            const editBtn = document.createElement('a');
+            editBtn.href = `/inventory/categories/${encodeURIComponent(cat.id)}/edit`;
+            editBtn.className = 'btn btn-sm btn-outline-primary';
+            editBtn.title = 'تعديل الفئة';
+            const editIcon = document.createElement('i');
+            editIcon.className = 'fa-solid fa-pen';
+            editBtn.appendChild(editIcon);
+            actionGroup.appendChild(editBtn);
+          }
+
+          if (permissions.canDeleteCategory) {
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'btn btn-sm btn-outline-danger';
+            delBtn.title = 'أرشفة الفئة';
+            const delIcon = document.createElement('i');
+            delIcon.className = 'fa-solid fa-box-archive';
+            delBtn.appendChild(delIcon);
+            delBtn.addEventListener('click', () => handleDeleteCategory(cat));
+            actionGroup.appendChild(delBtn);
+          }
+
+          tdActions.appendChild(actionGroup);
+          tr.appendChild(tdActions);
+
+          categoriesTableBody.appendChild(tr);
+        });
+
+        renderCategoriesPagination(totalPages, currentResPage, total);
+      } else {
+        showAlert(json.message || 'فشل في تحميل الفئات');
+      }
+    } catch (err) {
+      console.error('Error loading categories:', err);
+      showAlert('حدث خطأ أثناء الاتصال بالخادم لتحميل قائمة الفئات');
+    }
   }
 
-  /**
-   * Handles soft delete (archive) of a category.
-   */
+  function renderCategoriesPagination(totalPages, page, total) {
+    if (categoriesPaginationInfo) {
+      categoriesPaginationInfo.textContent = `عرض الصفحة ${page} من ${totalPages || 1} (إجمالي ${total} فئة)`;
+    }
+
+    if (!categoriesPagination) return;
+    categoriesPagination.textContent = '';
+
+    if (totalPages <= 1) return;
+
+    // Previous Button
+    const prevLi = document.createElement('li');
+    prevLi.className = `page-item ${page === 1 ? 'disabled' : ''}`;
+    const prevA = document.createElement('a');
+    prevA.className = 'page-link';
+    prevA.href = '#';
+    prevA.textContent = 'السابق';
+    prevA.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (page > 1) loadCategories(page - 1, currentSearch);
+    });
+    prevLi.appendChild(prevA);
+    categoriesPagination.appendChild(prevLi);
+
+    // Numbered Pages
+    const start = Math.max(1, page - 2);
+    const end = Math.min(totalPages, page + 2);
+
+    for (let i = start; i <= end; i++) {
+      const pageLi = document.createElement('li');
+      pageLi.className = `page-item ${i === page ? 'active' : ''}`;
+      const pageA = document.createElement('a');
+      pageA.className = 'page-link';
+      pageA.href = '#';
+      pageA.textContent = String(i);
+      pageA.addEventListener('click', (e) => {
+        e.preventDefault();
+        loadCategories(i, currentSearch);
+      });
+      pageLi.appendChild(pageA);
+      categoriesPagination.appendChild(pageLi);
+    }
+
+    // Next Button
+    const nextLi = document.createElement('li');
+    nextLi.className = `page-item ${page === totalPages ? 'disabled' : ''}`;
+    const nextA = document.createElement('a');
+    nextA.className = 'page-link';
+    nextA.href = '#';
+    nextA.textContent = 'التالي';
+    nextA.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (page < totalPages) loadCategories(page + 1, currentSearch);
+    });
+    nextLi.appendChild(nextA);
+    categoriesPagination.appendChild(nextLi);
+  }
+
   async function handleDeleteCategory(category) {
     if (!confirm(`هل أنت متأكد من أرشفة فئة "${category.name}"؟`)) {
       return;
@@ -440,7 +416,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (json.success) {
         showAlert(json.message || 'تمت أرشفة الفئة بنجاح', 'success');
-        loadRootCategories();
+        loadCategories(currentPage, currentSearch);
       } else {
         showAlert(json.message || 'فشل في أرشفة الفئة');
       }
@@ -449,141 +425,54 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  /**
-   * Handles Flat Search for categories.
-   */
-  let searchTimeout = null;
-  if (categorySearchInput) {
-    categorySearchInput.addEventListener('input', (e) => {
-      const term = e.target.value.trim();
-      clearTimeout(searchTimeout);
+  // Bind Table search events
+  if (categoriesTableBody) {
+    loadCategories(1, '');
 
-      if (term === '') {
-        if (searchResultsArea) searchResultsArea.classList.add('d-none');
-        if (treeContainer) treeContainer.classList.remove('d-none');
-        return;
-      }
-
-      searchTimeout = setTimeout(() => performSearch(term), 300);
-    });
-  }
-
-  if (btnClearSearch) {
-    btnClearSearch.addEventListener('click', () => {
-      if (categorySearchInput) categorySearchInput.value = '';
-      if (searchResultsArea) searchResultsArea.classList.add('d-none');
-      if (treeContainer) treeContainer.classList.remove('d-none');
-    });
-  }
-
-  if (btnRefreshTree) {
-    btnRefreshTree.addEventListener('click', () => {
-      loadRootCategories();
-    });
-  }
-
-  async function performSearch(term) {
-    if (!searchResultsArea || !searchResultsTableBody) return;
-
-    searchResultsArea.classList.remove('d-none');
-    if (treeContainer) treeContainer.classList.add('d-none');
-
-    searchResultsTableBody.textContent = '';
-    const loadingRow = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 6;
-    td.className = 'text-center py-3 text-muted';
-    td.textContent = 'جاري البحث...';
-    loadingRow.appendChild(td);
-    searchResultsTableBody.appendChild(loadingRow);
-
-    try {
-      const res = await fetch(`/api/inventory/categories/search?search=${encodeURIComponent(term)}&limit=50`);
-      const json = await res.json();
-
-      searchResultsTableBody.textContent = '';
-
-      if (json.success && json.data) {
-        const items = json.data.items;
-        if (items.length === 0) {
-          const emptyRow = document.createElement('tr');
-          const emptyTd = document.createElement('td');
-          emptyTd.colSpan = 6;
-          emptyTd.className = 'text-center py-4 text-muted';
-          emptyTd.textContent = 'لم يتم العثور على نتائج مطابقة للبحث';
-          emptyRow.appendChild(emptyTd);
-          searchResultsTableBody.appendChild(emptyRow);
-          return;
+    if (categorySearchForm) {
+      categorySearchForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const term = categorySearchInput ? categorySearchInput.value.trim() : '';
+        if (btnClearSearch) {
+          if (term) {
+            btnClearSearch.classList.remove('d-none');
+          } else {
+            btnClearSearch.classList.add('d-none');
+          }
         }
+        loadCategories(1, term);
+      });
+    }
 
-        items.forEach((cat) => {
-          const tr = document.createElement('tr');
-
-          // Name
-          const tdName = document.createElement('td');
-          tdName.className = 'fw-bold';
-          tdName.textContent = cat.name;
-          tr.appendChild(tdName);
-
-          // Code
-          const tdCode = document.createElement('td');
-          const codeBadge = document.createElement('span');
-          codeBadge.className = 'badge bg-light text-muted border font-monospace';
-          codeBadge.textContent = cat.code;
-          tdCode.appendChild(codeBadge);
-          tr.appendChild(tdCode);
-
-          // Parent
-          const tdParent = document.createElement('td');
-          tdParent.className = 'text-muted';
-          tdParent.textContent = cat.parentName || '-- رئيسية --';
-          tr.appendChild(tdParent);
-
-          // Status
-          const tdStatus = document.createElement('td');
-          const stBadge = document.createElement('span');
-          stBadge.className = cat.isActive ? 'badge bg-success bg-opacity-10 text-success border border-success' : 'badge bg-secondary bg-opacity-10 text-secondary border';
-          stBadge.textContent = cat.isActive ? 'نشطة' : 'معطلة';
-          tdStatus.appendChild(stBadge);
-          tr.appendChild(tdStatus);
-
-          // Products
-          const tdProducts = document.createElement('td');
-          tdProducts.textContent = `${cat.productCount} منتج`;
-          tr.appendChild(tdProducts);
-
-          // Actions
-          const tdActions = document.createElement('td');
-          tdActions.className = 'text-end';
-
-          if (permissions.canUpdateCategory) {
-            const editLink = document.createElement('a');
-            editLink.href = `/inventory/categories/${encodeURIComponent(cat.id)}/edit`;
-            editLink.className = 'btn btn-sm btn-outline-primary me-1';
-            editLink.textContent = 'تعديل';
-            tdActions.appendChild(editLink);
+    if (categorySearchInput) {
+      categorySearchInput.addEventListener('input', (e) => {
+        const term = e.target.value.trim();
+        clearTimeout(searchDebounceTimeout);
+        if (btnClearSearch) {
+          if (term) {
+            btnClearSearch.classList.remove('d-none');
+          } else {
+            btnClearSearch.classList.add('d-none');
           }
+        }
+        searchDebounceTimeout = setTimeout(() => {
+          loadCategories(1, term);
+        }, 350);
+      });
+    }
 
-          if (permissions.canDeleteCategory) {
-            const delBtn = document.createElement('button');
-            delBtn.type = 'button';
-            delBtn.className = 'btn btn-sm btn-outline-danger';
-            delBtn.textContent = 'أرشفة';
-            delBtn.addEventListener('click', () => handleDeleteCategory(cat));
-            tdActions.appendChild(delBtn);
-          }
-
-          tr.appendChild(tdActions);
-          searchResultsTableBody.appendChild(tr);
-        });
-      }
-    } catch (err) {
-      searchResultsTableBody.textContent = '';
-      showAlert('حدث خطأ أثناء البحث عن الفئات');
+    if (btnClearSearch) {
+      btnClearSearch.addEventListener('click', () => {
+        if (categorySearchInput) categorySearchInput.value = '';
+        btnClearSearch.classList.add('d-none');
+        loadCategories(1, '');
+      });
     }
   }
 
-  // --- Category Form Handling (Create & Edit) ---
+  // ==========================================
+  // 2. CATEGORY FORM HANDLING (CREATE & EDIT)
+  // ==========================================
 
   if (createCategoryForm) {
     const initialParentId = categoryParentSelect ? categoryParentSelect.dataset.initialParent : '';
@@ -644,7 +533,6 @@ document.addEventListener('DOMContentLoaded', () => {
   if (editCategoryForm) {
     const categoryId = editCategoryForm.dataset.categoryId;
 
-    // Load category details
     async function loadCategoryDetails() {
       try {
         const res = await fetch(`/api/inventory/categories/${encodeURIComponent(categoryId)}`);
@@ -718,10 +606,5 @@ document.addEventListener('DOMContentLoaded', () => {
         if (spinner) spinner.classList.add('d-none');
       }
     });
-  }
-
-  // Initial load for tree if tree container is present
-  if (treeContainer) {
-    loadRootCategories();
   }
 });

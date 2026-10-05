@@ -1,159 +1,170 @@
-<div class="container-fluid">
-  <!-- Breadcrumb & Header -->
-  <div class="mb-4">
-    <nav aria-label="breadcrumb">
-      <ol class="breadcrumb mb-1">
-        <li class="breadcrumb-item"><a href="/inventory" class="text-decoration-none">المستودعات</a></li>
-        <li class="breadcrumb-item"><a href="/inventory/products" class="text-decoration-none">المنتجات</a></li>
-        <li class="breadcrumb-item active" aria-current="page">تعديل المنتج</li>
-      </ol>
-    </nav>
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+<div class="row justify-content-center">
+  <div class="col-lg-11 col-xl-10">
+    <!-- Header -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
       <div>
-        <h3 class="fw-bold mb-1" style="color: #2D3436;" id="productHeaderTitle">
-          <i class="fa-solid fa-box-open me-2" style="color: #10AC84;"></i> تعديل المنتج
+        <h3 class="fw-bold mb-1" style="color: #1F2937;" id="productHeaderTitle">
+          تعديل المنتج <i class="fa-solid fa-box-open text-muted fs-5 ms-2"></i>
         </h3>
-        <p class="text-muted mb-0" id="productHeaderSubtitle">جاري تحميل بيانات المنتج...</p>
+        <p class="text-muted mb-0 small" id="productHeaderSubtitle">تعديل بيانات المنتج، وحدات القياس، ومعاملات التحويل</p>
       </div>
-      <div class="d-flex gap-2">
-        <span class="badge bg-light text-dark border align-self-center py-2 px-3" id="productCodeBadge"></span>
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-light text-muted border font-monospace py-2 px-3" id="productCodeBadge"></span>
+        <a href="/inventory/products" class="btn btn-outline-secondary">
+          <i class="fa-solid fa-arrow-left ms-1"></i> العودة للقائمة
+        </a>
       </div>
     </div>
-  </div>
 
-  <!-- Alert Container -->
-  <div id="productFormAlertContainer"></div>
+    <!-- Alert Container -->
+    <div id="productFormAlertContainer"></div>
 
-  <!-- Nav Tabs -->
-  <ul class="nav nav-tabs mb-4" id="productEditTabs" role="tablist">
-    <li class="nav-item" role="presentation">
-      <button class="nav-link active fw-bold" id="product-info-tab" data-bs-toggle="tab" data-bs-target="#product-info-pane" type="button" role="tab">
-        <i class="fa-solid fa-cube me-1"></i> بيانات المنتج
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link fw-bold" id="units-tab" data-bs-toggle="tab" data-bs-target="#units-pane" type="button" role="tab">
-        <i class="fa-solid fa-scale-balanced me-1"></i> وحدات القياس
-        <span class="badge rounded-pill bg-success ms-1" id="unitsCountPill">0</span>
-      </button>
-    </li>
-  </ul>
+    <!-- Nav Tabs -->
+    <ul class="nav nav-tabs mb-4" id="productEditTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active fw-bold px-4 py-2" id="product-info-tab" data-bs-toggle="tab" data-bs-target="#product-info-pane" type="button" role="tab">
+          <i class="fa-solid fa-cube me-2"></i> بيانات المنتج
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link fw-bold px-4 py-2" id="units-tab" data-bs-toggle="tab" data-bs-target="#units-pane" type="button" role="tab">
+          <i class="fa-solid fa-scale-balanced me-2"></i> وحدات القياس
+          <span class="badge bg-secondary rounded-pill ms-1" id="unitsCountPill">0</span>
+        </button>
+      </li>
+    </ul>
 
-  <!-- Tab Content -->
-  <div class="tab-content" id="productEditTabsContent" data-product-id="<%= typeof productId !== 'undefined' ? productId : '' %>">
-    
-    <!-- Tab 1: Product Info -->
-    <div class="tab-pane fade show active" id="product-info-pane" role="tabpanel">
-      <div class="row justify-content-center">
-        <div class="col-12 col-lg-8">
-          <div class="card border-0 shadow-sm rounded-4">
-            <div class="card-header bg-white border-bottom py-3">
-              <h6 class="fw-bold mb-0 text-dark">البيانات العامة</h6>
-            </div>
-            <div class="card-body p-4">
-              <form id="editProductForm" novalidate>
+    <!-- Tab Content -->
+    <div class="tab-content" id="productEditTabsContent" data-product-id="<%= typeof productId !== 'undefined' ? productId : '' %>">
+      
+      <!-- Tab 1: Product Info -->
+      <div class="tab-pane fade show active" id="product-info-pane" role="tabpanel">
+        <div class="card border-0 shadow-sm" style="border-radius: 12px;">
+          <div class="card-header bg-white border-bottom py-3">
+            <h6 class="fw-bold mb-0 text-dark">
+              <i class="fa-solid fa-pen-to-square text-muted me-2"></i> البيانات العامة للمنتج
+            </h6>
+          </div>
+          <div class="card-body p-4 p-md-5">
+            <form id="editProductForm" novalidate>
+              <div class="row g-4">
                 <!-- Code (Read-Only) -->
-                <div class="mb-3">
-                  <label for="editProductCode" class="form-label fw-bold text-muted">رمز المنتج (ثابت)</label>
-                  <input type="text" class="form-control bg-light" id="editProductCode" readonly disabled>
-                  <div class="form-text">رمز المنتج فريد وثابت في النظام ولا يمكن تعديله.</div>
+                <div class="col-12 col-md-6">
+                  <label for="editProductCode" class="form-label fw-bold text-dark">رمز المنتج (ثابت)</label>
+                  <div class="input-group">
+                    <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-lock"></i></span>
+                    <input type="text" class="form-control bg-light font-monospace" id="editProductCode" readonly disabled>
+                  </div>
+                  <div class="form-text text-muted">رمز المنتج فريد وثابت في النظام ولا يمكن تعديله.</div>
                 </div>
 
                 <!-- Name -->
-                <div class="mb-3">
-                  <label for="editProductName" class="form-label fw-bold">اسم المنتج <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="editProductName" name="name" required maxlength="150">
+                <div class="col-12 col-md-6">
+                  <label for="editProductName" class="form-label fw-bold text-dark">اسم المنتج <span class="text-danger">*</span></label>
+                  <div class="input-group has-validation">
+                    <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-box"></i></span>
+                    <input type="text" class="form-control" id="editProductName" name="name" required maxlength="150">
+                    <div class="invalid-feedback">يرجى إدخال اسم المنتج</div>
+                  </div>
                 </div>
 
                 <!-- Category -->
-                <div class="mb-3">
-                  <label for="editProductCategoryId" class="form-label fw-bold">فئة المنتج</label>
-                  <select class="form-select" id="editProductCategoryId" name="categoryId">
-                    <option value="">-- بدون فئة (غير مصنف) --</option>
-                  </select>
+                <div class="col-12 col-md-6">
+                  <label for="editProductCategoryId" class="form-label fw-bold text-dark">فئة المنتج</label>
+                  <div class="input-group">
+                    <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-folder"></i></span>
+                    <select class="form-select" id="editProductCategoryId" name="categoryId">
+                      <option value="">-- بدون فئة (غير مصنف) --</option>
+                    </select>
+                  </div>
                 </div>
 
                 <!-- Location Name -->
-                <div class="mb-3">
-                  <label for="editProductLocationName" class="form-label fw-bold">مكان وجود المادة (اختياري)</label>
-                  <input type="text" class="form-control" id="editProductLocationName" name="locationName" maxlength="255">
-                  <div class="form-text">نص إرشادي لمكان التخزين (بدون أرصدة أو حركات مخزنية).</div>
+                <div class="col-12 col-md-6">
+                  <label for="editProductLocationName" class="form-label fw-bold text-dark">مكان وجود المادة (اختياري)</label>
+                  <div class="input-group">
+                    <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-location-dot"></i></span>
+                    <input type="text" class="form-control" id="editProductLocationName" name="locationName" maxlength="255">
+                  </div>
+                  <div class="form-text text-muted">نص إرشادي لمكان التخزين (بدون أرصدة أو حركات مخزنية).</div>
                 </div>
 
                 <!-- Description -->
-                <div class="mb-3">
-                  <label for="editProductDescription" class="form-label fw-bold">الوصف</label>
+                <div class="col-12">
+                  <label for="editProductDescription" class="form-label fw-bold text-dark">الوصف</label>
                   <textarea class="form-control" id="editProductDescription" name="description" rows="3"></textarea>
                 </div>
 
                 <!-- Is Active -->
-                <div class="mb-4">
-                  <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="editProductIsActive" name="isActive">
-                    <label class="form-check-label fw-bold" for="editProductIsActive">منتج نشط</label>
+                <div class="col-12">
+                  <div class="form-check form-switch fs-6">
+                    <input class="form-check-input" type="checkbox" role="switch" id="editProductIsActive" name="isActive">
+                    <label class="form-check-label fw-bold text-dark" for="editProductIsActive">منتج نشط في الكتالوج</label>
                   </div>
                 </div>
+              </div>
 
-                <!-- Actions -->
-                <div class="d-flex justify-content-between align-items-center pt-3 border-top">
-                  <div>
-                    <% if (typeof canDeleteProduct !== 'undefined' && canDeleteProduct) { %>
-                      <button type="button" class="btn btn-outline-danger rounded-pill px-3" id="btnArchiveProduct">
-                        <i class="fa-solid fa-box-archive me-1"></i> أرشفة المنتج
-                      </button>
-                    <% } %>
-                  </div>
-                  <div class="d-flex gap-2">
-                    <a href="/inventory/products" class="btn btn-outline-secondary rounded-pill px-4">رجوع للقائمة</a>
-                    <button type="submit" id="btnSaveProduct" class="btn btn-primary rounded-pill px-4 fw-bold" style="background-color: #10AC84; border-color: #10AC84;">
-                      <span class="spinner-border spinner-border-sm d-none me-1" id="saveProductSpinner" role="status"></span>
-                      حفظ التعديلات
+              <!-- Actions -->
+              <hr class="my-4 text-muted">
+              <div class="d-flex justify-content-between align-items-center">
+                <div>
+                  <% if (typeof canDeleteProduct !== 'undefined' && canDeleteProduct) { %>
+                    <button type="button" class="btn btn-outline-danger px-3 d-inline-flex align-items-center gap-1" id="btnArchiveProduct">
+                      <i class="fa-solid fa-box-archive"></i>
+                      <span>أرشفة المنتج</span>
                     </button>
-                  </div>
+                  <% } %>
                 </div>
-              </form>
-            </div>
+                <div class="d-flex gap-2">
+                  <a href="/inventory/products" class="btn btn-light px-4">رجوع للقائمة</a>
+                  <button type="submit" id="btnSaveProduct" class="btn btn-primary btn-module-primary px-5 d-inline-flex align-items-center gap-2">
+                    <span class="spinner-border spinner-border-sm d-none" id="saveProductSpinner" role="status"></span>
+                    <i class="fa-solid fa-check"></i>
+                    <span>حفظ التعديلات</span>
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Tab 2: Units Management -->
-    <div class="tab-pane fade" id="units-pane" role="tabpanel">
-      <div class="card border-0 shadow-sm rounded-4">
-        <div class="card-header bg-white border-bottom py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
-          <div>
-            <h6 class="fw-bold mb-0 text-dark">
-              <i class="fa-solid fa-list-check me-2 text-muted"></i> وحدات القياس ومعاملات التحويل
-            </h6>
-            <small class="text-muted">الوحدة الأساسية هي مرجع القياس، والوحدات الإضافية ترتبط بها بشكل مباشر أو تسلسلي.</small>
+      <!-- Tab 2: Units Management -->
+      <div class="tab-pane fade" id="units-pane" role="tabpanel">
+        <div class="card border-0 shadow-sm" style="border-radius: 12px; overflow: hidden;">
+          <div class="card-header bg-white border-bottom py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+              <h6 class="fw-bold mb-0 text-dark">
+                <i class="fa-solid fa-scale-balanced text-muted me-2"></i> وحدات القياس ومعاملات التحويل
+              </h6>
+              <p class="text-muted mb-0 small">الوحدة الأساسية هي مرجع القياس، والوحدات الإضافية ترتبط بها بشكل مباشر أو تسلسلي.</p>
+            </div>
+            <div>
+              <% if (typeof canUpdateProduct !== 'undefined' && canUpdateProduct) { %>
+                <button type="button" class="btn btn-primary btn-module-primary d-inline-flex align-items-center gap-2 px-3 py-2 shadow-sm" id="btnOpenAddUnitModal">
+                  <i class="fa-solid fa-plus"></i>
+                  <span>إضافة وحدة جديدة</span>
+                </button>
+              <% } %>
+            </div>
           </div>
-          <div>
-            <% if (typeof canUpdateProduct !== 'undefined' && canUpdateProduct) { %>
-              <button type="button" class="btn btn-primary rounded-pill px-3 fw-bold" id="btnOpenAddUnitModal" style="background-color: #10AC84; border-color: #10AC84;">
-                <i class="fa-solid fa-plus me-1"></i> إضافة وحدة جديدة
-              </button>
-            <% } %>
-          </div>
-        </div>
-        <div class="card-body p-0">
           <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
-              <thead class="table-light text-muted" style="font-size: 0.9rem;">
-                <tr>
-                  <th class="ps-4">اسم الوحدة</th>
-                  <th>نوع الوحدة</th>
-                  <th>معادلة التعادل والتحويل</th>
-                  <th>السعر المرجعي</th>
-                  <th>الباركود</th>
-                  <th>المواصفات الفنية</th>
-                  <th class="text-end pe-4">الإجراءات</th>
+              <thead class="table-light">
+                <tr class="text-muted small">
+                  <th scope="col" class="py-3 px-4">اسم الوحدة</th>
+                  <th scope="col" class="py-3">نوع الوحدة</th>
+                  <th scope="col" class="py-3">معادلة التعادل والتحويل</th>
+                  <th scope="col" class="py-3">السعر المرجعي</th>
+                  <th scope="col" class="py-3">الباركود</th>
+                  <th scope="col" class="py-3">المواصفات الفنية</th>
+                  <th scope="col" class="py-3 text-center px-4">الإجراءات</th>
                 </tr>
               </thead>
               <tbody id="productUnitsTableBody">
                 <tr>
-                  <td colspan="7" class="text-center py-4 text-muted">
-                    <div class="spinner-border spinner-border-sm text-success me-2" role="status"></div>
+                  <td colspan="7" class="text-center py-5 text-muted">
+                    <div class="spinner-border spinner-border-sm text-secondary me-2" role="status"></div>
                     جاري تحميل الوحدات...
                   </td>
                 </tr>
@@ -169,10 +180,10 @@
 <!-- Modal: Add Non-Base Unit -->
 <div class="modal fade" id="addUnitModal" tabindex="-1" aria-labelledby="addUnitModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered">
-    <div class="modal-content rounded-4 border-0 shadow">
+    <div class="modal-content border-0 shadow" style="border-radius: 12px;">
       <div class="modal-header border-bottom py-3">
         <h5 class="modal-title fw-bold" id="addUnitModalLabel">
-          <i class="fa-solid fa-plus-circle me-2 text-success"></i> إضافة وحدة قياس جديدة
+          <i class="fa-solid fa-plus text-muted me-2"></i> إضافة وحدة قياس جديدة
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -181,17 +192,20 @@
           <div id="addUnitAlertContainer"></div>
 
           <!-- Unit Name -->
-          <div class="mb-3">
-            <label for="newUnitName" class="form-label fw-bold">اسم الوحدة <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="newUnitName" name="name" required maxlength="100" placeholder="مثال: صندوق، كرتونة، لفة">
+          <div class="mb-4">
+            <label for="newUnitName" class="form-label fw-bold text-dark">اسم الوحدة <span class="text-danger">*</span></label>
+            <div class="input-group has-validation">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-tag"></i></span>
+              <input type="text" class="form-control" id="newUnitName" name="name" required maxlength="100" placeholder="مثال: صندوق، كرتونة، لفة">
+            </div>
           </div>
 
           <!-- Conversion Formula -->
-          <div class="card bg-light border-0 rounded-3 p-3 mb-3">
+          <div class="card bg-light border-0 p-3 mb-4" style="border-radius: 8px;">
             <label class="form-label fw-bold text-dark mb-2">معامل ومعادلة التحويل <span class="text-danger">*</span></label>
             <div class="row g-2 align-items-center">
               <div class="col-auto">
-                <span class="fw-bold">1 <span id="formulaNewUnitNamePreview" class="text-success">[الوحدة الجديدة]</span> =</span>
+                <span class="fw-bold">1 <span id="formulaNewUnitNamePreview" class="text-dark">[الوحدة الجديدة]</span> =</span>
               </div>
               <div class="col-12 col-sm-4">
                 <input type="number" step="0.000001" min="0.000001" class="form-control" id="newUnitConversionQuantity" name="conversionQuantity" required placeholder="مثال: 20">
@@ -205,30 +219,36 @@
                 </select>
               </div>
             </div>
-            <div class="form-text mt-2" id="formulaPreviewText">
+            <div class="form-text text-muted mt-2" id="formulaPreviewText">
               مثال: 1 صندوق = 20 قطعة (يجب أن تنتهي السلسلة بالوحدة الأساسية).
             </div>
           </div>
 
-          <div class="row g-3 mb-3">
+          <div class="row g-3 mb-4">
             <!-- Price -->
             <div class="col-12 col-sm-6">
-              <label for="newUnitPrice" class="form-label fw-bold">السعر المرجعي <span class="text-danger">*</span></label>
-              <input type="number" step="0.0001" min="0" class="form-control" id="newUnitPrice" name="price" required placeholder="0.00">
+              <label for="newUnitPrice" class="form-label fw-bold text-dark">السعر المرجعي <span class="text-danger">*</span></label>
+              <div class="input-group has-validation">
+                <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-coins"></i></span>
+                <input type="number" step="0.0001" min="0" class="form-control" id="newUnitPrice" name="price" required placeholder="0.00">
+              </div>
             </div>
 
             <!-- Barcode -->
             <div class="col-12 col-sm-6">
-              <label for="newUnitBarcode" class="form-label fw-bold">الباركود (اختياري)</label>
-              <input type="text" class="form-control" id="newUnitBarcode" name="barcode" maxlength="100" placeholder="مثال: 628100099999">
+              <label for="newUnitBarcode" class="form-label fw-bold text-dark">الباركود (اختياري)</label>
+              <div class="input-group">
+                <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-barcode"></i></span>
+                <input type="text" class="form-control font-monospace" id="newUnitBarcode" name="barcode" maxlength="100" placeholder="مثال: 628100099999">
+              </div>
             </div>
           </div>
 
           <!-- Specifications Dynamic Section -->
-          <div class="pt-3 border-top mt-3">
+          <div class="pt-3 border-top">
             <div class="d-flex justify-content-between align-items-center mb-3">
-              <label class="form-label fw-bold mb-0">المواصفات الفنية للوحدة (اختياري)</label>
-              <button type="button" class="btn btn-sm btn-outline-success rounded-pill px-3" id="btnAddUnitSpec">
+              <label class="form-label fw-bold text-dark mb-0 small">المواصفات الفنية للوحدة (اختياري)</label>
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="btnAddUnitSpec">
                 <i class="fa-solid fa-plus me-1"></i> إضافة خاصية
               </button>
             </div>
@@ -236,10 +256,11 @@
           </div>
         </div>
         <div class="modal-footer border-top py-3">
-          <button type="button" class="btn btn-outline-secondary rounded-pill px-4" data-bs-dismiss="modal">إلغاء</button>
-          <button type="submit" id="btnSubmitAddUnit" class="btn btn-primary rounded-pill px-4 fw-bold" style="background-color: #10AC84; border-color: #10AC84;">
-            <span class="spinner-border spinner-border-sm d-none me-1" id="addUnitSpinner" role="status"></span>
-            إضافة الوحدة
+          <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">إلغاء</button>
+          <button type="submit" id="btnSubmitAddUnit" class="btn btn-primary btn-module-primary px-4 d-inline-flex align-items-center gap-2">
+            <span class="spinner-border spinner-border-sm d-none" id="addUnitSpinner" role="status"></span>
+            <i class="fa-solid fa-check"></i>
+            <span>إضافة الوحدة</span>
           </button>
         </div>
       </form>
@@ -250,10 +271,10 @@
 <!-- Modal: Edit Unit -->
 <div class="modal fade" id="editUnitModal" tabindex="-1" aria-labelledby="editUnitModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered">
-    <div class="modal-content rounded-4 border-0 shadow">
+    <div class="modal-content border-0 shadow" style="border-radius: 12px;">
       <div class="modal-header border-bottom py-3">
         <h5 class="modal-title fw-bold" id="editUnitModalLabel">
-          <i class="fa-solid fa-pen-to-square me-2 text-success"></i> تعديل بيانات الوحدة
+          <i class="fa-solid fa-pen-to-square text-muted me-2"></i> تعديل بيانات الوحدة
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -268,17 +289,20 @@
           </div>
 
           <!-- Unit Name -->
-          <div class="mb-3">
-            <label for="editUnitName" class="form-label fw-bold">اسم الوحدة <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="editUnitName" name="name" required maxlength="100">
+          <div class="mb-4">
+            <label for="editUnitName" class="form-label fw-bold text-dark">اسم الوحدة <span class="text-danger">*</span></label>
+            <div class="input-group has-validation">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-tag"></i></span>
+              <input type="text" class="form-control" id="editUnitName" name="name" required maxlength="100">
+            </div>
           </div>
 
           <!-- Conversion Formula Section (Hidden for base unit) -->
-          <div id="editConversionFormulaSection" class="card bg-light border-0 rounded-3 p-3 mb-3">
+          <div id="editConversionFormulaSection" class="card bg-light border-0 p-3 mb-4" style="border-radius: 8px;">
             <label class="form-label fw-bold text-dark mb-2">معامل ومعادلة التحويل <span class="text-danger">*</span></label>
             <div class="row g-2 align-items-center">
               <div class="col-auto">
-                <span class="fw-bold">1 <span id="editFormulaUnitNamePreview" class="text-success">[الوحدة]</span> =</span>
+                <span class="fw-bold">1 <span id="editFormulaUnitNamePreview" class="text-dark">[الوحدة]</span> =</span>
               </div>
               <div class="col-12 col-sm-4">
                 <input type="number" step="0.000001" min="0.000001" class="form-control" id="editUnitConversionQuantity" name="conversionQuantity">
@@ -294,25 +318,31 @@
             </div>
           </div>
 
-          <div class="row g-3 mb-3">
+          <div class="row g-3 mb-4">
             <!-- Price -->
             <div class="col-12 col-sm-6">
-              <label for="editUnitPrice" class="form-label fw-bold">السعر المرجعي <span class="text-danger">*</span></label>
-              <input type="number" step="0.0001" min="0" class="form-control" id="editUnitPrice" name="price" required>
+              <label for="editUnitPrice" class="form-label fw-bold text-dark">السعر المرجعي <span class="text-danger">*</span></label>
+              <div class="input-group has-validation">
+                <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-coins"></i></span>
+                <input type="number" step="0.0001" min="0" class="form-control" id="editUnitPrice" name="price" required>
+              </div>
             </div>
 
             <!-- Barcode -->
             <div class="col-12 col-sm-6">
-              <label for="editUnitBarcode" class="form-label fw-bold">الباركود (اختياري)</label>
-              <input type="text" class="form-control" id="editUnitBarcode" name="barcode" maxlength="100">
+              <label for="editUnitBarcode" class="form-label fw-bold text-dark">الباركود (اختياري)</label>
+              <div class="input-group">
+                <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-barcode"></i></span>
+                <input type="text" class="form-control font-monospace" id="editUnitBarcode" name="barcode" maxlength="100">
+              </div>
             </div>
           </div>
 
           <!-- Specifications Dynamic Section -->
-          <div class="pt-3 border-top mt-3">
+          <div class="pt-3 border-top">
             <div class="d-flex justify-content-between align-items-center mb-3">
-              <label class="form-label fw-bold mb-0">المواصفات الفنية للوحدة</label>
-              <button type="button" class="btn btn-sm btn-outline-success rounded-pill px-3" id="btnAddEditUnitSpec">
+              <label class="form-label fw-bold text-dark mb-0 small">المواصفات الفنية للوحدة</label>
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="btnAddEditUnitSpec">
                 <i class="fa-solid fa-plus me-1"></i> إضافة خاصية
               </button>
             </div>
@@ -320,10 +350,11 @@
           </div>
         </div>
         <div class="modal-footer border-top py-3">
-          <button type="button" class="btn btn-outline-secondary rounded-pill px-4" data-bs-dismiss="modal">إلغاء</button>
-          <button type="submit" id="btnSubmitEditUnit" class="btn btn-primary rounded-pill px-4 fw-bold" style="background-color: #10AC84; border-color: #10AC84;">
-            <span class="spinner-border spinner-border-sm d-none me-1" id="editUnitSpinner" role="status"></span>
-            حفظ التعديلات
+          <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">إلغاء</button>
+          <button type="submit" id="btnSubmitEditUnit" class="btn btn-primary btn-module-primary px-4 d-inline-flex align-items-center gap-2">
+            <span class="spinner-border spinner-border-sm d-none" id="editUnitSpinner" role="status"></span>
+            <i class="fa-solid fa-check"></i>
+            <span>حفظ التعديلات</span>
           </button>
         </div>
       </form>
