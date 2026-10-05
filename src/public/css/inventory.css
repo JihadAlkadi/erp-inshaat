@@ -1,0 +1,179 @@
+/* ==========================================================================
+   Inventory Module Custom Stylesheet (Scoped)
+   All selectors are strictly scoped to prevent affecting System Admin UI.
+   Accent color: #10AC84
+   ========================================================================== */
+
+/* 1. Inventory Sidebar (Matching System Sidebar with #10AC84 Accent) */
+.inventory-sidebar {
+  background-color: #ffffff;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  height: calc(100vh - 56px);
+  padding-top: 15px;
+  overflow-y: auto;
+  width: 250px;
+  flex-shrink: 0;
+}
+
+.inventory-sidebar .nav-link {
+  color: #4B5563;
+  padding: 10px 20px;
+  font-weight: 600;
+  border-radius: 8px;
+  margin: 2px 10px;
+  transition: all 0.2s ease-in-out;
+}
+
+.inventory-sidebar .nav-link:hover,
+.inventory-sidebar .nav-link.active {
+  background-color: rgba(16, 172, 132, 0.08);
+  color: #10AC84 !important;
+}
+
+.inventory-sidebar .nav-link i {
+  width: 30px;
+  text-align: center;
+}
+
+@media (max-width: 767.98px) {
+  .inventory-sidebar {
+    border-left: none;
+    height: 100%;
+    padding-top: 0;
+  }
+}
+
+/* 2. Inventory Cards & Accent Styling */
+.inventory-card {
+  border-radius: 12px;
+  border: none;
+}
+
+.inventory-btn-primary {
+  background-color: #10AC84 !important;
+  border-color: #10AC84 !important;
+  color: #ffffff !important;
+}
+
+.inventory-btn-primary:hover,
+.inventory-btn-primary:focus {
+  background-color: #0e9673 !important;
+  border-color: #0e9673 !important;
+  color: #ffffff !important;
+}
+
+.inventory-btn-outline-primary {
+  color: #10AC84 !important;
+  border-color: #10AC84 !important;
+}
+
+.inventory-btn-outline-primary:hover,
+.inventory-btn-outline-primary:focus {
+  background-color: #10AC84 !important;
+  color: #ffffff !important;
+}
+
+/* 3. Product Page Category Tree Panel */
+.category-tree-panel {
+  border-radius: 12px;
+  background-color: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+.category-tree-list {
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+  padding-left: 0;
+  padding-right: 0;
+  list-style: none;
+  margin-bottom: 0;
+}
+
+.category-tree-node-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin: 2px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  color: #374151;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.category-tree-node-item:hover {
+  background-color: #F3F4F6;
+  color: #111827;
+}
+
+.category-tree-node-item.active {
+  background-color: rgba(16, 172, 132, 0.12);
+  color: #10AC84;
+  font-weight: 700;
+}
+
+.category-tree-node-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-grow: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-tree-toggle-btn {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.category-tree-toggle-btn.expanded i {
+  transform: rotate(90deg);
+}
+
+.category-tree-children {
+  margin-right: 20px;
+  border-right: 2px dashed #E5E7EB;
+  padding-right: 6px;
+  list-style: none;
+}
+
+/* 4. Active Category Banner */
+.active-category-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: rgba(16, 172, 132, 0.1);
+  color: #10AC84;
+  border: 1px solid rgba(16, 172, 132, 0.2);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.active-category-pill .btn-clear-cat {
+  background: none;
+  border: none;
+  color: #10AC84;
+  padding: 0;
+  font-size: 0.85rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.active-category-pill .btn-clear-cat:hover {
+  color: #D63031;
+}

@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { Server } from 'http';
 import { envConfig } from './config/env.config.js';
 import { initializeDatabase } from './bootstrap/database.bootstrap.js';
+import { reconcileSystemPermissions } from './modules/system/permission/services/permission-reconciliation.service.js';
 import { AppDataSource } from './database/data-source.js';
 import { app } from './app.js';
 
@@ -11,6 +12,7 @@ let isShuttingDown = false;
 async function bootstrap(): Promise<void> {
   try {
     await initializeDatabase();
+    await reconcileSystemPermissions(AppDataSource);
 
     server = app.listen(envConfig.port, () => {
       console.log(`Server running on port ${envConfig.port}`);

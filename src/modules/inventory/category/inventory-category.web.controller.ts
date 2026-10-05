@@ -2,11 +2,18 @@ import { Request, Response, NextFunction } from 'express';
 import { authorizationService } from '../../system/authorization/authorization.service.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { AuthPrincipal } from '../../system/auth/auth.types.js';
+import { inventoryCategoryService } from './inventory-category.service.js';
 
 export class InventoryCategoryWebController {
   renderCategoryTree = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const currentUser = req.user as AuthPrincipal;
+
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+      const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
+
+      const result = await inventoryCategoryService.searchCategories({ page, limit, search });
 
       const canCreateCategory = await authorizationService.hasPermission(
         currentUser,
@@ -23,11 +30,19 @@ export class InventoryCategoryWebController {
 
       res.render('dashboard/inventory/categories/index', {
         layout: 'dashboard/inventory/layout',
-        title: 'شجرة الفئات',
+        title: 'إدارة الفئات | إدارة المستودعات',
         appName: 'إدارة المستودعات',
         themeColor: '#10AC84',
         activeTab: 'categories',
         user: currentUser,
+        categories: result.items,
+        pagination: {
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: result.totalPages,
+        },
+        search: search || '',
         canCreateCategory,
         canUpdateCategory,
         canDeleteCategory,

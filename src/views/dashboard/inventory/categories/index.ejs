@@ -1,135 +1,183 @@
-<div class="container-fluid">
-  <!-- Page Header -->
-  <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+  <div>
+    <h3 class="fw-bold mb-1" style="color: #1F2937;">إدارة الفئات <i class="fa-solid fa-tags text-muted fs-5 ms-2"></i></h3>
+    <p class="text-muted mb-0 small">إدارة فئات المنتجات وتنظيم التصنيف</p>
+  </div>
+  <% if (typeof canCreateCategory !== 'undefined' && canCreateCategory) { %>
     <div>
-      <h3 class="fw-bold mb-1" style="color: #2D3436;">
-        <i class="fa-solid fa-folder-tree me-2" style="color: #10AC84;"></i> شجرة فئات المستودعات
-      </h3>
-      <p class="text-muted mb-0">إدارة وتصفح فئات المواد والمنتجات في هيكل هرمي</p>
+      <a href="/inventory/categories/create" class="btn btn-primary d-inline-flex align-items-center gap-2 shadow-sm px-4 py-2" style="background-color: #10AC84; border-color: #10AC84;">
+        <i class="fa-solid fa-plus"></i>
+        <span>إضافة فئة</span>
+      </a>
     </div>
-    <div class="d-flex gap-2">
-      <% if (typeof canCreateCategory !== 'undefined' && canCreateCategory) { %>
-        <a href="/inventory/categories/create" class="btn btn-primary rounded-pill px-4 fw-bold" style="background-color: #10AC84; border-color: #10AC84;">
-          <i class="fa-solid fa-plus me-1"></i> إضافة فئة رئيسية
-        </a>
-      <% } %>
-    </div>
-  </div>
+  <% } %>
+</div>
 
-  <!-- Search & Filter Card -->
-  <div class="card border-0 shadow-sm rounded-4 mb-4">
-    <div class="card-body p-3">
-      <div class="row g-2 align-items-center">
-        <div class="col-12 col-md-6">
-          <div class="input-group">
-            <span class="input-group-text bg-light border-0"><i class="fa-solid fa-search text-muted"></i></span>
-            <input type="text" id="categorySearchInput" class="form-control bg-light border-0" placeholder="بحث بالاسم أو الرمز...">
-          </div>
-        </div>
-        <div class="col-12 col-md-auto ms-auto d-flex gap-2">
-          <button type="button" id="btnRefreshTree" class="btn btn-outline-secondary rounded-pill px-3">
-            <i class="fa-solid fa-rotate me-1"></i> تحديث الشجرة
-          </button>
+<!-- Search & Filter Card -->
+<div class="card border-0 shadow-sm mb-4" style="border-radius: 12px;">
+  <div class="card-body p-3">
+    <form method="GET" action="/inventory/categories" class="row g-2 align-items-center">
+      <div class="col-md-5 col-lg-4">
+        <div class="input-group">
+          <span class="input-group-text bg-white border-end-0 text-muted"><i class="fa-solid fa-magnifying-glass"></i></span>
+          <input type="text" name="search" class="form-control border-start-0 ps-0" placeholder="بحث باسم الفئة أو الرمز..." value="<%= typeof search !== 'undefined' ? search : '' %>">
         </div>
       </div>
-    </div>
-  </div>
-
-  <!-- Alert Container -->
-  <div id="categoryAlertContainer"></div>
-
-  <!-- Tree Container -->
-  <div class="card border-0 shadow-sm rounded-4">
-    <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
-      <h6 class="fw-bold mb-0 text-dark">
-        <i class="fa-solid fa-sitemap me-2 text-muted"></i> الهيكل الهرمي للفئات
-      </h6>
-      <span class="badge bg-light text-muted border" id="treeStatusBadge">جاري التحميل...</span>
-    </div>
-    <div class="card-body p-3 p-md-4">
-      <!-- Search Results Area (Hidden by default) -->
-      <div id="searchResultsArea" class="d-none mb-4">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h6 class="fw-bold text-muted mb-0">نتائج البحث:</h6>
-          <button type="button" id="btnClearSearch" class="btn btn-sm btn-link text-decoration-none">إلغاء البحث والعودة للشجرة</button>
-        </div>
-        <div class="table-responsive">
-          <table class="table table-hover align-middle">
-            <thead class="table-light">
-              <tr>
-                <th>اسم الفئة</th>
-                <th>الرمز</th>
-                <th>الفئة الأب</th>
-                <th>الحالة</th>
-                <th>المنتجات</th>
-                <th class="text-end">الإجراءات</th>
-              </tr>
-            </thead>
-            <tbody id="searchResultsTableBody"></tbody>
-          </table>
-        </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-outline-secondary px-3">بحث</button>
+        <% if (typeof search !== 'undefined' && search) { %>
+          <a href="/inventory/categories" class="btn btn-link text-muted text-decoration-none">إلغاء البحث</a>
+        <% } %>
       </div>
-
-      <!-- Tree Nodes Container -->
-      <div id="categoryTreeContainer" class="category-tree">
-        <div class="text-center py-5 text-muted" id="treeLoadingSpinner">
-          <div class="spinner-border text-success" role="status">
-            <span class="visually-hidden">جاري التحميل...</span>
-          </div>
-          <p class="mt-2 mb-0">جاري تحميل شجرة الفئات...</p>
-        </div>
-      </div>
-    </div>
+    </form>
   </div>
 </div>
 
-<style>
-.category-tree {
-  font-family: inherit;
-}
-.tree-node-item {
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin-bottom: 4px;
-  background-color: #ffffff;
-  border: 1px solid #f1f2f6;
-  transition: all 0.15s ease-in-out;
-}
-.tree-node-item:hover {
-  background-color: #f8f9fa;
-  border-color: #dfe4ea;
-}
-.tree-toggle-btn {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  border: 1px solid #ced6e0;
-  background: #ffffff;
-  color: #747d8c;
-  cursor: pointer;
-  transition: transform 0.2s ease;
-}
-.tree-toggle-btn.expanded i {
-  transform: rotate(90deg);
-}
-.tree-children-container {
-  margin-right: 28px;
-  border-right: 2px dashed #dfe4ea;
-  padding-right: 12px;
-  margin-top: 4px;
-  margin-bottom: 4px;
-}
-</style>
+<!-- Alert Container -->
+<div id="categoryAlertContainer"></div>
 
-<script>
-  window.INVENTORY_PERMISSIONS = {
-    canCreateCategory: <%= typeof canCreateCategory !== 'undefined' && canCreateCategory ? 'true' : 'false' %>,
-    canUpdateCategory: <%= typeof canUpdateCategory !== 'undefined' && canUpdateCategory ? 'true' : 'false' %>,
-    canDeleteCategory: <%= typeof canDeleteCategory !== 'undefined' && canDeleteCategory ? 'true' : 'false' %>
-  };
-</script>
+<!-- Categories Table Card -->
+<div class="card border-0 shadow-sm" style="border-radius: 12px; overflow: hidden;">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr class="text-muted small">
+          <th scope="col" class="py-3 px-4">اسم الفئة</th>
+          <th scope="col" class="py-3">الرمز</th>
+          <th scope="col" class="py-3">الفئة الأب</th>
+          <th scope="col" class="py-3 text-center">عدد المنتجات</th>
+          <th scope="col" class="py-3 text-center">عدد الفئات الفرعية</th>
+          <th scope="col" class="py-3 text-center">الحالة</th>
+          <th scope="col" class="py-3 text-center px-4">الإجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (typeof categories !== 'undefined' && categories.length > 0) { %>
+          <% categories.forEach(function(cat) { %>
+            <tr>
+              <!-- Category Name -->
+              <td class="py-3 px-4">
+                <div class="d-flex align-items-center gap-2">
+                  <span class="d-inline-flex justify-content-center align-items-center rounded-circle" style="width: 34px; height: 34px; background-color: rgba(16, 172, 132, 0.1); color: #10AC84;">
+                    <i class="fa-solid fa-folder"></i>
+                  </span>
+                  <div>
+                    <span class="fw-bold text-dark"><%= cat.name %></span>
+                    <% if (cat.description) { %>
+                      <div class="text-muted small" style="font-size: 0.75rem;"><%= cat.description %></div>
+                    <% } %>
+                  </div>
+                </div>
+              </td>
+
+              <!-- Code -->
+              <td class="py-3">
+                <span class="badge bg-light text-dark border font-monospace px-2 py-1"><%= cat.code %></span>
+              </td>
+
+              <!-- Parent Category -->
+              <td class="py-3">
+                <% if (cat.parentName) { %>
+                  <span class="badge bg-secondary-subtle text-secondary-emphasis px-2 py-1 rounded-pill">
+                    <i class="fa-solid fa-arrow-turn-up me-1 small"></i> <%= cat.parentName %>
+                  </span>
+                <% } else { %>
+                  <span class="text-muted small">فئة رئيسية</span>
+                <% } %>
+              </td>
+
+              <!-- Product Count -->
+              <td class="py-3 text-center">
+                <span class="badge bg-light text-muted border rounded-pill px-3 py-1">
+                  <%= typeof cat.productCount === 'number' ? cat.productCount : 0 %>
+                </span>
+              </td>
+
+              <!-- Children Count -->
+              <td class="py-3 text-center">
+                <span class="badge bg-light text-muted border rounded-pill px-3 py-1">
+                  <%= typeof cat.childrenCount === 'number' ? cat.childrenCount : 0 %>
+                </span>
+              </td>
+
+              <!-- Status -->
+              <td class="py-3 text-center">
+                <% if (cat.isActive) { %>
+                  <span class="badge bg-success-subtle text-success px-2 py-1 rounded-pill">
+                    <i class="fa-solid fa-circle-check me-1"></i> نشط
+                  </span>
+                <% } else { %>
+                  <span class="badge bg-danger-subtle text-danger px-2 py-1 rounded-pill">
+                    <i class="fa-solid fa-circle-xmark me-1"></i> معطل
+                  </span>
+                <% } %>
+              </td>
+
+              <!-- Actions -->
+              <td class="py-3 text-center px-4">
+                <div class="d-inline-flex gap-1">
+                  <% if (typeof canUpdateCategory !== 'undefined' && canUpdateCategory) { %>
+                    <a href="/inventory/categories/<%= cat.id %>/edit" class="btn btn-sm btn-outline-primary" title="تعديل">
+                      <i class="fa-solid fa-pen-to-square"></i>
+                    </a>
+
+                    <% if (cat.isActive) { %>
+                      <button type="button" class="btn btn-sm btn-outline-warning" title="تعطيل الفئة" data-action="toggle-category-status" data-category-id="<%= cat.id %>" data-category-name="<%= cat.name %>" data-new-status="false">
+                        <i class="fa-solid fa-ban"></i>
+                      </button>
+                    <% } else { %>
+                      <button type="button" class="btn btn-sm btn-outline-success" title="تفعيل الفئة" data-action="toggle-category-status" data-category-id="<%= cat.id %>" data-category-name="<%= cat.name %>" data-new-status="true">
+                        <i class="fa-solid fa-check"></i>
+                      </button>
+                    <% } %>
+                  <% } %>
+
+                  <% if (typeof canDeleteCategory !== 'undefined' && canDeleteCategory) { %>
+                    <button type="button" class="btn btn-sm btn-outline-danger" title="أرشفة الفئة" data-action="delete-category" data-category-id="<%= cat.id %>" data-category-name="<%= cat.name %>">
+                      <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                  <% } %>
+                </div>
+              </td>
+            </tr>
+          <% }); %>
+        <% } else { %>
+          <tr>
+            <td colspan="7" class="text-center py-5 text-muted">
+              <div class="py-3">
+                <i class="fa-solid fa-folder-open fs-1 text-secondary mb-3 d-block"></i>
+                <p class="mb-0 fw-bold">لا توجد فئات متطابقة مع معايير البحث</p>
+              </div>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination Footer -->
+  <% if (typeof pagination !== 'undefined' && pagination.totalPages > 1) { %>
+    <div class="card-footer bg-white border-top d-flex flex-wrap justify-content-between align-items-center py-3 px-4">
+      <div class="text-muted small">
+        عرض الصفحة <strong><%= pagination.page %></strong> من إجمالي <strong><%= pagination.totalPages %></strong> صفحات (إجمالي الفئات: <%= pagination.total %>)
+      </div>
+      <nav>
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item <%= pagination.page <= 1 ? 'disabled' : '' %>">
+            <a class="page-link" href="/inventory/categories?page=<%= pagination.page - 1 %><%= search ? '&search=' + encodeURIComponent(search) : '' %>">السابق</a>
+          </li>
+          <% for (let p = 1; p <= pagination.totalPages; p++) { %>
+            <li class="page-item <%= pagination.page === p ? 'active' : '' %>">
+              <a class="page-link" href="/inventory/categories?page=<%= p %><%= search ? '&search=' + encodeURIComponent(search) : '' %>" style="<%= pagination.page === p ? 'background-color: #10AC84; border-color: #10AC84;' : '' %>"><%= p %></a>
+            </li>
+          <% } %>
+          <li class="page-item <%= pagination.page >= pagination.totalPages ? 'disabled' : '' %>">
+            <a class="page-link" href="/inventory/categories?page=<%= pagination.page + 1 %><%= search ? '&search=' + encodeURIComponent(search) : '' %>">التالي</a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  <% } %>
+</div>
+
 <script src="/js/inventory-categories.js"></script>
