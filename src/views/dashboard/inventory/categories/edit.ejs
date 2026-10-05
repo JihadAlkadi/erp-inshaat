@@ -1,78 +1,85 @@
-<div class="container-fluid">
-  <!-- Breadcrumb & Header -->
-  <div class="mb-4">
-    <nav aria-label="breadcrumb">
-      <ol class="breadcrumb mb-1">
-        <li class="breadcrumb-item"><a href="/inventory" class="text-decoration-none">المستودعات</a></li>
-        <li class="breadcrumb-item"><a href="/inventory/categories" class="text-decoration-none">الفئات</a></li>
-        <li class="breadcrumb-item active" aria-current="page">تعديل الفئة</li>
-      </ol>
-    </nav>
-    <h3 class="fw-bold" style="color: #2D3436;">
-      <i class="fa-solid fa-pen-to-square me-2" style="color: #10AC84;"></i> تعديل فئة المنتجات
-    </h3>
-  </div>
+<div class="row justify-content-center">
+  <div class="col-lg-8 col-xl-7">
+    <!-- Header with Back Button (Matching System Standard) -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div>
+        <h3 class="fw-bold mb-1" style="color: #1F2937;">تعديل فئة المنتجات <i class="fa-solid fa-pen-to-square text-muted fs-5 ms-2"></i></h3>
+        <p class="text-muted mb-0 small">تحديث بيانات الفئة وموقعها ضمن الهيكل الهرمي للمستودعات</p>
+      </div>
+      <a href="/inventory/categories" class="btn btn-outline-secondary">
+        <i class="fa-solid fa-arrow-left ms-1"></i> العودة للشجرة
+      </a>
+    </div>
 
-  <!-- Alert Container -->
-  <div id="categoryFormAlertContainer"></div>
+    <!-- Alert Container -->
+    <div id="categoryFormAlertContainer"></div>
 
-  <!-- Form Card -->
-  <div class="row justify-content-center">
-    <div class="col-12 col-lg-8">
-      <div class="card border-0 shadow-sm rounded-4">
-        <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
-          <h6 class="fw-bold mb-0 text-dark">بيانات الفئة</h6>
-          <span class="badge bg-light text-dark border" id="categoryCodeBadge"></span>
-        </div>
-        <div class="card-body p-4">
-          <form id="editCategoryForm" data-category-id="<%= typeof categoryId !== 'undefined' ? categoryId : '' %>" novalidate>
-            <!-- Code (Read-Only) -->
-            <div class="mb-3">
-              <label for="categoryCodeReadOnly" class="form-label fw-bold text-muted">رمز الفئة (ثابت)</label>
-              <input type="text" class="form-control bg-light" id="categoryCodeReadOnly" readonly disabled>
-              <div class="form-text">رمز الفئة ثابت في النظام ولا يمكن تعديله.</div>
+    <!-- Form Card -->
+    <div class="card border-0 shadow-sm" style="border-radius: 12px;">
+      <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+        <h6 class="fw-bold mb-0 text-dark"><i class="fa-solid fa-folder me-2 text-muted"></i> بيانات الفئة</h6>
+        <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-1 font-monospace" id="categoryCodeBadge"></span>
+      </div>
+      <div class="card-body p-4 p-md-5">
+        <form id="editCategoryForm" data-category-id="<%= typeof categoryId !== 'undefined' ? categoryId : '' %>" novalidate>
+          <!-- Code (Read-Only) -->
+          <div class="mb-4">
+            <label for="categoryCodeReadOnly" class="form-label fw-bold text-muted">رمز الفئة (ثابت)</label>
+            <div class="input-group">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-barcode"></i></span>
+              <input type="text" class="form-control bg-light font-monospace" id="categoryCodeReadOnly" readonly disabled>
             </div>
+            <div class="form-text text-muted">رمز الفئة ثابت في النظام ولا يمكن تعديله بعد الإنشاء.</div>
+          </div>
 
-            <!-- Name -->
-            <div class="mb-3">
-              <label for="categoryName" class="form-label fw-bold">اسم الفئة <span class="text-danger">*</span></label>
+          <!-- Name -->
+          <div class="mb-4">
+            <label for="categoryName" class="form-label fw-bold text-dark">اسم الفئة <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-tag"></i></span>
               <input type="text" class="form-control" id="categoryName" name="name" required maxlength="100">
             </div>
+          </div>
 
-            <!-- Parent Category -->
-            <div class="mb-3">
-              <label for="categoryParentId" class="form-label fw-bold">الفئة الأب</label>
+          <!-- Parent Category -->
+          <div class="mb-4">
+            <label for="categoryParentId" class="form-label fw-bold text-dark">الفئة الأب</label>
+            <div class="input-group">
+              <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-sitemap"></i></span>
               <select class="form-select" id="categoryParentId" name="parentId">
                 <option value="">-- بدون فئة أب (فئة رئيسية) --</option>
               </select>
-              <div class="form-text">تغيير الفئة الأب يخضع لفحص منع الحلقات الدائرية (Cycle Detection).</div>
             </div>
+            <div class="form-text text-muted">تغيير الفئة الأب يخضع لفحص منع الحلقات الدائرية (Cycle Detection).</div>
+          </div>
 
-            <!-- Description -->
-            <div class="mb-3">
-              <label for="categoryDescription" class="form-label fw-bold">الوصف</label>
-              <textarea class="form-control" id="categoryDescription" name="description" rows="3"></textarea>
-            </div>
+          <!-- Description -->
+          <div class="mb-4">
+            <label for="categoryDescription" class="form-label fw-bold text-dark">الوصف</label>
+            <textarea class="form-control" id="categoryDescription" name="description" rows="3"></textarea>
+          </div>
 
-            <!-- Is Active -->
-            <div class="mb-4">
-              <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="categoryIsActive" name="isActive">
-                <label class="form-check-label fw-bold" for="categoryIsActive">فئة نشطة</label>
-              </div>
-              <div class="form-text">تعطيل الفئة يشترط عدم وجود فئات فرعية نشطة أو منتجات نشطة تابعة لها.</div>
+          <!-- Is Active -->
+          <div class="mb-4">
+            <div class="form-check form-switch fs-6">
+              <input class="form-check-input" type="checkbox" role="switch" id="categoryIsActive" name="isActive">
+              <label class="form-check-label fw-bold text-dark" for="categoryIsActive">فئة نشطة</label>
             </div>
+            <div class="form-text text-muted">تعطيل الفئة يشترط عدم وجود فئات فرعية أو منتجات نشطة تابعة لها.</div>
+          </div>
 
-            <!-- Actions -->
-            <div class="d-flex justify-content-end gap-2 pt-3 border-top">
-              <a href="/inventory/categories" class="btn btn-outline-secondary rounded-pill px-4">إلغاء</a>
-              <button type="submit" id="btnSubmitCategory" class="btn btn-primary rounded-pill px-4 fw-bold" style="background-color: #10AC84; border-color: #10AC84;">
-                <span class="spinner-border spinner-border-sm d-none me-1" id="submitSpinner" role="status"></span>
-                حفظ التعديلات
-              </button>
-            </div>
-          </form>
-        </div>
+          <hr class="my-4 text-muted">
+
+          <!-- Actions -->
+          <div class="d-flex justify-content-end gap-2">
+            <a href="/inventory/categories" class="btn btn-light px-4">إلغاء</a>
+            <button type="submit" id="btnSubmitCategory" class="btn btn-primary px-5 d-inline-flex align-items-center gap-2" style="background-color: #10AC84; border-color: #10AC84;">
+              <span class="spinner-border spinner-border-sm d-none" id="submitSpinner" role="status" aria-hidden="true"></span>
+              <i class="fa-solid fa-check"></i>
+              <span>حفظ التعديلات</span>
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

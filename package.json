@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
-    "seed": "tsx src/database/seeds/system-initial.seed.ts"
+    "seed": "tsx src/database/seeds/system-initial.seed.ts",
+    "migration:run": "tsx src/database/run-migrations.ts"
   },
   "keywords": [],
   "author": "",

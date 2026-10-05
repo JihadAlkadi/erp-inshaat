@@ -1,71 +1,69 @@
-<div class="container-fluid">
-  <!-- Page Header -->
-  <div class="d-flex justify-content-between align-items-center mb-4">
-    <div>
-      <h3 class="fw-bold mb-1" style="color: #2D3436;">
-        <i class="fa-solid fa-boxes-stacked me-2" style="color: #10AC84;"></i> إدارة المستودعات
-      </h3>
-      <p class="text-muted mb-0">كتالوج المواد والمنتجات ووحدات القياس المرجعية</p>
-    </div>
-  </div>
+<h3 class="fw-bold mb-4" style="color: #1F2937;">إحصائيات المستودعات العامة <i class="fa-solid fa-boxes-stacked text-muted fs-5 ms-2"></i></h3>
 
-  <!-- Cards Section -->
-  <div class="row g-4 mt-2">
-    <!-- Category Card -->
-    <div class="col-12 col-md-6">
-      <div class="card border-0 shadow-sm h-100 rounded-4 transition-card" style="border-top: 4px solid #10AC84 !important;">
-        <div class="card-body p-4 d-flex flex-column">
-          <div class="d-flex align-items-center mb-3">
-            <div class="rounded-3 p-3 text-white me-3" style="background: linear-gradient(135deg, #1DD1A1 0%, #10AC84 100%);">
-              <i class="fa-solid fa-folder-tree fa-2x"></i>
-            </div>
-            <div>
-              <h5 class="fw-bold mb-1">شجرة الفئات</h5>
-              <span class="badge bg-light text-muted border">هيكل تنظيمي هرمي</span>
-            </div>
+<!-- Stat Cards (Matching System Dashboard Layout) -->
+<div class="row g-4 mb-4">
+  <!-- Card 1: Total Products -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; border-right: 5px solid #2E86DE !important;">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <p class="text-muted mb-1 fw-bold">إجمالي المنتجات والمواد</p>
+            <h3 class="mb-0 fw-bold" style="color: #2E86DE;"><%= typeof productsCount !== 'undefined' ? productsCount : '0' %></h3>
           </div>
-          <p class="text-muted flex-grow-1">
-            تنظيم وتصنيف المواد والمنتجات ضمن شجرة فئات رئيسية وفرعية متعددة المستويات لتسهيل التصفح والبحث.
-          </p>
-          <div class="pt-3 border-top d-flex justify-content-between align-items-center">
-            <a href="/inventory/categories" class="btn btn-outline-success rounded-pill px-4 fw-bold">
-              استعراض الفئات <i class="fa-solid fa-arrow-left ms-1"></i>
-            </a>
-            <% if (typeof canCreateCategory !== 'undefined' && canCreateCategory) { %>
-              <a href="/inventory/categories/create" class="btn btn-sm btn-link text-decoration-none" style="color: #10AC84;">
-                <i class="fa-solid fa-plus me-1"></i> إضافة فئة
-              </a>
-            <% } %>
+          <div class="rounded-circle d-flex justify-content-center align-items-center" style="width: 50px; height: 50px; background-color: rgba(46, 134, 222, 0.1);">
+            <i class="fa-solid fa-box-open fs-4" style="color: #2E86DE;"></i>
           </div>
         </div>
       </div>
     </div>
-
-    <!-- Product Card -->
-    <div class="col-12 col-md-6">
-      <div class="card border-0 shadow-sm h-100 rounded-4 transition-card" style="border-top: 4px solid #10AC84 !important;">
-        <div class="card-body p-4 d-flex flex-column">
-          <div class="d-flex align-items-center mb-3">
-            <div class="rounded-3 p-3 text-white me-3" style="background: linear-gradient(135deg, #10AC84 0%, #0c8868 100%);">
-              <i class="fa-solid fa-box-open fa-2x"></i>
-            </div>
-            <div>
-              <h5 class="fw-bold mb-1">دليل المنتجات والمواد</h5>
-              <span class="badge bg-light text-muted border">البيانات المرجعية (Master Data)</span>
-            </div>
+  </div>
+  
+  <!-- Card 2: Active Products -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; border-right: 5px solid #10AC84 !important;">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <p class="text-muted mb-1 fw-bold">المنتجات النشطة</p>
+            <h3 class="mb-0 fw-bold" style="color: #10AC84;"><%= typeof activeProductsCount !== 'undefined' ? activeProductsCount : '0' %></h3>
           </div>
-          <p class="text-muted flex-grow-1">
-            تعريف المواد والمنتجات ووحداتها الأساسية والإضافية ومعاملات التحويل ومواصفاتها الفنية وأسعارها المرجعية.
-          </p>
-          <div class="pt-3 border-top d-flex justify-content-between align-items-center">
-            <a href="/inventory/products" class="btn btn-outline-success rounded-pill px-4 fw-bold">
-              استعراض المنتجات <i class="fa-solid fa-arrow-left ms-1"></i>
-            </a>
-            <% if (typeof canCreateProduct !== 'undefined' && canCreateProduct) { %>
-              <a href="/inventory/products/create" class="btn btn-sm btn-link text-decoration-none" style="color: #10AC84;">
-                <i class="fa-solid fa-plus me-1"></i> إضافة منتج
-              </a>
-            <% } %>
+          <div class="rounded-circle d-flex justify-content-center align-items-center" style="width: 50px; height: 50px; background-color: rgba(16, 172, 132, 0.1);">
+            <i class="fa-solid fa-circle-check fs-4" style="color: #10AC84;"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 3: Categories -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; border-right: 5px solid #FF9F43 !important;">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <p class="text-muted mb-1 fw-bold">الفئات المعرّفة</p>
+            <h3 class="mb-0 fw-bold" style="color: #FF9F43;"><%= typeof categoriesCount !== 'undefined' ? categoriesCount : '0' %></h3>
+          </div>
+          <div class="rounded-circle d-flex justify-content-center align-items-center" style="width: 50px; height: 50px; background-color: rgba(255, 159, 67, 0.1);">
+            <i class="fa-solid fa-folder-tree fs-4" style="color: #FF9F43;"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 4: Units -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; border-right: 5px solid #9B59B6 !important;">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <p class="text-muted mb-1 fw-bold">وحدات القياس المسجلة</p>
+            <h3 class="mb-0 fw-bold" style="color: #9B59B6;"><%= typeof unitsCount !== 'undefined' ? unitsCount : '0' %></h3>
+          </div>
+          <div class="rounded-circle d-flex justify-content-center align-items-center" style="width: 50px; height: 50px; background-color: rgba(155, 89, 182, 0.1);">
+            <i class="fa-solid fa-scale-balanced fs-4" style="color: #9B59B6;"></i>
           </div>
         </div>
       </div>
@@ -73,12 +71,101 @@
   </div>
 </div>
 
-<style>
-.transition-card {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.transition-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 10px 20px rgba(0,0,0,0.08) !important;
-}
-</style>
+<!-- Operational Modules Cards -->
+<div class="row g-4 mb-4">
+  <!-- Categories Module Card -->
+  <div class="col-12 col-lg-6">
+    <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; transition: transform 0.2s, box-shadow 0.2s;">
+      <div class="card-body p-4 d-flex flex-column justify-content-between">
+        <div>
+          <div class="d-flex align-items-center justify-content-between mb-3">
+            <div class="rounded-circle d-flex justify-content-center align-items-center text-white" style="width: 50px; height: 50px; background: linear-gradient(135deg, #FF9F43 0%, #FECA57 100%);">
+              <i class="fa-solid fa-folder-tree fs-4"></i>
+            </div>
+            <span class="badge bg-warning-subtle text-warning-emphasis px-3 py-2 rounded-pill">هيكل تنظيمي</span>
+          </div>
+          <h5 class="fw-bold text-dark mb-2">شجرة فئات المستودعات</h5>
+          <p class="text-muted small mb-4">
+            إدارة وتصنيف المواد والمنتجات ضمن شجرة هرمية متعددة المستويات لتسهيل عمليات التصفح والجرد والبحث مع منع الحلقات الدائرية.
+          </p>
+        </div>
+        <div class="d-flex flex-wrap gap-2 pt-3 border-top">
+          <a href="/inventory/categories" class="btn btn-outline-secondary flex-grow-1 d-inline-flex justify-content-center align-items-center gap-2" style="border-radius: 8px;">
+            <span>استعراض الفئات</span>
+            <i class="fa-solid fa-arrow-left"></i>
+          </a>
+          <% if (typeof canCreateCategory !== 'undefined' && canCreateCategory) { %>
+            <a href="/inventory/categories/create" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background-color: #10AC84; border-color: #10AC84; border-radius: 8px;">
+              <i class="fa-solid fa-plus"></i>
+              <span>إضافة فئة</span>
+            </a>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Products Module Card -->
+  <div class="col-12 col-lg-6">
+    <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; transition: transform 0.2s, box-shadow 0.2s;">
+      <div class="card-body p-4 d-flex flex-column justify-content-between">
+        <div>
+          <div class="d-flex align-items-center justify-content-between mb-3">
+            <div class="rounded-circle d-flex justify-content-center align-items-center text-white" style="width: 50px; height: 50px; background: linear-gradient(135deg, #10AC84 0%, #1DD1A1 100%);">
+              <i class="fa-solid fa-box-open fs-4"></i>
+            </div>
+            <span class="badge bg-success-subtle text-success px-3 py-2 rounded-pill">كتالوج رئيسي</span>
+          </div>
+          <h5 class="fw-bold text-dark mb-2">دليل المنتجات والمواد</h5>
+          <p class="text-muted small mb-4">
+            تعريف المواد والمنتجات مع ربطها الإلزامي بوحدة أساسية غير قابلة للحذف، وإدارة الوحدات الإضافية وسلاسل التحويل والأسعار والباركود.
+          </p>
+        </div>
+        <div class="d-flex flex-wrap gap-2 pt-3 border-top">
+          <a href="/inventory/products" class="btn btn-outline-secondary flex-grow-1 d-inline-flex justify-content-center align-items-center gap-2" style="border-radius: 8px;">
+            <span>استعراض المنتجات</span>
+            <i class="fa-solid fa-arrow-left"></i>
+          </a>
+          <% if (typeof canCreateProduct !== 'undefined' && canCreateProduct) { %>
+            <a href="/inventory/products/create" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background-color: #10AC84; border-color: #10AC84; border-radius: 8px;">
+              <i class="fa-solid fa-plus"></i>
+              <span>إضافة منتج</span>
+            </a>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Info & Guidelines Card -->
+<div class="row g-4">
+  <div class="col-12">
+    <div class="card border-0 shadow-sm p-4" style="border-radius: 12px;">
+      <div class="d-flex align-items-center gap-2 mb-3">
+        <i class="fa-solid fa-circle-info text-muted fs-5"></i>
+        <h6 class="fw-bold text-dark mb-0">ضوابط كتالوج المستودعات المعتمدة (Catalog Invariants)</h6>
+      </div>
+      <div class="row g-3 text-muted small">
+        <div class="col-md-4">
+          <div class="p-3 bg-light rounded-3 h-100 border">
+            <div class="fw-bold text-dark mb-1"><i class="fa-solid fa-sitemap me-1 text-warning"></i> شجرة الفئات الهرمية</div>
+            <span>تدعم مستويات متعددة من الفئات الرئيسية والفرعية مع منع الحلقات الدائرية ومنع أرشفة أي فئة طالما تتبعها فئات أخرى أو منتجات.</span>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="p-3 bg-light rounded-3 h-100 border">
+            <div class="fw-bold text-dark mb-1"><i class="fa-solid fa-scale-balanced me-1 text-success"></i> سلامة الوحدة الأساسية</div>
+            <span>كل منتج يمتلك وحدة أساسية واحدة إلزامية ذرية غير قابلة للحذف، وتنتهي كافة سلاسل تحويل الوحدات الإضافية حتماً بالوحدة الأساسية.</span>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="p-3 bg-light rounded-3 h-100 border">
+            <div class="fw-bold text-dark mb-1"><i class="fa-solid fa-shield-check me-1 text-primary"></i> ثبات وأمان البيانات المرجعية</div>
+            <span>أكواد المنتجات والباركود فريدة عالمياً، وتخضع التعديلات لبروتوكول الأقفال التشاؤمية لمنع التعارضات والسباقات التزامنية.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

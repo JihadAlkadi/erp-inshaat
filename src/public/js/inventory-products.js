@@ -251,231 +251,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const productsTableBody = document.getElementById('productsTableBody');
   const productSearchInput = document.getElementById('productSearchInput');
+  const categoryFilterSelect = document.getElementById('categoryFilterSelect');
   const statusFilterSelect = document.getElementById('statusFilterSelect');
   const btnRefreshProducts = document.getElementById('btnRefreshProducts');
   const productsCountBadge = document.getElementById('productsCountBadge');
   const productsPagination = document.getElementById('productsPagination');
   const paginationInfo = document.getElementById('paginationInfo');
 
-  // Category Tree UI Elements
-  const categoryTreeListDesktop = document.getElementById('categoryTreeListDesktop');
-  const categoryTreeListMobile = document.getElementById('categoryTreeListMobile');
-  const treeSearchInput = document.getElementById('treeSearchInput');
-  const treeSearchInputMobile = document.getElementById('treeSearchInputMobile');
-  const categoryTreeCountBadge = document.getElementById('categoryTreeCountBadge');
-  const activeCategoryBanner = document.getElementById('activeCategoryBanner');
-  const activeCategoryName = document.getElementById('activeCategoryName');
-  const btnClearActiveCategory = document.getElementById('btnClearActiveCategory');
-  const mobileSelectedCategoryPill = document.getElementById('mobileSelectedCategoryPill');
-
-  let selectedCategoryId = '';
-  let selectedCategoryName = '';
   let currentPage = 1;
   const pageLimit = 20;
   let listSearchTimeout = null;
-
-  /**
-   * Builds and populates the category tree for filtering products.
-   */
-  async function loadCategoryTree() {
-    if (!categoryTreeListDesktop && !categoryTreeListMobile) return;
-
-    try {
-      const res = await fetch('/api/inventory/categories/search?limit=100');
-      const json = await res.json();
-
-      if (json.success && json.data && Array.isArray(json.data.items)) {
-        const categories = json.data.items;
-        if (categoryTreeCountBadge) {
-          categoryTreeCountBadge.textContent = String(categories.length);
-        }
-
-        // Build parent-to-children map
-        const roots = [];
-        const childrenMap = new Map();
-
-        categories.forEach((cat) => {
-          if (!cat.parentId) {
-            roots.push(cat);
-          } else {
-            if (!childrenMap.has(cat.parentId)) {
-              childrenMap.set(cat.parentId, []);
-            }
-            childrenMap.get(cat.parentId).push(cat);
-          }
-        });
-
-        // Function to create a tree branch element
-        function createTreeNode(cat) {
-          const li = document.createElement('li');
-          li.className = 'category-tree-node-wrapper';
-
-          const itemDiv = document.createElement('div');
-          itemDiv.className = `category-tree-node-item ${cat.id === selectedCategoryId ? 'active' : ''}`;
-          itemDiv.setAttribute('data-category-id', cat.id);
-          itemDiv.setAttribute('data-category-name', cat.name);
-          itemDiv.setAttribute('data-category-code', cat.code || '');
-
-          const titleDiv = document.createElement('div');
-          titleDiv.className = 'category-tree-node-title';
-
-          const icon = document.createElement('i');
-          icon.className = 'fa-solid fa-folder me-1 text-muted';
-          titleDiv.appendChild(icon);
-
-          const nameSpan = document.createElement('span');
-          nameSpan.textContent = cat.name;
-          titleDiv.appendChild(nameSpan);
-
-          if (typeof cat.productCount === 'number' && cat.productCount > 0) {
-            const countBadge = document.createElement('span');
-            countBadge.className = 'badge bg-light text-muted border rounded-pill ms-auto small';
-            countBadge.textContent = String(cat.productCount);
-            titleDiv.appendChild(countBadge);
-          }
-
-          itemDiv.appendChild(titleDiv);
-
-          // Click to filter by category
-          titleDiv.addEventListener('click', (e) => {
-            e.stopPropagation();
-            selectCategoryFilter(cat.id, cat.name);
-          });
-
-          const children = childrenMap.get(cat.id) || [];
-          if (children.length > 0) {
-            const toggleBtn = document.createElement('button');
-            toggleBtn.type = 'button';
-            toggleBtn.className = 'category-tree-toggle-btn me-2';
-            toggleBtn.title = 'توسيع / طي';
-            const toggleIcon = document.createElement('i');
-            toggleIcon.className = 'fa-solid fa-chevron-left';
-            toggleBtn.appendChild(toggleIcon);
-
-            const childUl = document.createElement('ul');
-            childUl.className = 'category-tree-children d-none';
-
-            children.forEach((child) => {
-              childUl.appendChild(createTreeNode(child));
-            });
-
-            toggleBtn.addEventListener('click', (e) => {
-              e.stopPropagation();
-              const isExpanded = !childUl.classList.contains('d-none');
-              if (isExpanded) {
-                childUl.classList.add('d-none');
-                toggleBtn.classList.remove('expanded');
-              } else {
-                childUl.classList.remove('d-none');
-                toggleBtn.classList.add('expanded');
-              }
-            });
-
-            itemDiv.appendChild(toggleBtn);
-            li.appendChild(itemDiv);
-            li.appendChild(childUl);
-          } else {
-            li.appendChild(itemDiv);
-          }
-
-          return li;
-        }
-
-        // Render into target container
-        function renderTreeToContainer(container, loadingElement) {
-          if (!container) return;
-          if (loadingElement) loadingElement.remove();
-
-          // Retain "All Products" root item
-          const allItem = container.querySelector('[data-category-id=""]');
-          container.textContent = '';
-          if (allItem) {
-            container.appendChild(allItem);
-            allItem.addEventListener('click', () => selectCategoryFilter('', ''));
-          }
-
-          roots.forEach((rootCat) => {
-            container.appendChild(createTreeNode(rootCat));
-          });
-        }
-
-        const loadingDesk = document.getElementById('treeLoadingDesktop');
-        const loadingMob = document.getElementById('treeLoadingMobile');
-        renderTreeToContainer(categoryTreeListDesktop, loadingDesk);
-        renderTreeToContainer(categoryTreeListMobile, loadingMob);
-      }
-    } catch (err) {
-      console.error('Failed to load category tree:', err);
-    }
-  }
-
-  function selectCategoryFilter(categoryId, categoryName) {
-    selectedCategoryId = categoryId || '';
-    selectedCategoryName = categoryName || '';
-
-    // Update active class on desktop and mobile lists
-    document.querySelectorAll('.category-tree-node-item').forEach((item) => {
-      const itemCatId = item.getAttribute('data-category-id');
-      if (itemCatId === selectedCategoryId) {
-        item.classList.add('active');
-      } else {
-        item.classList.remove('active');
-      }
-    });
-
-    // Update active category banner
-    if (activeCategoryBanner) {
-      if (selectedCategoryId) {
-        activeCategoryBanner.classList.remove('d-none');
-        if (activeCategoryName) activeCategoryName.textContent = selectedCategoryName;
-      } else {
-        activeCategoryBanner.classList.add('d-none');
-      }
-    }
-
-    // Update mobile pill
-    if (mobileSelectedCategoryPill) {
-      mobileSelectedCategoryPill.textContent = selectedCategoryName || 'الكل';
-    }
-
-    // Hide mobile offcanvas if open
-    const offcanvasEl = document.getElementById('categoryTreeOffcanvas');
-    if (offcanvasEl && typeof bootstrap !== 'undefined' && bootstrap.Offcanvas) {
-      const inst = bootstrap.Offcanvas.getInstance(offcanvasEl);
-      if (inst) inst.hide();
-    }
-
-    // Reload products table
-    loadProducts(1);
-  }
-
-  // Filter category tree items in real-time
-  function setupTreeSearch(inputEl, containerEl) {
-    if (!inputEl || !containerEl) return;
-    inputEl.addEventListener('input', () => {
-      const q = inputEl.value.trim().toLowerCase();
-      const wrappers = containerEl.querySelectorAll('.category-tree-node-wrapper');
-
-      wrappers.forEach((wrap) => {
-        const item = wrap.querySelector('.category-tree-node-item');
-        if (!item) return;
-        const name = (item.getAttribute('data-category-name') || '').toLowerCase();
-        const code = (item.getAttribute('data-category-code') || '').toLowerCase();
-
-        if (!q || name.includes(q) || code.includes(q)) {
-          wrap.classList.remove('d-none');
-          if (q) {
-            const childrenUl = wrap.querySelector('.category-tree-children');
-            if (childrenUl) childrenUl.classList.remove('d-none');
-            const toggleBtn = wrap.querySelector('.category-tree-toggle-btn');
-            if (toggleBtn) toggleBtn.classList.add('expanded');
-          }
-        } else {
-          wrap.classList.add('d-none');
-        }
-      });
-    });
-  }
 
   async function loadProducts(page = 1) {
     if (!productsTableBody) return;
@@ -497,6 +282,7 @@ document.addEventListener('DOMContentLoaded', () => {
     productsTableBody.appendChild(loadingRow);
 
     const search = productSearchInput ? productSearchInput.value.trim() : '';
+    const categoryId = categoryFilterSelect ? categoryFilterSelect.value : '';
     const status = statusFilterSelect ? statusFilterSelect.value : 'active';
 
     const params = new URLSearchParams({
@@ -505,7 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
       status,
     });
     if (search) params.append('search', search);
-    if (selectedCategoryId) params.append('categoryId', selectedCategoryId);
+    if (categoryId) params.append('categoryId', categoryId);
 
     try {
       const res = await fetch(`/api/inventory/products?${params.toString()}`);
@@ -561,18 +347,14 @@ document.addEventListener('DOMContentLoaded', () => {
           // Base Unit
           const tdBase = document.createElement('td');
           const baseBadge = document.createElement('span');
-          baseBadge.className = 'badge bg-success-subtle text-success';
+          baseBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success';
           baseBadge.textContent = p.baseUnitName || 'غير متسق';
           tdBase.appendChild(baseBadge);
           tr.appendChild(tdBase);
 
           // Unit Count
           const tdUnits = document.createElement('td');
-          tdUnits.className = 'text-center';
-          const uPill = document.createElement('span');
-          uPill.className = 'badge bg-light text-muted border rounded-pill px-3 py-1';
-          uPill.textContent = `${p.unitCount}`;
-          tdUnits.appendChild(uPill);
+          tdUnits.textContent = `${p.unitCount} وحدة`;
           tr.appendChild(tdUnits);
 
           // Location
@@ -583,36 +365,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // Status
           const tdStatus = document.createElement('td');
-          tdStatus.className = 'text-center';
           const stBadge = document.createElement('span');
-          stBadge.className = p.isActive ? 'badge bg-success-subtle text-success px-2 py-1 rounded-pill' : 'badge bg-danger-subtle text-danger px-2 py-1 rounded-pill';
+          stBadge.className = p.isActive ? 'badge bg-success bg-opacity-10 text-success border border-success' : 'badge bg-secondary bg-opacity-10 text-secondary border';
           stBadge.textContent = p.isActive ? 'نشط' : 'معطل';
           tdStatus.appendChild(stBadge);
           tr.appendChild(tdStatus);
 
           // Actions
           const tdActions = document.createElement('td');
-          tdActions.className = 'text-center px-4';
+          tdActions.className = 'text-end pe-4';
 
           if (permissions.canUpdateProduct) {
             const editBtn = document.createElement('a');
             editBtn.href = `/inventory/products/${encodeURIComponent(p.id)}/edit`;
-            editBtn.className = 'btn btn-sm btn-outline-primary me-1';
-            editBtn.title = 'تعديل';
-            const editIcon = document.createElement('i');
-            editIcon.className = 'fa-solid fa-pen-to-square';
-            editBtn.appendChild(editIcon);
+            editBtn.className = 'btn btn-sm btn-outline-primary rounded-pill px-3 me-1';
+            editBtn.textContent = 'تعديل';
             tdActions.appendChild(editBtn);
           }
 
           if (permissions.canDeleteProduct) {
             const delBtn = document.createElement('button');
             delBtn.type = 'button';
-            delBtn.className = 'btn btn-sm btn-outline-danger';
-            delBtn.title = 'أرشفة';
-            const delIcon = document.createElement('i');
-            delIcon.className = 'fa-solid fa-trash-can';
-            delBtn.appendChild(delIcon);
+            delBtn.className = 'btn btn-sm btn-outline-danger rounded-pill px-3';
+            delBtn.textContent = 'أرشفة';
             delBtn.addEventListener('click', () => handleDeleteProduct(p));
             tdActions.appendChild(delBtn);
           }
@@ -660,10 +435,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const pageA = document.createElement('a');
       pageA.className = 'page-link';
       pageA.href = '#';
-      if (i === page) {
-        pageA.style.backgroundColor = '#10AC84';
-        pageA.style.borderColor = '#10AC84';
-      }
       pageA.textContent = String(i);
       pageA.addEventListener('click', (e) => {
         e.preventDefault();
@@ -711,22 +482,18 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (productsTableBody) {
-    loadCategoryTree();
-    setupTreeSearch(treeSearchInput, categoryTreeListDesktop);
-    setupTreeSearch(treeSearchInputMobile, categoryTreeListMobile);
+    loadCategoryOptionsForProduct(categoryFilterSelect);
     loadProducts(1);
-
-    if (btnClearActiveCategory) {
-      btnClearActiveCategory.addEventListener('click', () => {
-        selectCategoryFilter('', '');
-      });
-    }
 
     if (productSearchInput) {
       productSearchInput.addEventListener('input', () => {
         clearTimeout(listSearchTimeout);
         listSearchTimeout = setTimeout(() => loadProducts(1), 300);
       });
+    }
+
+    if (categoryFilterSelect) {
+      categoryFilterSelect.addEventListener('change', () => loadProducts(1));
     }
 
     if (statusFilterSelect) {
