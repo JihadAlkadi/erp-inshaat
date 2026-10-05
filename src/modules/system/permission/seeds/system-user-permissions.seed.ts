@@ -88,6 +88,22 @@ const SYSTEM_USER_PERMISSIONS: PermissionDefinition[] = [
     name: SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE,
     description: 'إدارة رؤساء الأقسام والمهندسين وساحات مسؤوليتهم',
   },
+  {
+    name: SystemPermission.INVENTORY_CATEGORY_VIEW,
+    description: 'عرض فئات المستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_CATEGORY_CREATE,
+    description: 'إنشاء فئة مستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_CATEGORY_UPDATE,
+    description: 'تعديل فئة مستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_CATEGORY_DELETE,
+    description: 'أرشفة فئة مستودعات',
+  },
 ];
 
 export async function seedSystemUserPermissions(

@@ -19,5 +19,9 @@ export enum SystemPermission {
   PRODUCTION_YARD_DELETE = 'production.yard.delete',
   PRODUCTION_ASSIGNMENT_VIEW = 'production.assignment.view',
   PRODUCTION_ASSIGNMENT_MANAGE = 'production.assignment.manage',
+  INVENTORY_CATEGORY_VIEW = 'inventory.category.view',
+  INVENTORY_CATEGORY_CREATE = 'inventory.category.create',
+  INVENTORY_CATEGORY_UPDATE = 'inventory.category.update',
+  INVENTORY_CATEGORY_DELETE = 'inventory.category.delete',
 }
 
