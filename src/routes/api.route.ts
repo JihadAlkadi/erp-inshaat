@@ -6,6 +6,7 @@ import { departmentApiRouter } from '../modules/production/department/production
 import { yardApiRouter } from '../modules/production/yard/production-yard.route.js';
 import { productionTeamApiRouter } from '../modules/production/team/production-team.route.js';
 import { inventoryCategoryApiRouter } from '../modules/inventory/category/inventory-category.route.js';
+import { inventoryProductApiRouter } from '../modules/inventory/product/inventory-product.route.js';
 
 const apiRouter: Router = Router();
 
@@ -36,7 +37,11 @@ apiRouter.use('/production/yards', yardApiRouter);
 // Inventory Categories Routes (/api/inventory/categories)
 apiRouter.use('/inventory/categories', inventoryCategoryApiRouter);
 
+// Inventory Products Routes (/api/inventory/products)
+apiRouter.use('/inventory/products', inventoryProductApiRouter);
+
 export { apiRouter };
+
 
 
 

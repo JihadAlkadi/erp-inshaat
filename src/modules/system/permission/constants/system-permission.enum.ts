@@ -23,5 +23,10 @@ export enum SystemPermission {
   INVENTORY_CATEGORY_CREATE = 'inventory.category.create',
   INVENTORY_CATEGORY_UPDATE = 'inventory.category.update',
   INVENTORY_CATEGORY_DELETE = 'inventory.category.delete',
+  INVENTORY_PRODUCT_VIEW = 'inventory.product.view',
+  INVENTORY_PRODUCT_CREATE = 'inventory.product.create',
+  INVENTORY_PRODUCT_UPDATE = 'inventory.product.update',
+  INVENTORY_PRODUCT_DELETE = 'inventory.product.delete',
 }
+
 

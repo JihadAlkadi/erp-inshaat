@@ -104,7 +104,24 @@ const SYSTEM_USER_PERMISSIONS: PermissionDefinition[] = [
     name: SystemPermission.INVENTORY_CATEGORY_DELETE,
     description: 'أرشفة فئة مستودعات',
   },
+  {
+    name: SystemPermission.INVENTORY_PRODUCT_VIEW,
+    description: 'عرض منتجات المستودعات ووحداتها',
+  },
+  {
+    name: SystemPermission.INVENTORY_PRODUCT_CREATE,
+    description: 'إنشاء منتج مستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_PRODUCT_UPDATE,
+    description: 'تعديل منتج مستودعات ووحداته',
+  },
+  {
+    name: SystemPermission.INVENTORY_PRODUCT_DELETE,
+    description: 'أرشفة منتج مستودعات',
+  },
 ];
+
 
 export async function seedSystemUserPermissions(
   manager: EntityManager,
