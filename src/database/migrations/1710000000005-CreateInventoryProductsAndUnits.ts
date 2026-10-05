@@ -286,29 +286,18 @@ export class CreateInventoryProductsAndUnits1710000000005 implements MigrationIn
     );
 
     // Checks on inventory_product_unit
-    await queryRunner.createCheckConstraint(
-      'inventory_product_unit',
-      new TableCheck({
-        name: 'CHK_inventory_product_unit_price',
-        expression: '`price` >= 0',
-      })
+    await queryRunner.query(
+      'ALTER TABLE `inventory_product_unit` ADD CONSTRAINT `CHK_inventory_product_unit_price` CHECK (`price` >= 0)'
     );
 
-    await queryRunner.createCheckConstraint(
-      'inventory_product_unit',
-      new TableCheck({
-        name: 'CHK_inventory_product_unit_conversion_quantity',
-        expression: '`conversion_quantity` IS NULL OR `conversion_quantity` > 0',
-      })
+    await queryRunner.query(
+      'ALTER TABLE `inventory_product_unit` ADD CONSTRAINT `CHK_inventory_product_unit_conversion_quantity` CHECK (`conversion_quantity` IS NULL OR `conversion_quantity` > 0)'
     );
 
-    await queryRunner.createCheckConstraint(
-      'inventory_product_unit',
-      new TableCheck({
-        name: 'CHK_inventory_product_unit_equivalent_not_self',
-        expression: '`equivalent_to_unit_id` IS NULL OR `equivalent_to_unit_id` <> `id`',
-      })
+    await queryRunner.query(
+      'ALTER TABLE `inventory_product_unit` ADD CONSTRAINT `CHK_inventory_product_unit_equivalent_not_self` CHECK (`equivalent_to_unit_id` IS NULL OR `equivalent_to_unit_id` <> `id`)'
     );
+
 
     // 3. Add FK from inventory_product.base_unit_id to inventory_product_unit.id
     await queryRunner.createForeignKey(

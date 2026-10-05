@@ -118,12 +118,8 @@ export class CreateInventoryCategories1710000000004 implements MigrationInterfac
     );
 
     // Check Constraint: parent_id IS NULL OR parent_id <> id
-    await queryRunner.createCheckConstraint(
-      'inventory_category',
-      new TableCheck({
-        name: 'CHK_inventory_category_parent_not_self',
-        expression: '`parent_id` IS NULL OR `parent_id` <> `id`',
-      })
+    await queryRunner.query(
+      'ALTER TABLE `inventory_category` ADD CONSTRAINT `CHK_inventory_category_parent_not_self` CHECK (`parent_id` IS NULL OR `parent_id` <> `id`)'
     );
   }
 
@@ -134,11 +130,8 @@ export class CreateInventoryCategories1710000000004 implements MigrationInterfac
       if (foreignKey) {
         await queryRunner.dropForeignKey('inventory_category', foreignKey);
       }
-      const check = table.checks.find((chk) => chk.name === 'CHK_inventory_category_parent_not_self');
-      if (check) {
-        await queryRunner.dropCheckConstraint('inventory_category', check);
-      }
     }
     await queryRunner.dropTable('inventory_category', true);
   }
 }
+

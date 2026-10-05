@@ -131,9 +131,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Populate category options dropdown.
+   * Populate category options dropdown (preserving inactive current category).
    */
-  async function loadCategoryOptionsForProduct(selectElement, selectedId = '') {
+  async function loadCategoryOptionsForProduct(selectElement, selectedId = '', currentCategoryName = '') {
     if (!selectElement) return;
 
     try {
@@ -145,15 +145,26 @@ document.addEventListener('DOMContentLoaded', () => {
           selectElement.remove(1);
         }
 
+        let selectedFound = false;
+
         json.data.forEach((cat) => {
           const opt = document.createElement('option');
           opt.value = cat.id;
           opt.textContent = cat.parentName ? `${cat.name} (${cat.code}) - [${cat.parentName}]` : `${cat.name} (${cat.code})`;
           if (cat.id === selectedId) {
             opt.selected = true;
+            selectedFound = true;
           }
           selectElement.appendChild(opt);
         });
+
+        if (selectedId && !selectedFound) {
+          const inactiveOpt = document.createElement('option');
+          inactiveOpt.value = selectedId;
+          inactiveOpt.selected = true;
+          inactiveOpt.textContent = currentCategoryName ? `${currentCategoryName} (معطلة)` : 'الفئة الحالية (معطلة)';
+          selectElement.appendChild(inactiveOpt);
+        }
       }
     } catch (err) {
       console.error('Failed to load category options:', err);
@@ -599,7 +610,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (descInput) descInput.value = currentProductData.description || '';
           if (activeCheckbox) activeCheckbox.checked = currentProductData.isActive;
 
-          await loadCategoryOptionsForProduct(catSelect, currentProductData.categoryId || '');
+          await loadCategoryOptionsForProduct(catSelect, currentProductData.categoryId || '', currentProductData.categoryName || '');
         } else {
           showAlert(json.message || 'فشل في تحميل بيانات المنتج');
         }
@@ -608,7 +619,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Load Product Units
+    // Load Product Units (Fetch all pages without truncation)
     async function loadProductUnits() {
       if (!productUnitsTableBody) return;
 
@@ -622,14 +633,27 @@ document.addEventListener('DOMContentLoaded', () => {
       productUnitsTableBody.appendChild(loadingRow);
 
       try {
-        const res = await fetch(`/api/inventory/products/${encodeURIComponent(productId)}/units?limit=100`);
-        const json = await res.json();
+        let allUnits = [];
+        let unitPage = 1;
+        let totalPages = 1;
+
+        do {
+          const res = await fetch(`/api/inventory/products/${encodeURIComponent(productId)}/units?page=${unitPage}&limit=100`);
+          const json = await res.json();
+          if (json.success && json.data) {
+            allUnits = allUnits.concat(json.data.items);
+            totalPages = json.data.totalPages || 1;
+            unitPage++;
+          } else {
+            showAlert(json.message || 'فشل في تحميل وحدات المنتج');
+            break;
+          }
+        } while (unitPage <= totalPages);
 
         productUnitsTableBody.textContent = '';
+        currentUnitsList = allUnits;
 
-        if (json.success && json.data) {
-          currentUnitsList = json.data.items;
-          if (unitsCountPill) unitsCountPill.textContent = String(currentUnitsList.length);
+        if (unitsCountPill) unitsCountPill.textContent = String(currentUnitsList.length);
 
           if (currentUnitsList.length === 0) {
             const emptyRow = document.createElement('tr');

@@ -56,9 +56,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Fetch category options for dropdown selectors (bounded max 100).
+   * Fetch category options for dropdown selectors (handles inactive current parent preservation).
    */
-  async function loadCategoryOptions(selectedId = '') {
+  async function loadCategoryOptions(selectedId = '', currentParentName = '') {
     if (!categoryParentSelect) return;
 
     try {
@@ -72,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const currentCategoryId = editCategoryForm ? editCategoryForm.dataset.categoryId : null;
+        let selectedFound = false;
 
         json.data.forEach((cat) => {
           // Do not include the current category itself in edit mode (self-parent prevention)
@@ -84,9 +85,19 @@ document.addEventListener('DOMContentLoaded', () => {
           opt.textContent = cat.parentName ? `${cat.name} (${cat.code}) - [${cat.parentName}]` : `${cat.name} (${cat.code})`;
           if (cat.id === selectedId) {
             opt.selected = true;
+            selectedFound = true;
           }
           categoryParentSelect.appendChild(opt);
         });
+
+        // If current parent is inactive (not returned in options), preserve it
+        if (selectedId && !selectedFound && selectedId !== currentCategoryId) {
+          const inactiveOpt = document.createElement('option');
+          inactiveOpt.value = selectedId;
+          inactiveOpt.selected = true;
+          inactiveOpt.textContent = currentParentName ? `${currentParentName} (معطلة)` : 'الفئة الأب الحالية (معطلة)';
+          categoryParentSelect.appendChild(inactiveOpt);
+        }
       }
     } catch (err) {
       console.error('Failed to load category options:', err);
@@ -220,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Handles expanding and collapsing a tree node.
+   * Handles expanding and collapsing a tree node with pagination load more support.
    */
   async function handleToggleChildren(toggleBtn, nodeWrapper, level) {
     const childrenContainer = nodeWrapper.querySelector('.tree-children-container');
@@ -238,28 +249,51 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       // Expand
       if (!isLoaded) {
-        // Fetch children
         toggleBtn.disabled = true;
-        try {
-          const res = await fetch(`/api/inventory/categories/${encodeURIComponent(categoryId)}/children?limit=100`);
-          const json = await res.json();
+        let childPage = 1;
+        const childLimit = 50;
 
-          if (json.success && json.data) {
-            childrenContainer.textContent = ''; // clear
-            json.data.items.forEach((child) => {
-              childrenContainer.appendChild(createCategoryNodeElement(child, level));
-            });
-            toggleBtn.dataset.loaded = 'true';
-          } else {
-            showAlert(json.message || 'فشل في تحميل الفئات الفرعية');
-            return;
+        async function fetchChildrenPage(page) {
+          try {
+            const res = await fetch(`/api/inventory/categories/${encodeURIComponent(categoryId)}/children?page=${page}&limit=${childLimit}`);
+            const json = await res.json();
+
+            if (json.success && json.data) {
+              if (page === 1) {
+                childrenContainer.textContent = '';
+              }
+              // Remove old load more button if exists
+              const oldBtn = childrenContainer.querySelector('.btn-load-more-children');
+              if (oldBtn) oldBtn.remove();
+
+              json.data.items.forEach((child) => {
+                childrenContainer.appendChild(createCategoryNodeElement(child, level));
+              });
+
+              if (json.data.page < json.data.totalPages) {
+                const loadMoreBtn = document.createElement('button');
+                loadMoreBtn.type = 'button';
+                loadMoreBtn.className = 'btn btn-sm btn-link text-decoration-none text-muted my-1 ps-4 btn-load-more-children';
+                loadMoreBtn.textContent = `تحميل المزيد (${json.data.total - page * childLimit} متبقية)...`;
+                loadMoreBtn.addEventListener('click', () => {
+                  childPage++;
+                  fetchChildrenPage(childPage);
+                });
+                childrenContainer.appendChild(loadMoreBtn);
+              }
+
+              toggleBtn.dataset.loaded = 'true';
+            } else {
+              showAlert(json.message || 'فشل في تحميل الفئات الفرعية');
+            }
+          } catch (err) {
+            showAlert('حدث خطأ أثناء تحميل الفئات الفرعية');
+          } finally {
+            toggleBtn.disabled = false;
           }
-        } catch (err) {
-          showAlert('حدث خطأ أثناء تحميل الفئات الفرعية');
-          return;
-        } finally {
-          toggleBtn.disabled = false;
         }
+
+        await fetchChildrenPage(1);
       }
 
       childrenContainer.classList.remove('d-none');
@@ -269,7 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Loads root categories into tree container.
+   * Loads root categories into tree container with pagination load more support.
    */
   async function loadRootCategories() {
     if (!treeContainer) return;
@@ -287,33 +321,60 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (treeStatusBadge) treeStatusBadge.textContent = 'جاري التحميل...';
 
-    try {
-      const res = await fetch('/api/inventory/categories/roots?limit=100');
-      const json = await res.json();
+    let rootPage = 1;
+    const rootLimit = 50;
 
-      treeContainer.textContent = '';
+    async function fetchRootsPage(page) {
+      try {
+        const res = await fetch(`/api/inventory/categories/roots?page=${page}&limit=${rootLimit}`);
+        const json = await res.json();
 
-      if (json.success && json.data) {
-        const roots = json.data.items;
-        if (treeStatusBadge) treeStatusBadge.textContent = `${json.data.total} فئة رئيسية`;
-
-        if (roots.length === 0) {
-          const emptyDiv = document.createElement('div');
-          emptyDiv.className = 'text-center py-5 text-muted';
-          emptyDiv.textContent = 'لا توجد فئات بعد. ابدأ بإضافة فئة رئيسية.';
-          treeContainer.appendChild(emptyDiv);
-          return;
+        if (page === 1) {
+          treeContainer.textContent = '';
         }
+        // Remove old load more button if present
+        const oldRootBtn = treeContainer.querySelector('.btn-load-more-roots');
+        if (oldRootBtn) oldRootBtn.remove();
 
-        roots.forEach((root) => {
-          treeContainer.appendChild(createCategoryNodeElement(root, 0));
-        });
-      } else {
-        showAlert(json.message || 'فشل في تحميل الفئات');
+        if (json.success && json.data) {
+          const roots = json.data.items;
+          if (treeStatusBadge) treeStatusBadge.textContent = `${json.data.total} فئة رئيسية`;
+
+          if (page === 1 && roots.length === 0) {
+            const emptyDiv = document.createElement('div');
+            emptyDiv.className = 'text-center py-5 text-muted';
+            emptyDiv.textContent = 'لا توجد فئات بعد. ابدأ بإضافة فئة رئيسية.';
+            treeContainer.appendChild(emptyDiv);
+            return;
+          }
+
+          roots.forEach((root) => {
+            treeContainer.appendChild(createCategoryNodeElement(root, 0));
+          });
+
+          if (json.data.page < json.data.totalPages) {
+            const loadMoreRootsBtn = document.createElement('div');
+            loadMoreRootsBtn.className = 'text-center my-3 btn-load-more-roots';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm btn-outline-secondary rounded-pill px-4';
+            btn.textContent = `تحميل المزيد من الفئات الرئيسية (${json.data.total - page * rootLimit} متبقية)...`;
+            btn.addEventListener('click', () => {
+              rootPage++;
+              fetchRootsPage(rootPage);
+            });
+            loadMoreRootsBtn.appendChild(btn);
+            treeContainer.appendChild(loadMoreRootsBtn);
+          }
+        } else {
+          showAlert(json.message || 'فشل في تحميل الفئات');
+        }
+      } catch (err) {
+        showAlert('حدث خطأ أثناء الاتصال بالخادم لتحميل الفئات');
       }
-    } catch (err) {
-      showAlert('حدث خطأ أثناء الاتصال بالخادم لتحميل الفئات');
     }
+
+    await fetchRootsPage(1);
   }
 
   /**
@@ -555,8 +616,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (nameInput) nameInput.value = cat.name;
           if (descInput) descInput.value = cat.description || '';
           if (activeCheckbox) activeCheckbox.checked = cat.isActive;
-
-          await loadCategoryOptions(cat.parentId || '');
+          await loadCategoryOptions(cat.parentId || '', cat.parent ? cat.parent.name : '');
         } else {
           showAlert(json.message || 'فشل في تحميل بيانات الفئة');
         }

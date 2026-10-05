@@ -1448,6 +1448,20 @@ src/
 
 ---
 
+12. **Inventory Product Catalog & Category Tree Invariants**:
+    - **نطاق الكتالوج (Master Data Scope)**: يقتصر الموديول حصراً على البيانات المرجعية للمواد والمنتجات ووحدات القياس وشجرة الفئات. لا يشمل مستودعات أو أرصدة أو حركات أو تكاليف أو قوالب. حقل locationName نص وصفي اختياري فقط.
+    - **شجرة الفئات الهرمية (Category Hierarchy)**: تعتمد قائمة الجوار (Adjacency List) مع حظر الحلقات الدائرية (Cycles) والارتباط الذاتي (Self-Parenting). في حال مواجهة فئة مفقودة أو محذوفة أو حلقة أثناء تتبع الأسلاف يفشل النظام مغلقاً (Fail Closed) مع INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT.
+    - **قيود تعطيل وأرشفة الفئات**: لا يمكن تعطيل أو أرشفة أي فئة تمتلك أي فئات فرعية غير محذوفة (سواء كانت نشطة أو معطلة) أو أي منتجات غير محذوفة (سواء كانت نشطة أو معطلة) (INVENTORY_CATEGORY_HAS_CHILDREN و INVENTORY_CATEGORY_HAS_PRODUCTS).
+    - **ثبات وفرادة الرموز التقنية والباركود**: رموز الفئات والمنتجات فريدة عالمياً بما يشمل السجلات المؤرشفة ناعماً (withDeleted: true) وثابتة وغير قابلة للتعديل بعد الإنشاء، وتخضع لنمط تحقق صارم (/^[A-Z][A-Z0-9_-]*$/). الباركود فريد عالمياً بما يشمل السجلات المؤرشفة.
+    - **معالجة تعارضات القيود الفريدة في MySQL**: يتم اعتراض أخطاء ER_DUP_ENTRY (errno 1062) وتحويلها إلى ConflictError مناسب بدقة بناءً على القيد المنتهك (UQ_inventory_category_code, UQ_inventory_product_code, UQ_inventory_product_unit_barcode, UQ_inventory_product_unit_product_name).
+    - **سلامة الوحدة الأساسية (Base Unit Integrity Invariant)**: كل منتج غير محذوف يمتلك وحدة أساسية واحدة مرتبطة به ذرياً وغير محذوفة وتتبع لنفس المنتج (assertProductBaseUnitIntegrity). لا يمكن حذف الوحدة الأساسية ولا تعديل معادلة تحويلها.
+    - **سلسلة تحويل الوحدات (Unit Conversion Chain)**: كل وحدة إضافية يجب أن ترتبط بوحدة مقابلة تنتمي لنفس المنتج، وتخضع لتحقق صارم يمنع الحلقات الدائرية ويضمن انتهاء السلسلة حتماً بالوحدة الأساسية. أي انقطاع يفشل مغلقاً (INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT).
+    - **دقة الحقول العشرية (Decimal Precision & Scale)**: السعر price يطابق DECIMAL(18,4) (غير سالب، بحد أقصى 14 خانة صحيحة و4 خانات عشرية)، ومعامل التحويل conversionQuantity يطابق DECIMAL(18,6) (أكبر تماماً من الصفر، بحد أقصى 12 خانة صحيحة و6 خانات عشرية).
+    - **قفل سجلات المنتجات والوحدات**: كل عملية تعديل أو إضافة أو حذف لوحدات المنتج تبدأ بقفل سجل المنتج تشاؤمياً (pessimistic_write) كجذر قفل.
+    - **سلامة واجهات الإدارة (UI Invariants)**: شجرة الفئات تدعم التصفح والتحميل الموضعي (Load More Pagination) دون اقتطاع صامت. واجهات التعديل تحافظ على العلاقات الحالية المعطلة وتمنع فقدانها عند الحفظ. العمليات غير الآمنة تستخدم حصراً window.erpFetch.
+
+---
+
 ## Implemented Infrastructure
 
 - Dynamic Production Access Scopes & Row-Level Authorization Infrastructure (`src/modules/production/authorization/`).
@@ -1488,11 +1502,17 @@ src/
   - `1710000000000-CreateSystemCoreTables.ts` (executed).
   - `1710000000001-CreateSystemSessionTable.ts` (executed).
   - `1710000000002-CreateProductionDepartmentsAndYards.ts` (executed).
+  - `1710000000004-CreateInventoryCategories.ts` (executed).
+  - `1710000000005-CreateInventoryProductsAndUnits.ts` (executed).
 - Centralized DTO Validation Middleware (`src/common/middleware/validate-dto.middleware.ts`).
 - Standardized `ValidationError` representation (`src/common/errors/validation.error.ts`).
 - Centralized Error Handling (`AppError`, `errorHandlerMiddleware`).
 - Standardized typed `ApiResponse` for API endpoints.
 - EJS + `express-ejs-layouts` server-rendered views with Bootstrap validation.
 - Static assets serving (`src/public`).
-- Client scripts (`src/public/js/app.js`, `src/public/js/login.js`, `src/public/js/users.js`, `src/public/js/roles.js`, `src/public/js/user-permissions.js`, `src/public/js/production-departments.js`, `src/public/js/production-yards.js`).
+- Client scripts (`src/public/js/app.js`, `src/public/js/login.js`, `src/public/js/users.js`, `src/public/js/roles.js`, `src/public/js/user-permissions.js`, `src/public/js/production-departments.js`, `src/public/js/production-yards.js`, `src/public/js/inventory-categories.js`, `src/public/js/inventory-products.js`).
 - TypeORM MySQL connection and robust graceful shutdown.
+- Inventory Product Catalog Module (`src/modules/inventory/category/`, `src/modules/inventory/product/`).
+- Inventory Category Service with Fail-Closed Ancestry Cycle Check, Deactivation Restrictions, and Unique Race Handling (`src/modules/inventory/category/inventory-category.service.ts`).
+- Inventory Product Service with Atomic Base Unit Creation, Asserted Base Unit Integrity Helper, Conversion Chain Traversal, Pessimistic Locking, and MySQL Duplicate Key Mapping (`src/modules/inventory/product/inventory-product.service.ts`).
+- Inventory Catalog Test Suite covering DTO validation, precision boundaries, and domain invariants (`tests/inventory-catalog.test.ts`).

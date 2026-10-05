@@ -12,10 +12,11 @@ export class CreateInventoryCategoryDto {
   @IsString({ message: 'رمز الفئة يجب أن يكون نصاً' })
   @IsNotEmpty({ message: 'رمز الفئة مطلوب' })
   @Length(2, 50, { message: 'رمز الفئة يجب أن يكون بين 2 و 50 حرفاً' })
-  @Matches(/^[A-Z0-9_-]+$/, {
-    message: 'رمز الفئة يجب أن يتكون من أحرف لاتينية كبيرة وأرقام والشرطات فقط',
+  @Matches(/^[A-Z][A-Z0-9_-]*$/, {
+    message: 'رمز الفئة يجب أن يبدأ بحرف لاتيني كبير ويتكون من أحرف لاتينية كبيرة وأرقام وشرطات فقط',
   })
   code!: string;
+
 
   @Transform(({ value }: { value: unknown }) => {
     if (typeof value === 'string') {

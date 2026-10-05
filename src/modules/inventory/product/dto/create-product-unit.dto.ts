@@ -33,8 +33,8 @@ export class CreateInventoryProductUnitDto {
 
   @IsString({ message: 'سعر الوحدة يجب أن يكون نصاً يمثل قيمة رقمية صالحة' })
   @IsNotEmpty({ message: 'سعر الوحدة مطلوب' })
-  @Matches(/^\d+(\.\d{1,4})?$/, {
-    message: 'سعر الوحدة يجب أن يكون رقماً عشرياً موجباً وبحد أقصى 4 خانات عشرية',
+  @Matches(/^(0|[1-9]\d{0,13})(\.\d{1,4})?$/, {
+    message: 'سعر الوحدة يجب أن يكون رقماً عشرياً موجباً وبحد أقصى 14 خانة صحيحة و4 خانات عشرية',
   })
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : typeof value === 'number' ? String(value) : value))
   price!: string;
@@ -46,11 +46,12 @@ export class CreateInventoryProductUnitDto {
 
   @IsString({ message: 'معامل التحويل يجب أن يكون نصاً يمثل قيمة رقمية صالحة' })
   @IsNotEmpty({ message: 'معامل التحويل مطلوب للوحدات الإضافية' })
-  @Matches(/^(0*[1-9]\d*(\.\d{1,6})?|0\.\d{0,5}[1-9]\d*)$/, {
-    message: 'معامل التحويل يجب أن يكون رقماً عشرياً أكبر تماماً من الصفر وبحد أقصى 6 خانات عشرية',
+  @Matches(/^(?!0(\.0+)?$)(0|[1-9]\d{0,11})(\.\d{1,6})?$/, {
+    message: 'معامل التحويل يجب أن يكون رقماً عشرياً أكبر تماماً من الصفر وبحد أقصى 12 خانة صحيحة و6 خانات عشرية',
   })
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : typeof value === 'number' ? String(value) : value))
   conversionQuantity!: string;
+
 
   @IsOptional()
   @IsArray({ message: 'المواصفات يجب أن تكون مصفوفة' })

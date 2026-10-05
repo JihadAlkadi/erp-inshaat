@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsUUID,
   MaxLength,
+  Length,
   Matches,
   ValidateNested,
   IsArray,
@@ -34,8 +35,8 @@ export class CreateBaseUnitDto {
 
   @IsString({ message: 'سعر الوحدة يجب أن يكون نصاً يمثل قيمة رقمية صالحة' })
   @IsNotEmpty({ message: 'سعر الوحدة مطلوب' })
-  @Matches(/^\d+(\.\d{1,4})?$/, {
-    message: 'سعر الوحدة يجب أن يكون رقماً عشرياً موجباً وبحد أقصى 4 خانات عشرية',
+  @Matches(/^(0|[1-9]\d{0,13})(\.\d{1,4})?$/, {
+    message: 'سعر الوحدة يجب أن يكون رقماً عشرياً موجباً وبحد أقصى 14 خانة صحيحة و4 خانات عشرية',
   })
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : typeof value === 'number' ? String(value) : value))
   price!: string;
@@ -55,11 +56,15 @@ export class CreateInventoryProductDto {
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   name!: string;
 
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   @IsString({ message: 'رمز المنتج يجب أن يكون نصاً' })
   @IsNotEmpty({ message: 'رمز المنتج مطلوب' })
-  @MaxLength(50, { message: 'رمز المنتج يجب ألا يتجاوز 50 حرفاً' })
-  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @Length(2, 50, { message: 'رمز المنتج يجب أن يكون بين 2 و 50 حرفاً' })
+  @Matches(/^[A-Z][A-Z0-9_-]*$/, {
+    message: 'رمز المنتج يجب أن يبدأ بحرف لاتيني كبير ويتكون من أحرف لاتينية كبيرة وأرقام وشرطات فقط',
+  })
   code!: string;
+
 
   @IsOptional()
   @IsString({ message: 'وصف المنتج يجب أن يكون نصاً' })

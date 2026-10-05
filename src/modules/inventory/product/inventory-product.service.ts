@@ -22,6 +22,19 @@ import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 
+function isProductOrUnitDuplicateKeyError(err: unknown): { isDup: boolean; constraint: string } {
+  if (!err || typeof err !== 'object') {
+    return { isDup: false, constraint: '' };
+  }
+  const e = err as { code?: string; errno?: number; message?: string; sqlMessage?: string };
+  const isDup =
+    e.code === 'ER_DUP_ENTRY' ||
+    e.errno === 1062 ||
+    (typeof e.message === 'string' && e.message.includes('ER_DUP_ENTRY'));
+  const constraint = e.sqlMessage || e.message || '';
+  return { isDup, constraint };
+}
+
 export class InventoryProductService {
   private productRepository: Repository<InventoryProductEntity>;
   private unitRepository: Repository<InventoryProductUnitEntity>;
@@ -31,6 +44,34 @@ export class InventoryProductService {
     this.productRepository = this.dataSource.getRepository(InventoryProductEntity);
     this.unitRepository = this.dataSource.getRepository(InventoryProductUnitEntity);
     this.categoryRepository = this.dataSource.getRepository(InventoryCategoryEntity);
+  }
+
+  /**
+   * Asserts Base Unit integrity for a product (exists, non-deleted, belongs to same product).
+   */
+  private async assertProductBaseUnitIntegrity(
+    product: InventoryProductEntity,
+    unitRepo: Repository<InventoryProductUnitEntity>
+  ): Promise<InventoryProductUnitEntity> {
+    if (!product.baseUnitId) {
+      throw new BusinessRuleError(
+        'المنتج غير متسق ولا يملك وحدة أساسية',
+        'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
+      );
+    }
+
+    const baseUnit = await unitRepo.findOne({
+      where: { id: product.baseUnitId },
+    });
+
+    if (!baseUnit || baseUnit.deletedAt || baseUnit.productId !== product.id) {
+      throw new BusinessRuleError(
+        'المنتج غير متسق (الوحدة الأساسية مفقودة أو غير صالحة)',
+        'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
+      );
+    }
+
+    return baseUnit;
   }
 
   /**
@@ -166,28 +207,11 @@ export class InventoryProductService {
       relations: { category: true },
     });
 
-
     if (!product || product.deletedAt) {
       throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
     }
 
-    if (!product.baseUnitId) {
-      throw new BusinessRuleError(
-        'المنتج غير متسق ولا يملك وحدة أساسية',
-        'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
-      );
-    }
-
-    const baseUnit = await this.unitRepository.findOne({
-      where: { id: product.baseUnitId },
-    });
-
-    if (!baseUnit || baseUnit.deletedAt || baseUnit.productId !== product.id) {
-      throw new BusinessRuleError(
-        'المنتج غير متسق (الوحدة الأساسية مفقودة أو غير صالحة)',
-        'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
-      );
-    }
+    const baseUnit = await this.assertProductBaseUnitIntegrity(product, this.unitRepository);
 
     return {
       id: product.id,
@@ -225,7 +249,7 @@ export class InventoryProductService {
   async createProduct(dto: CreateInventoryProductDto): Promise<InventoryProductDetailDto> {
     const normalizedCode = dto.code.trim().toUpperCase();
 
-    // Check code uniqueness globally including soft-deleted products
+    // Pre-check code uniqueness globally including soft-deleted products
     const existingCode = await this.productRepository.findOne({
       where: { code: normalizedCode },
       withDeleted: true,
@@ -235,7 +259,7 @@ export class InventoryProductService {
       throw new ConflictError('رمز المنتج مستخدم بالفعل', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
     }
 
-    // Check base unit barcode uniqueness globally if provided
+    // Pre-check base unit barcode uniqueness globally if provided
     const baseUnitBarcode = dto.baseUnit.barcode ? dto.baseUnit.barcode.trim() : null;
     if (baseUnitBarcode) {
       const existingBarcode = await this.unitRepository.findOne({
@@ -251,116 +275,15 @@ export class InventoryProductService {
     const validatedBaseSpecs = this.validateSpecifications(dto.baseUnit.specifications);
     const isActive = dto.isActive !== undefined ? dto.isActive : true;
 
-    return this.dataSource.transaction(async (manager) => {
-      const productRepo = manager.getRepository(InventoryProductEntity);
-      const unitRepo = manager.getRepository(InventoryProductUnitEntity);
-      const categoryRepo = manager.getRepository(InventoryCategoryEntity);
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const productRepo = manager.getRepository(InventoryProductEntity);
+        const unitRepo = manager.getRepository(InventoryProductUnitEntity);
+        const categoryRepo = manager.getRepository(InventoryCategoryEntity);
 
-      let category: InventoryCategoryEntity | null = null;
-      if (dto.categoryId) {
-        category = await categoryRepo.findOne({
-          where: { id: dto.categoryId },
-          lock: { mode: 'pessimistic_write' },
-        });
-
-        if (!category || category.deletedAt) {
-          throw new NotFoundError('فئة المنتج غير موجودة', 'INVENTORY_PRODUCT_CATEGORY_NOT_FOUND');
-        }
-
-        if (isActive && !category.isActive) {
-          throw new BusinessRuleError('لا يمكن إنشاء منتج نشط يتبع لفئة معطلة', 'INVENTORY_PRODUCT_CATEGORY_INACTIVE');
-        }
-      }
-
-      // Step 1: Insert product with base_unit_id = null
-      const product = productRepo.create({
-        name: dto.name.trim(),
-        code: normalizedCode,
-        description: dto.description ? dto.description.trim() : null,
-        categoryId: category ? category.id : null,
-        locationName: dto.locationName ? dto.locationName.trim() : null,
-        baseUnitId: null,
-        isActive,
-      });
-
-      const savedProduct = await productRepo.save(product);
-
-      // Step 2: Insert Base Unit
-      const baseUnit = unitRepo.create({
-        productId: savedProduct.id,
-        name: dto.baseUnit.name.trim(),
-        barcode: baseUnitBarcode,
-        price: dto.baseUnit.price,
-        equivalentToUnitId: null,
-        conversionQuantity: null,
-        specifications: validatedBaseSpecs,
-      });
-
-      const savedBaseUnit = await unitRepo.save(baseUnit);
-
-      // Step 3: Link base_unit_id to product
-      savedProduct.baseUnitId = savedBaseUnit.id;
-      await productRepo.save(savedProduct);
-
-      return {
-        id: savedProduct.id,
-        name: savedProduct.name,
-        code: savedProduct.code,
-        description: savedProduct.description,
-        categoryId: savedProduct.categoryId,
-        categoryName: category ? category.name : null,
-        locationName: savedProduct.locationName,
-        baseUnitId: savedBaseUnit.id,
-        baseUnitName: savedBaseUnit.name,
-        isActive: savedProduct.isActive,
-        createdAt: savedProduct.createdAt,
-        updatedAt: savedProduct.updatedAt,
-        category: category
-          ? {
-              id: category.id,
-              name: category.name,
-              code: category.code,
-            }
-          : null,
-        baseUnit: {
-          id: savedBaseUnit.id,
-          name: savedBaseUnit.name,
-          barcode: savedBaseUnit.barcode,
-          price: savedBaseUnit.price,
-          specifications: savedBaseUnit.specifications,
-        },
-      };
-    });
-  }
-
-  /**
-   * Updates product details (name, description, locationName, categoryId, isActive).
-   * Note: code is immutable.
-   */
-  async updateProduct(id: string, dto: UpdateInventoryProductDto): Promise<InventoryProductDetailDto> {
-    return this.dataSource.transaction(async (manager) => {
-      const productRepo = manager.getRepository(InventoryProductEntity);
-      const categoryRepo = manager.getRepository(InventoryCategoryEntity);
-      const unitRepo = manager.getRepository(InventoryProductUnitEntity);
-
-      // Lock Product row as lock root
-      const product = await productRepo.findOne({
-        where: { id },
-        lock: { mode: 'pessimistic_write' },
-        relations: { category: true },
-      });
-
-
-      if (!product || product.deletedAt) {
-        throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
-      }
-
-      const effectiveIsActive = dto.isActive !== undefined ? dto.isActive : product.isActive;
-
-      // Category validation
-      if (dto.categoryId !== undefined) {
-        if (dto.categoryId !== null) {
-          const category = await categoryRepo.findOne({
+        let category: InventoryCategoryEntity | null = null;
+        if (dto.categoryId) {
+          category = await categoryRepo.findOne({
             where: { id: dto.categoryId },
             lock: { mode: 'pessimistic_write' },
           });
@@ -369,96 +292,205 @@ export class InventoryProductService {
             throw new NotFoundError('فئة المنتج غير موجودة', 'INVENTORY_PRODUCT_CATEGORY_NOT_FOUND');
           }
 
-          if (effectiveIsActive && !category.isActive) {
-            throw new BusinessRuleError('لا يمكن ربط منتج نشط بفئة معطلة', 'INVENTORY_PRODUCT_CATEGORY_INACTIVE');
+          if (isActive && !category.isActive) {
+            throw new BusinessRuleError('لا يمكن إنشاء منتج نشط يتبع لفئة معطلة', 'INVENTORY_PRODUCT_CATEGORY_INACTIVE');
           }
-
-          product.categoryId = category.id;
-        } else {
-          product.categoryId = null;
         }
-      } else if (dto.isActive === true && product.categoryId) {
-        // If activating and category exists, verify category is active
-        const currentCategory = await categoryRepo.findOne({
-          where: { id: product.categoryId },
-          lock: { mode: 'pessimistic_write' },
+
+        // Step 1: Insert product with base_unit_id = null
+        const product = productRepo.create({
+          name: dto.name.trim(),
+          code: normalizedCode,
+          description: dto.description ? dto.description.trim() : null,
+          categoryId: category ? category.id : null,
+          locationName: dto.locationName ? dto.locationName.trim() : null,
+          baseUnitId: null,
+          isActive,
         });
 
-        if (!currentCategory || currentCategory.deletedAt || !currentCategory.isActive) {
-          throw new BusinessRuleError('لا يمكن تفعيل منتج يتبع لفئة معطلة', 'INVENTORY_PRODUCT_CATEGORY_INACTIVE');
-        }
-      }
+        const savedProduct = await productRepo.save(product);
 
-      if (dto.name !== undefined) {
-        product.name = dto.name.trim();
-      }
+        // Step 2: Insert Base Unit
+        const baseUnit = unitRepo.create({
+          productId: savedProduct.id,
+          name: dto.baseUnit.name.trim(),
+          barcode: baseUnitBarcode,
+          price: dto.baseUnit.price,
+          equivalentToUnitId: null,
+          conversionQuantity: null,
+          specifications: validatedBaseSpecs,
+        });
 
-      if (dto.description !== undefined) {
-        product.description = dto.description ? dto.description.trim() : null;
-      }
+        const savedBaseUnit = await unitRepo.save(baseUnit);
 
-      if (dto.locationName !== undefined) {
-        product.locationName = dto.locationName ? dto.locationName.trim() : null;
-      }
+        // Step 3: Link base_unit_id to product
+        savedProduct.baseUnitId = savedBaseUnit.id;
+        await productRepo.save(savedProduct);
 
-      if (dto.isActive !== undefined) {
-        product.isActive = dto.isActive;
-      }
-
-      await productRepo.save(product);
-
-      // Verify Base Unit integrity
-      if (!product.baseUnitId) {
-        throw new BusinessRuleError(
-          'المنتج غير متسق ولا يملك وحدة أساسية',
-          'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
-        );
-      }
-
-      const baseUnit = await unitRepo.findOne({
-        where: { id: product.baseUnitId },
+        return {
+          id: savedProduct.id,
+          name: savedProduct.name,
+          code: savedProduct.code,
+          description: savedProduct.description,
+          categoryId: savedProduct.categoryId,
+          categoryName: category ? category.name : null,
+          locationName: savedProduct.locationName,
+          baseUnitId: savedBaseUnit.id,
+          baseUnitName: savedBaseUnit.name,
+          isActive: savedProduct.isActive,
+          createdAt: savedProduct.createdAt,
+          updatedAt: savedProduct.updatedAt,
+          category: category
+            ? {
+                id: category.id,
+                name: category.name,
+                code: category.code,
+              }
+            : null,
+          baseUnit: {
+            id: savedBaseUnit.id,
+            name: savedBaseUnit.name,
+            barcode: savedBaseUnit.barcode,
+            price: savedBaseUnit.price,
+            specifications: savedBaseUnit.specifications,
+          },
+        };
       });
-
-      if (!baseUnit || baseUnit.deletedAt || baseUnit.productId !== product.id) {
-        throw new BusinessRuleError(
-          'المنتج غير متسق (الوحدة الأساسية غير صالحة)',
-          'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
-        );
+    } catch (err) {
+      const dup = isProductOrUnitDuplicateKeyError(err);
+      if (dup.isDup) {
+        if (dup.constraint.includes('UQ_inventory_product_unit_barcode') || dup.constraint.includes('barcode')) {
+          throw new ConflictError('الباركود مستخدم بالفعل', 'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS');
+        }
+        if (dup.constraint.includes('UQ_inventory_product_code') || dup.constraint.includes('code')) {
+          throw new ConflictError('رمز المنتج مستخدم بالفعل', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
+        }
+        throw new ConflictError('قيمة فريدة مكررة بالفعل في المنتج', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
       }
+      throw err;
+    }
+  }
 
-      const updatedCategory = product.categoryId
-        ? await categoryRepo.findOne({ where: { id: product.categoryId } })
-        : null;
+  /**
+   * Updates product details (name, description, locationName, categoryId, isActive).
+   * Note: code is immutable.
+   */
+  async updateProduct(id: string, dto: UpdateInventoryProductDto): Promise<InventoryProductDetailDto> {
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const productRepo = manager.getRepository(InventoryProductEntity);
+        const categoryRepo = manager.getRepository(InventoryCategoryEntity);
+        const unitRepo = manager.getRepository(InventoryProductUnitEntity);
 
-      return {
-        id: product.id,
-        name: product.name,
-        code: product.code,
-        description: product.description,
-        categoryId: product.categoryId,
-        categoryName: updatedCategory ? updatedCategory.name : null,
-        locationName: product.locationName,
-        baseUnitId: baseUnit.id,
-        baseUnitName: baseUnit.name,
-        isActive: product.isActive,
-        createdAt: product.createdAt,
-        updatedAt: product.updatedAt,
-        category: updatedCategory
-          ? {
-              id: updatedCategory.id,
-              name: updatedCategory.name,
-              code: updatedCategory.code,
+        // Lock Product row as lock root
+        const product = await productRepo.findOne({
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+          relations: { category: true },
+        });
+
+        if (!product || product.deletedAt) {
+          throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
+        }
+
+        const effectiveIsActive = dto.isActive !== undefined ? dto.isActive : product.isActive;
+
+        // Category validation
+        if (dto.categoryId !== undefined) {
+          if (dto.categoryId !== null) {
+            const category = await categoryRepo.findOne({
+              where: { id: dto.categoryId },
+              lock: { mode: 'pessimistic_write' },
+            });
+
+            if (!category || category.deletedAt) {
+              throw new NotFoundError('فئة المنتج غير موجودة', 'INVENTORY_PRODUCT_CATEGORY_NOT_FOUND');
             }
-          : null,
-        baseUnit: {
-          id: baseUnit.id,
-          name: baseUnit.name,
-          barcode: baseUnit.barcode,
-          price: baseUnit.price,
-          specifications: baseUnit.specifications,
-        },
-      };
-    });
+
+            if (effectiveIsActive && !category.isActive) {
+              throw new BusinessRuleError('لا يمكن ربط منتج نشط بفئة معطلة', 'INVENTORY_PRODUCT_CATEGORY_INACTIVE');
+            }
+
+            product.categoryId = category.id;
+          } else {
+            product.categoryId = null;
+          }
+        } else if (dto.isActive === true && product.categoryId) {
+          // If activating and category exists, verify category is active
+          const currentCategory = await categoryRepo.findOne({
+            where: { id: product.categoryId },
+            lock: { mode: 'pessimistic_write' },
+          });
+
+          if (!currentCategory || currentCategory.deletedAt || !currentCategory.isActive) {
+            throw new BusinessRuleError('لا يمكن تفعيل منتج يتبع لفئة معطلة', 'INVENTORY_PRODUCT_CATEGORY_INACTIVE');
+          }
+        }
+
+        if (dto.name !== undefined) {
+          product.name = dto.name.trim();
+        }
+
+        if (dto.description !== undefined) {
+          product.description = dto.description ? dto.description.trim() : null;
+        }
+
+        if (dto.locationName !== undefined) {
+          product.locationName = dto.locationName ? dto.locationName.trim() : null;
+        }
+
+        if (dto.isActive !== undefined) {
+          product.isActive = dto.isActive;
+        }
+
+        await productRepo.save(product);
+
+        // Verify Base Unit integrity
+        const baseUnit = await this.assertProductBaseUnitIntegrity(product, unitRepo);
+
+        const updatedCategory = product.categoryId
+          ? await categoryRepo.findOne({ where: { id: product.categoryId } })
+          : null;
+
+        return {
+          id: product.id,
+          name: product.name,
+          code: product.code,
+          description: product.description,
+          categoryId: product.categoryId,
+          categoryName: updatedCategory ? updatedCategory.name : null,
+          locationName: product.locationName,
+          baseUnitId: baseUnit.id,
+          baseUnitName: baseUnit.name,
+          isActive: product.isActive,
+          createdAt: product.createdAt,
+          updatedAt: product.updatedAt,
+          category: updatedCategory
+            ? {
+                id: updatedCategory.id,
+                name: updatedCategory.name,
+                code: updatedCategory.code,
+              }
+            : null,
+          baseUnit: {
+            id: baseUnit.id,
+            name: baseUnit.name,
+            barcode: baseUnit.barcode,
+            price: baseUnit.price,
+            specifications: baseUnit.specifications,
+          },
+        };
+      });
+    } catch (err) {
+      const dup = isProductOrUnitDuplicateKeyError(err);
+      if (dup.isDup) {
+        if (dup.constraint.includes('UQ_inventory_product_code') || dup.constraint.includes('code')) {
+          throw new ConflictError('رمز المنتج مستخدم بالفعل', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
+        }
+        throw new ConflictError('قيمة مكررة بالفعل في المنتج', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
+      }
+      throw err;
+    }
   }
 
   /**
@@ -495,6 +527,8 @@ export class InventoryProductService {
     if (!product || product.deletedAt) {
       throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
     }
+
+    await this.assertProductBaseUnitIntegrity(product, this.unitRepository);
 
     const page = Math.max(1, query.page || 1);
     const limit = Math.max(1, Math.min(100, query.limit || 50));
@@ -547,252 +581,83 @@ export class InventoryProductService {
     const normalizedName = dto.name.trim();
     const barcode = dto.barcode ? dto.barcode.trim() : null;
 
-    return this.dataSource.transaction(async (manager) => {
-      const productRepo = manager.getRepository(InventoryProductEntity);
-      const unitRepo = manager.getRepository(InventoryProductUnitEntity);
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const productRepo = manager.getRepository(InventoryProductEntity);
+        const unitRepo = manager.getRepository(InventoryProductUnitEntity);
 
-      // Lock Product row as Root Lock
-      const product = await productRepo.findOne({
-        where: { id: productId },
-        lock: { mode: 'pessimistic_write' },
-      });
+        // Lock Product row as Root Lock
+        const product = await productRepo.findOne({
+          where: { id: productId },
+          lock: { mode: 'pessimistic_write' },
+        });
 
-      if (!product || product.deletedAt) {
-        throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
-      }
+        if (!product || product.deletedAt) {
+          throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
+        }
 
-      if (!product.baseUnitId) {
-        throw new BusinessRuleError(
-          'المنتج غير متسق ولا يملك وحدة أساسية',
-          'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
-        );
-      }
+        const baseUnit = await this.assertProductBaseUnitIntegrity(product, unitRepo);
 
-      // Check unit name uniqueness within this product including soft deleted
-      const existingName = await unitRepo.findOne({
-        where: { productId, name: normalizedName },
-        withDeleted: true,
-      });
-
-      if (existingName) {
-        throw new ConflictError(
-          'اسم الوحدة مستخدم بالفعل داخل هذا المنتج',
-          'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS'
-        );
-      }
-
-      // Check barcode uniqueness globally including soft deleted
-      if (barcode) {
-        const existingBarcode = await unitRepo.findOne({
-          where: { barcode },
+        // Check unit name uniqueness within this product including soft deleted
+        const existingName = await unitRepo.findOne({
+          where: { productId, name: normalizedName },
           withDeleted: true,
         });
 
-        if (existingBarcode) {
+        if (existingName) {
           throw new ConflictError(
-            'الباركود مستخدم بالفعل',
-            'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS'
-          );
-        }
-      }
-
-      // Validate equivalentToUnitId
-      const equivalentUnit = await unitRepo.findOne({
-        where: { id: dto.equivalentToUnitId },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      if (!equivalentUnit || equivalentUnit.deletedAt) {
-        throw new NotFoundError('الوحدة المقابلة غير موجودة', 'INVENTORY_PRODUCT_UNIT_REFERENCE_NOT_FOUND');
-      }
-
-      if (equivalentUnit.productId !== productId) {
-        throw new BusinessRuleError(
-          'الوحدة المقابلة يجب أن تتبع لنفس المنتج',
-          'INVENTORY_PRODUCT_UNIT_REFERENCE_OUTSIDE_PRODUCT'
-        );
-      }
-
-      // Cycle & Chain check: traverse equivalentTo chain until reaching Base Unit
-      let currId: string | null = equivalentUnit.id;
-      let reachedBase = false;
-      const visited = new Set<string>();
-
-      while (currId) {
-        if (currId === product.baseUnitId) {
-          reachedBase = true;
-          break;
-        }
-
-        if (visited.has(currId)) {
-          throw new BusinessRuleError(
-            'سلسلة التحويل الحالية تحتوي على تكرار أو حلقة دائرية غير متسقة',
-            'INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT'
-          );
-        }
-        visited.add(currId);
-
-        const currUnit: InventoryProductUnitEntity | null = await unitRepo.findOne({
-          where: { id: currId },
-        });
-
-        if (!currUnit || currUnit.deletedAt || currUnit.productId !== productId) {
-          throw new BusinessRuleError(
-            'سلسلة تحويل الوحدات غير متسقة',
-            'INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT'
+            'اسم الوحدة مستخدم بالفعل داخل هذا المنتج',
+            'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS'
           );
         }
 
-        currId = currUnit.equivalentToUnitId;
-      }
+        // Check barcode uniqueness globally including soft deleted
+        if (barcode) {
+          const existingBarcode = await unitRepo.findOne({
+            where: { barcode },
+            withDeleted: true,
+          });
 
-      if (!reachedBase) {
-        throw new BusinessRuleError(
-          'سلسلة تحويل الوحدات يجب أن تنتهي بالوحدة الأساسية للمنتج',
-          'INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT'
-        );
-      }
-
-      const validatedSpecs = this.validateSpecifications(dto.specifications);
-
-      const unit = unitRepo.create({
-        productId,
-        name: normalizedName,
-        barcode,
-        price: dto.price,
-        equivalentToUnitId: equivalentUnit.id,
-        conversionQuantity: dto.conversionQuantity,
-        specifications: validatedSpecs,
-      });
-
-      const savedUnit = await unitRepo.save(unit);
-
-      return {
-        id: savedUnit.id,
-        productId: savedUnit.productId,
-        name: savedUnit.name,
-        barcode: savedUnit.barcode,
-        price: savedUnit.price,
-        isBase: false,
-        equivalentToUnitId: savedUnit.equivalentToUnitId,
-        equivalentToUnitName: equivalentUnit.name,
-        conversionQuantity: savedUnit.conversionQuantity,
-        specifications: savedUnit.specifications,
-        createdAt: savedUnit.createdAt,
-        updatedAt: savedUnit.updatedAt,
-      };
-    });
-  }
-
-  /**
-   * Updates an existing unit.
-   * If target is Base Unit: conversion mutation is strictly forbidden.
-   * Lock order: Product (pessimistic_write) -> Unit (pessimistic_write).
-   */
-  async updateUnit(
-    productId: string,
-    unitId: string,
-    dto: UpdateInventoryProductUnitDto
-  ): Promise<InventoryProductUnitDto> {
-    return this.dataSource.transaction(async (manager) => {
-      const productRepo = manager.getRepository(InventoryProductEntity);
-      const unitRepo = manager.getRepository(InventoryProductUnitEntity);
-
-      // Lock Product row as Root Lock
-      const product = await productRepo.findOne({
-        where: { id: productId },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      if (!product || product.deletedAt) {
-        throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
-      }
-
-      if (!product.baseUnitId) {
-        throw new BusinessRuleError(
-          'المنتج غير متسق ولا يملك وحدة أساسية',
-          'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
-        );
-      }
-
-      // Lock target Unit
-      const unit = await unitRepo.findOne({
-        where: { id: unitId },
-        lock: { mode: 'pessimistic_write' },
-        relations: { equivalentToUnit: true },
-      });
-
-
-      if (!unit || unit.deletedAt || unit.productId !== productId) {
-        throw new NotFoundError('الوحدة غير موجودة', 'INVENTORY_PRODUCT_UNIT_NOT_FOUND');
-      }
-
-      const isBase = (unit.id === product.baseUnitId);
-
-      // Base unit conversion immutability
-      if (isBase) {
-        if (dto.equivalentToUnitId !== undefined || dto.conversionQuantity !== undefined) {
-          throw new BusinessRuleError(
-            'لا يمكن تعديل معادلة أو تحويل الوحدة الأساسية للمنتج',
-            'INVENTORY_PRODUCT_BASE_UNIT_CONVERSION_IMMUTABLE'
-          );
-        }
-      }
-
-      // Non-base unit conversion validation
-      if (!isBase && dto.equivalentToUnitId !== undefined) {
-        if (dto.equivalentToUnitId === null) {
-          throw new BusinessRuleError(
-            'الوحدات الإضافية يجب أن ترتبط بوحدة مقابلة',
-            'INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT'
-          );
+          if (existingBarcode) {
+            throw new ConflictError(
+              'الباركود مستخدم بالفعل',
+              'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS'
+            );
+          }
         }
 
-        if (dto.equivalentToUnitId === unitId) {
-          throw new BusinessRuleError(
-            'لا يمكن للوحدة أن تعادل نفسها (حلقة دائرية)',
-            'INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE'
-          );
-        }
-
-        const proposedEquivalent = await unitRepo.findOne({
+        // Validate equivalentToUnitId
+        const equivalentUnit = await unitRepo.findOne({
           where: { id: dto.equivalentToUnitId },
           lock: { mode: 'pessimistic_write' },
         });
 
-        if (!proposedEquivalent || proposedEquivalent.deletedAt) {
+        if (!equivalentUnit || equivalentUnit.deletedAt) {
           throw new NotFoundError('الوحدة المقابلة غير موجودة', 'INVENTORY_PRODUCT_UNIT_REFERENCE_NOT_FOUND');
         }
 
-        if (proposedEquivalent.productId !== productId) {
+        if (equivalentUnit.productId !== productId) {
           throw new BusinessRuleError(
             'الوحدة المقابلة يجب أن تتبع لنفس المنتج',
             'INVENTORY_PRODUCT_UNIT_REFERENCE_OUTSIDE_PRODUCT'
           );
         }
 
-        // Traverse proposed equivalent ancestry to check for cycles and termination at Base Unit
-        let currId: string | null = proposedEquivalent.id;
+        // Cycle & Chain check: traverse equivalentTo chain until reaching Base Unit
+        let currId: string | null = equivalentUnit.id;
         let reachedBase = false;
         const visited = new Set<string>();
 
         while (currId) {
-          if (currId === unitId) {
-            throw new BusinessRuleError(
-              'تعيين هذه الوحدة المقابلة يؤدي إلى حلقة دائرية',
-              'INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE'
-            );
-          }
-
-          if (currId === product.baseUnitId) {
+          if (currId === baseUnit.id) {
             reachedBase = true;
             break;
           }
 
           if (visited.has(currId)) {
             throw new BusinessRuleError(
-              'سلسلة التحويل تحتوي على حلقة دائرية غير متسقة',
-              'INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT'
+              'سلسلة التحويل الحالية تحتوي على تكرار أو حلقة دائرية غير متسقة',
+              'INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE'
             );
           }
           visited.add(currId);
@@ -818,82 +683,274 @@ export class InventoryProductService {
           );
         }
 
-        unit.equivalentToUnitId = proposedEquivalent.id;
+        const validatedSpecs = this.validateSpecifications(dto.specifications);
+
+        const unit = unitRepo.create({
+          productId,
+          name: normalizedName,
+          barcode,
+          price: dto.price,
+          equivalentToUnitId: equivalentUnit.id,
+          conversionQuantity: dto.conversionQuantity,
+          specifications: validatedSpecs,
+        });
+
+        const savedUnit = await unitRepo.save(unit);
+
+        return {
+          id: savedUnit.id,
+          productId: savedUnit.productId,
+          name: savedUnit.name,
+          barcode: savedUnit.barcode,
+          price: savedUnit.price,
+          isBase: false,
+          equivalentToUnitId: savedUnit.equivalentToUnitId,
+          equivalentToUnitName: equivalentUnit.name,
+          conversionQuantity: savedUnit.conversionQuantity,
+          specifications: savedUnit.specifications,
+          createdAt: savedUnit.createdAt,
+          updatedAt: savedUnit.updatedAt,
+        };
+      });
+    } catch (err) {
+      const dup = isProductOrUnitDuplicateKeyError(err);
+      if (dup.isDup) {
+        if (dup.constraint.includes('UQ_inventory_product_unit_barcode') || dup.constraint.includes('barcode')) {
+          throw new ConflictError('الباركود مستخدم بالفعل', 'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS');
+        }
+        if (dup.constraint.includes('UQ_inventory_product_unit_product_name') || dup.constraint.includes('product_id')) {
+          throw new ConflictError(
+            'اسم الوحدة مستخدم بالفعل داخل هذا المنتج',
+            'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS'
+          );
+        }
+        throw new ConflictError('بيانات الوحدة مكررة بالفعل', 'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS');
       }
+      throw err;
+    }
+  }
 
-      if (!isBase && dto.conversionQuantity !== undefined) {
-        unit.conversionQuantity = dto.conversionQuantity;
-      }
+  /**
+   * Updates an existing unit.
+   * If target is Base Unit: conversion mutation is strictly forbidden.
+   * Lock order: Product (pessimistic_write) -> Unit (pessimistic_write).
+   */
+  async updateUnit(
+    productId: string,
+    unitId: string,
+    dto: UpdateInventoryProductUnitDto
+  ): Promise<InventoryProductUnitDto> {
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const productRepo = manager.getRepository(InventoryProductEntity);
+        const unitRepo = manager.getRepository(InventoryProductUnitEntity);
 
-      // Name uniqueness check within product
-      if (dto.name !== undefined) {
-        const normalizedName = dto.name.trim();
-        if (normalizedName !== unit.name) {
-          const existingName = await unitRepo.findOne({
-            where: { productId, name: normalizedName },
-            withDeleted: true,
-          });
+        // Lock Product row as Root Lock
+        const product = await productRepo.findOne({
+          where: { id: productId },
+          lock: { mode: 'pessimistic_write' },
+        });
 
-          if (existingName && existingName.id !== unitId) {
-            throw new ConflictError(
-              'اسم الوحدة مستخدم بالفعل داخل هذا المنتج',
-              'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS'
+        if (!product || product.deletedAt) {
+          throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
+        }
+
+        const baseUnit = await this.assertProductBaseUnitIntegrity(product, unitRepo);
+
+        // Lock target Unit
+        const unit = await unitRepo.findOne({
+          where: { id: unitId },
+          lock: { mode: 'pessimistic_write' },
+          relations: { equivalentToUnit: true },
+        });
+
+        if (!unit || unit.deletedAt || unit.productId !== productId) {
+          throw new NotFoundError('الوحدة غير موجودة', 'INVENTORY_PRODUCT_UNIT_NOT_FOUND');
+        }
+
+        const isBase = unit.id === baseUnit.id;
+
+        // Base unit conversion immutability
+        if (isBase) {
+          if (dto.equivalentToUnitId !== undefined || dto.conversionQuantity !== undefined) {
+            throw new BusinessRuleError(
+              'لا يمكن تعديل معادلة أو تحويل الوحدة الأساسية للمنتج',
+              'INVENTORY_PRODUCT_BASE_UNIT_CONVERSION_IMMUTABLE'
             );
           }
-          unit.name = normalizedName;
         }
-      }
 
-      // Barcode uniqueness check globally
-      if (dto.barcode !== undefined) {
-        const barcode = dto.barcode ? dto.barcode.trim() : null;
-        if (barcode !== unit.barcode) {
-          if (barcode) {
-            const existingBarcode = await unitRepo.findOne({
-              where: { barcode },
+        // Non-base unit conversion validation
+        if (!isBase && dto.equivalentToUnitId !== undefined) {
+          if (dto.equivalentToUnitId === null) {
+            throw new BusinessRuleError(
+              'الوحدات الإضافية يجب أن ترتبط بوحدة مقابلة',
+              'INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT'
+            );
+          }
+
+          if (dto.equivalentToUnitId === unitId) {
+            throw new BusinessRuleError(
+              'لا يمكن للوحدة أن تعادل نفسها (حلقة دائرية)',
+              'INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE'
+            );
+          }
+
+          const proposedEquivalent = await unitRepo.findOne({
+            where: { id: dto.equivalentToUnitId },
+            lock: { mode: 'pessimistic_write' },
+          });
+
+          if (!proposedEquivalent || proposedEquivalent.deletedAt) {
+            throw new NotFoundError('الوحدة المقابلة غير موجودة', 'INVENTORY_PRODUCT_UNIT_REFERENCE_NOT_FOUND');
+          }
+
+          if (proposedEquivalent.productId !== productId) {
+            throw new BusinessRuleError(
+              'الوحدة المقابلة يجب أن تتبع لنفس المنتج',
+              'INVENTORY_PRODUCT_UNIT_REFERENCE_OUTSIDE_PRODUCT'
+            );
+          }
+
+          // Traverse proposed equivalent ancestry to check for cycles and termination at Base Unit
+          let currId: string | null = proposedEquivalent.id;
+          let reachedBase = false;
+          const visited = new Set<string>();
+
+          while (currId) {
+            if (currId === unitId) {
+              throw new BusinessRuleError(
+                'تعيين هذه الوحدة المقابلة يؤدي إلى حلقة دائرية',
+                'INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE'
+              );
+            }
+
+            if (currId === baseUnit.id) {
+              reachedBase = true;
+              break;
+            }
+
+            if (visited.has(currId)) {
+              throw new BusinessRuleError(
+                'سلسلة التحويل تحتوي على حلقة دائرية غير متسقة',
+                'INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE'
+              );
+            }
+            visited.add(currId);
+
+            const currUnit: InventoryProductUnitEntity | null = await unitRepo.findOne({
+              where: { id: currId },
+            });
+
+            if (!currUnit || currUnit.deletedAt || currUnit.productId !== productId) {
+              throw new BusinessRuleError(
+                'سلسلة تحويل الوحدات غير متسقة',
+                'INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT'
+              );
+            }
+
+            currId = currUnit.equivalentToUnitId;
+          }
+
+          if (!reachedBase) {
+            throw new BusinessRuleError(
+              'سلسلة تحويل الوحدات يجب أن تنتهي بالوحدة الأساسية للمنتج',
+              'INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT'
+            );
+          }
+
+          unit.equivalentToUnitId = proposedEquivalent.id;
+        }
+
+        if (!isBase && dto.conversionQuantity !== undefined) {
+          unit.conversionQuantity = dto.conversionQuantity;
+        }
+
+        // Name uniqueness check within product
+        if (dto.name !== undefined) {
+          const normalizedName = dto.name.trim();
+          if (normalizedName !== unit.name) {
+            const existingName = await unitRepo.findOne({
+              where: { productId, name: normalizedName },
               withDeleted: true,
             });
 
-            if (existingBarcode && existingBarcode.id !== unitId) {
+            if (existingName && existingName.id !== unitId) {
               throw new ConflictError(
-                'الباركود مستخدم بالفعل',
-                'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS'
+                'اسم الوحدة مستخدم بالفعل داخل هذا المنتج',
+                'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS'
               );
             }
+            unit.name = normalizedName;
           }
-          unit.barcode = barcode;
         }
+
+        // Barcode uniqueness check globally
+        if (dto.barcode !== undefined) {
+          const barcode = dto.barcode ? dto.barcode.trim() : null;
+          if (barcode !== unit.barcode) {
+            if (barcode) {
+              const existingBarcode = await unitRepo.findOne({
+                where: { barcode },
+                withDeleted: true,
+              });
+
+              if (existingBarcode && existingBarcode.id !== unitId) {
+                throw new ConflictError(
+                  'الباركود مستخدم بالفعل',
+                  'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS'
+                );
+              }
+            }
+            unit.barcode = barcode;
+          }
+        }
+
+        if (dto.price !== undefined) {
+          unit.price = dto.price;
+        }
+
+        if (dto.specifications !== undefined) {
+          unit.specifications = this.validateSpecifications(dto.specifications);
+        }
+
+        const savedUnit = await unitRepo.save(unit);
+
+        const equivalentName = savedUnit.equivalentToUnitId
+          ? (await unitRepo.findOne({ where: { id: savedUnit.equivalentToUnitId } }))?.name || null
+          : null;
+
+        return {
+          id: savedUnit.id,
+          productId: savedUnit.productId,
+          name: savedUnit.name,
+          barcode: savedUnit.barcode,
+          price: savedUnit.price,
+          isBase,
+          equivalentToUnitId: savedUnit.equivalentToUnitId,
+          equivalentToUnitName: equivalentName,
+          conversionQuantity: savedUnit.conversionQuantity,
+          specifications: savedUnit.specifications,
+          createdAt: savedUnit.createdAt,
+          updatedAt: savedUnit.updatedAt,
+        };
+      });
+    } catch (err) {
+      const dup = isProductOrUnitDuplicateKeyError(err);
+      if (dup.isDup) {
+        if (dup.constraint.includes('UQ_inventory_product_unit_barcode') || dup.constraint.includes('barcode')) {
+          throw new ConflictError('الباركود مستخدم بالفعل', 'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS');
+        }
+        if (dup.constraint.includes('UQ_inventory_product_unit_product_name') || dup.constraint.includes('product_id')) {
+          throw new ConflictError(
+            'اسم الوحدة مستخدم بالفعل داخل هذا المنتج',
+            'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS'
+          );
+        }
+        throw new ConflictError('بيانات الوحدة مكررة بالفعل', 'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS');
       }
-
-      if (dto.price !== undefined) {
-        unit.price = dto.price;
-      }
-
-      if (dto.specifications !== undefined) {
-        unit.specifications = this.validateSpecifications(dto.specifications);
-      }
-
-      const savedUnit = await unitRepo.save(unit);
-
-      const equivalentName = savedUnit.equivalentToUnitId
-        ? (await unitRepo.findOne({ where: { id: savedUnit.equivalentToUnitId } }))?.name || null
-        : null;
-
-      return {
-        id: savedUnit.id,
-        productId: savedUnit.productId,
-        name: savedUnit.name,
-        barcode: savedUnit.barcode,
-        price: savedUnit.price,
-        isBase,
-        equivalentToUnitId: savedUnit.equivalentToUnitId,
-        equivalentToUnitName: equivalentName,
-        conversionQuantity: savedUnit.conversionQuantity,
-        specifications: savedUnit.specifications,
-        createdAt: savedUnit.createdAt,
-        updatedAt: savedUnit.updatedAt,
-      };
-    });
+      throw err;
+    }
   }
 
   /**
@@ -916,6 +973,8 @@ export class InventoryProductService {
         throw new NotFoundError('المنتج غير موجود', 'INVENTORY_PRODUCT_NOT_FOUND');
       }
 
+      const baseUnit = await this.assertProductBaseUnitIntegrity(product, unitRepo);
+
       // Lock target Unit
       const unit = await unitRepo.findOne({
         where: { id: unitId },
@@ -927,7 +986,7 @@ export class InventoryProductService {
       }
 
       // Reject Base Unit deletion
-      if (unit.id === product.baseUnitId) {
+      if (unit.id === baseUnit.id) {
         throw new BusinessRuleError(
           'لا يمكن حذف الوحدة الأساسية للمنتج',
           'INVENTORY_PRODUCT_BASE_UNIT_CANNOT_BE_DELETED'

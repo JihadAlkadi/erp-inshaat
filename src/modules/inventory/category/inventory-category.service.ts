@@ -1,4 +1,4 @@
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, QueryFailedError } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { InventoryCategoryEntity } from './inventory-category.entity.js';
 import { CreateInventoryCategoryDto } from './dto/create-inventory-category.dto.js';
@@ -8,6 +8,23 @@ import { CategoryOptionsQueryDto } from './dto/category-options-query.dto.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+
+function isCategoryDuplicateKeyError(error: unknown): boolean {
+  if (error instanceof QueryFailedError) {
+    const driverError = (
+      error as { driverError?: { code?: string; errno?: number; message?: string } }
+    ).driverError;
+    if (driverError && (driverError.code === 'ER_DUP_ENTRY' || driverError.errno === 1062)) {
+      return (
+        !driverError.message ||
+        driverError.message.includes('UQ_inventory_category_code') ||
+        driverError.message.includes('code')
+      );
+    }
+  }
+  return false;
+}
+
 
 export interface CategoryTreeNodeDto {
   id: string;
@@ -345,177 +362,198 @@ export class InventoryCategoryService {
 
     const isActive = dto.isActive !== undefined ? dto.isActive : true;
 
-    if (dto.parentId) {
-      return this.dataSource.transaction(async (manager) => {
-        const parentRepo = manager.getRepository(InventoryCategoryEntity);
+    try {
+      if (dto.parentId) {
+        return await this.dataSource.transaction(async (manager) => {
+          const parentRepo = manager.getRepository(InventoryCategoryEntity);
 
-        // Lock parent category row
-        const parent = await parentRepo.findOne({
-          where: { id: dto.parentId },
-          lock: { mode: 'pessimistic_write' },
+          // Lock parent category row
+          const parent = await parentRepo.findOne({
+            where: { id: dto.parentId },
+            lock: { mode: 'pessimistic_write' },
+          });
+
+          if (!parent || parent.deletedAt) {
+            throw new NotFoundError('الفئة الأب غير موجودة', 'INVENTORY_CATEGORY_PARENT_NOT_FOUND');
+          }
+
+          if (isActive && !parent.isActive) {
+            throw new BusinessRuleError('لا يمكن إنشاء فئة نشطة تتبع لفئة أب معطلة', 'INVENTORY_CATEGORY_PARENT_INACTIVE');
+          }
+
+          const category = parentRepo.create({
+            name: dto.name.trim(),
+            code: normalizedCode,
+            description: dto.description ? dto.description.trim() : null,
+            parentId: parent.id,
+            isActive,
+          });
+
+          return await parentRepo.save(category);
         });
+      }
 
-        if (!parent || parent.deletedAt) {
-          throw new NotFoundError('الفئة الأب غير موجودة', 'INVENTORY_CATEGORY_PARENT_NOT_FOUND');
-        }
-
-        if (isActive && !parent.isActive) {
-          throw new BusinessRuleError('لا يمكن إنشاء فئة نشطة تتبع لفئة أب معطلة', 'INVENTORY_CATEGORY_PARENT_INACTIVE');
-        }
-
-        const category = parentRepo.create({
-          name: dto.name.trim(),
-          code: normalizedCode,
-          description: dto.description ? dto.description.trim() : null,
-          parentId: parent.id,
-          isActive,
-        });
-
-        return parentRepo.save(category);
+      const category = this.categoryRepository.create({
+        name: dto.name.trim(),
+        code: normalizedCode,
+        description: dto.description ? dto.description.trim() : null,
+        parentId: null,
+        isActive,
       });
+
+      return await this.categoryRepository.save(category);
+    } catch (err: unknown) {
+      if (isCategoryDuplicateKeyError(err)) {
+        throw new ConflictError('رمز الفئة مستخدم بالفعل', 'INVENTORY_CATEGORY_CODE_ALREADY_EXISTS');
+      }
+      throw err;
     }
-
-    const category = this.categoryRepository.create({
-      name: dto.name.trim(),
-      code: normalizedCode,
-      description: dto.description ? dto.description.trim() : null,
-      parentId: null,
-      isActive,
-    });
-
-    return this.categoryRepository.save(category);
   }
 
   /**
    * Updates an existing category.
    */
   async updateCategory(id: string, dto: UpdateInventoryCategoryDto): Promise<InventoryCategoryEntity> {
-    return this.dataSource.transaction(async (manager) => {
-      const categoryRepo = manager.getRepository(InventoryCategoryEntity);
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const categoryRepo = manager.getRepository(InventoryCategoryEntity);
 
-      // Lock target category row
-      const category = await categoryRepo.findOne({
-        where: { id },
-        lock: { mode: 'pessimistic_write' },
-      });
+        // Lock target category row
+        const category = await categoryRepo.findOne({
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
 
-      if (!category || category.deletedAt) {
-        throw new NotFoundError('الفئة غير موجودة', 'INVENTORY_CATEGORY_NOT_FOUND');
-      }
-
-      const effectiveIsActive = dto.isActive !== undefined ? dto.isActive : category.isActive;
-
-      // Handle parentId changes
-      if (dto.parentId !== undefined) {
-        if (dto.parentId === id) {
-          throw new BusinessRuleError('لا يمكن للفئة أن تكون أباً لنفسها', 'INVENTORY_CATEGORY_CYCLE');
+        if (!category || category.deletedAt) {
+          throw new NotFoundError('الفئة غير موجودة', 'INVENTORY_CATEGORY_NOT_FOUND');
         }
 
-        if (dto.parentId !== null) {
-          // Detect cycles by traversing ancestry
-          const visited = new Set<string>([dto.parentId]);
-          let currParentId: string | null = dto.parentId;
+        const effectiveIsActive = dto.isActive !== undefined ? dto.isActive : category.isActive;
 
-          while (currParentId) {
-            if (currParentId === id) {
-              throw new BusinessRuleError('لا يمكن تعيين فئة فرعية كفئة أب (حلقة دائرية)', 'INVENTORY_CATEGORY_CYCLE');
-            }
+        // Handle parentId changes
+        if (dto.parentId !== undefined) {
+          if (dto.parentId === id) {
+            throw new BusinessRuleError('لا يمكن للفئة أن تكون أباً لنفسها', 'INVENTORY_CATEGORY_CYCLE');
+          }
 
-            const currCategory = await categoryRepo.findOne({
-              where: { id: currParentId },
-              withDeleted: true,
-            });
+          if (dto.parentId !== null) {
+            // Detect cycles by traversing ancestry
+            const visited = new Set<string>([dto.parentId]);
+            let currParentId: string | null = dto.parentId;
 
-            if (!currCategory || currCategory.deletedAt) {
-              break;
-            }
-
-            currParentId = currCategory.parentId;
-            if (currParentId) {
-              if (visited.has(currParentId)) {
-                throw new BusinessRuleError('هيكل الفئات يحتوي على تكرار دائري غير متسق', 'INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT');
+            while (currParentId) {
+              if (currParentId === id) {
+                throw new BusinessRuleError('لا يمكن تعيين فئة فرعية كفئة أب (حلقة دائرية)', 'INVENTORY_CATEGORY_CYCLE');
               }
-              visited.add(currParentId);
+
+              const currCategory = await categoryRepo.findOne({
+                where: { id: currParentId },
+                withDeleted: true,
+              });
+
+              // Fail closed if ancestor category is missing or soft-deleted
+              if (!currCategory || currCategory.deletedAt) {
+                throw new BusinessRuleError(
+                  'هيكل الفئات يحتوي على فئة مفقودة أو مؤرشفة في مسار الأسلاف',
+                  'INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT'
+                );
+              }
+
+              currParentId = currCategory.parentId;
+              if (currParentId) {
+                if (visited.has(currParentId)) {
+                  throw new BusinessRuleError(
+                    'هيكل الفئات يحتوي على تكرار دائري غير متسق',
+                    'INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT'
+                  );
+                }
+                visited.add(currParentId);
+              }
             }
-          }
 
-          // Lock proposed parent
-          const proposedParent = await categoryRepo.findOne({
-            where: { id: dto.parentId },
-            lock: { mode: 'pessimistic_write' },
-          });
-
-          if (!proposedParent || proposedParent.deletedAt) {
-            throw new NotFoundError('الفئة الأب غير موجودة', 'INVENTORY_CATEGORY_PARENT_NOT_FOUND');
-          }
-
-          if (effectiveIsActive && !proposedParent.isActive) {
-            throw new BusinessRuleError('لا يمكن ربط فئة نشطة بفئة أب معطلة', 'INVENTORY_CATEGORY_PARENT_INACTIVE');
-          }
-
-          category.parentId = proposedParent.id;
-        } else {
-          category.parentId = null;
-        }
-      }
-
-      // Handle activation / deactivation rules
-      if (dto.isActive !== undefined) {
-        if (dto.isActive === true) {
-          // If activating, parent if present must be active
-          if (category.parentId) {
-            const currentParent = await categoryRepo.findOne({
-              where: { id: category.parentId },
+            // Lock proposed parent
+            const proposedParent = await categoryRepo.findOne({
+              where: { id: dto.parentId },
               lock: { mode: 'pessimistic_write' },
             });
 
-            if (!currentParent || currentParent.deletedAt || !currentParent.isActive) {
-              throw new BusinessRuleError('لا يمكن تفعيل فئة تتبع لفئة أب معطلة', 'INVENTORY_CATEGORY_PARENT_INACTIVE');
+            if (!proposedParent || proposedParent.deletedAt) {
+              throw new NotFoundError('الفئة الأب غير موجودة', 'INVENTORY_CATEGORY_PARENT_NOT_FOUND');
             }
-          }
-        } else {
-          // If deactivating, reject if has active children
-          const activeChildrenCount = await categoryRepo.count({
-            where: {
-              parentId: id,
-              isActive: true,
-            },
-          });
 
-          if (activeChildrenCount > 0) {
-            throw new BusinessRuleError('لا يمكن تعطيل فئة تحتوي على فئات فرعية نشطة', 'INVENTORY_CATEGORY_HAS_ACTIVE_CHILDREN');
-          }
-
-          // Reject if has active products
-          const activeProductCountRaw = await manager.query(
-            `SELECT COUNT(1) as cnt FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'inventory_product'`
-          );
-          if (parseInt(activeProductCountRaw[0]?.cnt || '0', 10) > 0) {
-            const productCountResult = await manager.query(
-              `SELECT COUNT(1) as cnt FROM inventory_product WHERE category_id = ? AND is_active = 1 AND deleted_at IS NULL`,
-              [id]
-            );
-            const activeProducts = parseInt(productCountResult[0]?.cnt || '0', 10);
-            if (activeProducts > 0) {
-              throw new BusinessRuleError('لا يمكن تعطيل فئة تحتوي على منتجات نشطة', 'INVENTORY_CATEGORY_HAS_ACTIVE_PRODUCTS');
+            if (effectiveIsActive && !proposedParent.isActive) {
+              throw new BusinessRuleError('لا يمكن ربط فئة نشطة بفئة أب معطلة', 'INVENTORY_CATEGORY_PARENT_INACTIVE');
             }
+
+            category.parentId = proposedParent.id;
+          } else {
+            category.parentId = null;
           }
         }
 
-        category.isActive = dto.isActive;
-      }
+        // Handle activation / deactivation rules
+        if (dto.isActive !== undefined) {
+          if (dto.isActive === true) {
+            // If activating, parent if present must be active
+            if (category.parentId) {
+              const currentParent = await categoryRepo.findOne({
+                where: { id: category.parentId },
+                lock: { mode: 'pessimistic_write' },
+              });
 
-      if (dto.name !== undefined) {
-        category.name = dto.name.trim();
-      }
+              if (!currentParent || currentParent.deletedAt || !currentParent.isActive) {
+                throw new BusinessRuleError('لا يمكن تفعيل فئة تتبع لفئة أب معطلة', 'INVENTORY_CATEGORY_PARENT_INACTIVE');
+              }
+            }
+          } else {
+            // If deactivating (isActive = false), reject if has ANY non-deleted child category (active or inactive)
+            const childrenCount = await categoryRepo.count({
+              where: {
+                parentId: id,
+              },
+            });
 
-      if (dto.description !== undefined) {
-        category.description = dto.description ? dto.description.trim() : null;
-      }
+            if (childrenCount > 0) {
+              throw new BusinessRuleError('لا يمكن تعطيل فئة تحتوي على فئات فرعية', 'INVENTORY_CATEGORY_HAS_CHILDREN');
+            }
 
-      return categoryRepo.save(category);
-    });
+            // Reject if has ANY non-deleted product (active or inactive)
+            const productTableCheck = await manager.query(
+              `SELECT COUNT(1) as cnt FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'inventory_product'`
+            );
+            if (parseInt(productTableCheck[0]?.cnt || '0', 10) > 0) {
+              const productCountResult = await manager.query(
+                `SELECT COUNT(1) as cnt FROM inventory_product WHERE category_id = ? AND deleted_at IS NULL`,
+                [id]
+              );
+              const productsCount = parseInt(productCountResult[0]?.cnt || '0', 10);
+              if (productsCount > 0) {
+                throw new BusinessRuleError('لا يمكن تعطيل فئة مرتبطة بمنتجات', 'INVENTORY_CATEGORY_HAS_PRODUCTS');
+              }
+            }
+          }
+
+          category.isActive = dto.isActive;
+        }
+
+        if (dto.name !== undefined) {
+          category.name = dto.name.trim();
+        }
+
+        if (dto.description !== undefined) {
+          category.description = dto.description ? dto.description.trim() : null;
+        }
+
+        return await categoryRepo.save(category);
+      });
+    } catch (err: unknown) {
+      if (isCategoryDuplicateKeyError(err)) {
+        throw new ConflictError('رمز الفئة مستخدم بالفعل', 'INVENTORY_CATEGORY_CODE_ALREADY_EXISTS');
+      }
+      throw err;
+    }
   }
+
 
   /**
    * Soft deletes (archives) a category.
