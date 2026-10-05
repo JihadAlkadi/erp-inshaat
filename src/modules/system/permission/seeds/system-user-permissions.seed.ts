@@ -88,7 +88,40 @@ const SYSTEM_USER_PERMISSIONS: PermissionDefinition[] = [
     name: SystemPermission.PRODUCTION_ASSIGNMENT_MANAGE,
     description: 'إدارة رؤساء الأقسام والمهندسين وساحات مسؤوليتهم',
   },
+  {
+    name: SystemPermission.INVENTORY_CATEGORY_VIEW,
+    description: 'عرض فئات المستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_CATEGORY_CREATE,
+    description: 'إنشاء فئة مستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_CATEGORY_UPDATE,
+    description: 'تعديل فئة مستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_CATEGORY_DELETE,
+    description: 'أرشفة فئة مستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_PRODUCT_VIEW,
+    description: 'عرض منتجات المستودعات ووحداتها',
+  },
+  {
+    name: SystemPermission.INVENTORY_PRODUCT_CREATE,
+    description: 'إنشاء منتج مستودعات',
+  },
+  {
+    name: SystemPermission.INVENTORY_PRODUCT_UPDATE,
+    description: 'تعديل منتج مستودعات ووحداته',
+  },
+  {
+    name: SystemPermission.INVENTORY_PRODUCT_DELETE,
+    description: 'أرشفة منتج مستودعات',
+  },
 ];
+
 
 export async function seedSystemUserPermissions(
   manager: EntityManager,

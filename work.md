@@ -2,7 +2,45 @@
 
 ## Current Project State
 
-تم تنفيذ مرحلة الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile) ومرحلة إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration) ومرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات (Role Management & Permission Administration) ومرحلة إدارة المستخدمين (User Management) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل:
+- **كتالوج المنتجات والمستودعات الأساسية (Inventory Product Catalog Core & Administration UI)** (`src/modules/inventory/`):
+  - **البيانات المرجعية (Master Data Architecture)**:
+    - كتالوج مركزي للمواد والمنتجات ووحدات القياس التابعة لها، تم بناؤه كمتطلب أساسي وحصري يسبق بناء قوالب المنتجات والغرف (Product / Room Templates) بحيث ستشير قوالب المواد والمهام لاحقاً إلى `inventory_product.id` و `inventory_product_unit.id`.
+    - لا يشمل أي مفاهيم مخزنية متقدمة (No Warehouses, No Stock Balances, No Movements, No Receipts/Issues, No Costing/Price History). حقل "مكان وجود المادة" `locationName` مجرد نص وصفي اختياري داخل المنتج.
+  - **معالجة عقود Null في PATCH DTOs (Strict PATCH Null Semantics)**:
+    - التحقق الصارم من الحقول عبر `class-validator` باستخدام `@ValidateIf((_obj, val) => val !== undefined)` لمنع وصول `null` إلى الحقول الإلزامية وتفادي استثناءات التشغيل (Runtime errors) في `.trim()` أو تلوث قاعدة البيانات.
+    - الحقول التي ترفض `null` بشكل قطعي: `name` و `isActive` في الفئات والمنتجات، و `name` و `price` و `conversionQuantity` و `equivalentToUnitId` في الوحدات.
+    - الحقول التي تسمح بـ `null` لمسح القيمة أو فك الارتباط: `description` و `parentId` في الفئات، و `description` و `locationName` و `categoryId` في المنتجات، و `barcode` و `specifications` في الوحدات.
+  - **شجرة الفئات وإدارتها (Category Hierarchy & Clean Lifecycle)**:
+    - جدول `inventory_category` يعتمد قائمة الجوار (Adjacency List عبر `parent_id`) مع قيد فرادة الرمز `code` الدائم بما يشمل السجلات المؤرشفة ناعماً (`withDeleted: true`).
+    - رمز الفئة `code` ثابت وغير قابل للتعديل بعد الإنشاء (Immutable).
+    - حظر الحلقات الدائرية (Cycle Detection) عبر تتبع شجرة الأسلاف والانغلاق الآمن فوراً (`Fail Closed` بـ `INVENTORY_CATEGORY_CYCLE` أو `INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT` عند وجود أسلاف مفقودة أو محذوفة ناعماً).
+    - اشتراط فعالية الفئة الأب عند إنشاء أو تفعيل فئة تابعة لها، ومنع تعطيل أو أرشفة الفئة إذا كانت تحتوي على أي فئات فرعية أو أي منتجات مرتبطة بها باستخدام `InventoryProductEntity` مباشرة دون الاعتماد على استعلامات فحص الجداول الانتقالية.
+    - خيارات الفئات مع ترقيم الصفحات (`CategoryOptionsQueryDto` عبر `page`, `limit`, `search`) مع دالة عميل `fetchAllActiveCategoryOptions` لجلب كافة الفئات النشطة ومنع البتر الصامت لما بعد أول 100 خيار، مع الحفاظ على الفئة المعطلة المرتبطة حالياً كخيار محدد مع وسام `(معطلة)`.
+  - **كتالوج المنتجات والوحدة الأساسية (Product Master & Base Unit Fail-Closed Invariant)**:
+    - جدول `inventory_product` وجدول `inventory_product_unit` مع قيد فرادة الرمز الدائم ورمز الباركود عالمياً.
+    - رمز المنتج `code` ثابت وغير قابل للتعديل بعد الإنشاء.
+    - قاعدة اتساق الوحدة الأساسية (Base Unit Invariant): كل منتج صالح يملك وحدة أساسية واحدة إلزامية ومشار إليها عبر `base_unit_id` وتتبع لنفس المنتج وغير محذوفة ناعماً.
+    - الإنشاء الذري (Atomic Creation): يتم إنشاء سجل المنتج أولاً داخل Transaction مع base_unit_id = null، ثم إنشاء الوحدة الأساسية التابعة للمنتج، ثم تحديث base_unit_id للإشارة إلى الوحدة الأساسية. ويتم Rollback كامل للعملية إذا فشلت أي خطوة.
+    - القراءة الآمنة المنغلقة (Fail-Closed Read): يتم جلب الوحدة الأساسية ضمن استعلام القائمة `listProducts` عبر `LEFT JOIN` بدون N+1، والتحقق الصارم من اتساقها لكل منتج، والرمي الفوري لخطأ `INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT` في حال تلف أي سجل دون إخفائه بصمت.
+    - ثبات الوحدة الأساسية: يُحظر نهائياً حذف الوحدة الأساسية أو تعديل معادلة تحويلها.
+  - **سلسلة تحويل الوحدات والمواصفات المرنة (Unit Conversion Chain & Specifications JSON)**:
+    - الوحدات الإضافية تعرّف حصراً بالنسبة لوحدة أخرى من نفس المنتج (`1 current unit = conversionQuantity × equivalentToUnit`).
+    - حظر الإشارة لوحدة خارج نفس المنتج (`INVENTORY_PRODUCT_UNIT_REFERENCE_OUTSIDE_PRODUCT`).
+    - التحقق الصارم من انتهاء سلسلة التحويل بالوحدة الأساسية وخلوها من الحلقات الدائرية (`INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE` / `INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT`).
+    - ترتيب الأقفال ومنع التعارضات: كل تعديل لوحدات المنتج يتسلسل عبر قفل سجل المنتج أولاً (`Product row` via `pessimistic_write` كـ Lock Root) ثم قفل سجلات الوحدات المعنية.
+    - منع حذف أي وحدة تعتمد عليها وحدات أخرى في سلسلة التحويل (`INVENTORY_PRODUCT_UNIT_HAS_DEPENDENTS`).
+    - المواصفات الفنية المرنة: حقل JSON `specifications` يدعم حتى 50 خاصية لكل وحدة بصيغة `{ name, value, unit }` مع منع تكرار أسماء الخصائص داخل نفس الوحدة، والتحقق في واجهة العميل لمنع فقدان البيانات عند إدخال صفوف جزئية.
+  - **معالجة تعارضات المفاتيح المكررة في MySQL (Race Condition 1062 Mapping)**:
+    - استخراج خطأ التكرار بدقة من `QueryFailedError.driverError` لـ `ER_DUP_ENTRY` (errno 1062) وتحويله إلى `ConflictError` برمز خطأ موحد (409) لرمز المنتج والباركود واسم الوحدة لمنع تحول أخطاء التزامن إلى 500 Internal Server Error.
+  - **ترقية المخطط وقيود الفحص (Reconciliation Migration)**:
+    - توفير `1710000000006-HardenInventoryCatalogConstraints.ts` لضمان وجود قيود الـ CHECK في البيئات القائمة مسبقاً بشكل Idempotent.
+  - **الاختبارات الآلية (Regression Tests)**:
+    - اختبارات شاملة تغطي الخدمات الحقيقية لـ Category و Product والوحدات وعقود Null والتكرارات وكسور Decimal وسلسلة التحويل متاحة عبر `npm test`.
+  - **الصلاحيات والأمان والواجهات**:
+    - صلاحيات النظام: `inventory.category.view/create/update/delete` و `inventory.product.view/create/update/delete`، وتخضع لنطاق الوصول الشامل `ALL`.
+    - مسارات آمنة عبر `window.erpFetch` لكافة العمليات التعديلية مع التحقق المركزي من CSRF ومصادقة الجلسة.
+    - واجهات Bootstrap متجاوبة وثيم المستودعات الأخضر `#10AC84`، مع منع حقن النصوص واستخدام Native DOM APIs لحظر ثغرات XSS.
+
 - **حماية CSRF المرتبطة بالجلسة (Session-Bound CSRF Protection)** (`src/modules/system/auth/csrf.service.ts`, `src/modules/system/auth/csrf.middleware.ts`, `src/modules/system/auth/auth.middleware.ts`):
   - **نموذج أمني مشتق من الجلسة (Session-Bound HMAC Token)**:
     - توليد رمز CSRF باستخدام HMAC-SHA256 مع مفتاح سري مستقل وإلزامي `AUTH_CSRF_SECRET` (32 حرفاً على الأقل ومختلف وجوباً عن `AUTH_JWT_SECRET`) مرتبط بمعرف الجلسة الموثقة `sessionId` (`erp-csrf-v1:${sessionId}`).
@@ -394,7 +432,10 @@ src/
 │   │   ├── 1710000000000-CreateSystemCoreTables.ts
 │   │   ├── 1710000000001-CreateSystemSessionTable.ts
 │   │   ├── 1710000000002-CreateProductionDepartmentsAndYards.ts
-│   │   └── 1710000000003-CreateProductionTeamAssignments.ts
+│   │   ├── 1710000000003-CreateProductionTeamAssignments.ts
+│   │   ├── 1710000000004-CreateInventoryCategories.ts
+│   │   ├── 1710000000005-CreateInventoryProductsAndUnits.ts
+│   │   └── 1710000000006-HardenInventoryCatalogConstraints.ts
 │   ├── seeds/
 │   │   └── system-initial.seed.ts
 │   └── data-source.ts
@@ -1420,6 +1461,20 @@ src/
 
 ---
 
+12. **Inventory Product Catalog & Category Tree Invariants**:
+    - **نطاق الكتالوج (Master Data Scope)**: يقتصر الموديول حصراً على البيانات المرجعية للمواد والمنتجات ووحدات القياس وشجرة الفئات. لا يشمل مستودعات أو أرصدة أو حركات أو تكاليف أو قوالب. حقل locationName نص وصفي اختياري فقط.
+    - **شجرة الفئات الهرمية (Category Hierarchy)**: تعتمد قائمة الجوار (Adjacency List) مع حظر الحلقات الدائرية (Cycles) والارتباط الذاتي (Self-Parenting). في حال مواجهة فئة مفقودة أو محذوفة أو حلقة أثناء تتبع الأسلاف يفشل النظام مغلقاً (Fail Closed) مع INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT.
+    - **قيود تعطيل وأرشفة الفئات**: لا يمكن تعطيل أو أرشفة أي فئة تمتلك أي فئات فرعية غير محذوفة (سواء كانت نشطة أو معطلة) أو أي منتجات غير محذوفة (سواء كانت نشطة أو معطلة) (INVENTORY_CATEGORY_HAS_CHILDREN و INVENTORY_CATEGORY_HAS_PRODUCTS).
+    - **ثبات وفرادة الرموز التقنية والباركود**: رموز الفئات والمنتجات فريدة عالمياً بما يشمل السجلات المؤرشفة ناعماً (withDeleted: true) وثابتة وغير قابلة للتعديل بعد الإنشاء، وتخضع لنمط تحقق صارم (/^[A-Z][A-Z0-9_-]*$/). الباركود فريد عالمياً بما يشمل السجلات المؤرشفة.
+    - **معالجة تعارضات القيود الفريدة في MySQL**: يتم اعتراض أخطاء ER_DUP_ENTRY (errno 1062) وتحويلها إلى ConflictError مناسب بدقة بناءً على القيد المنتهك (UQ_inventory_category_code, UQ_inventory_product_code, UQ_inventory_product_unit_barcode, UQ_inventory_product_unit_product_name).
+    - **سلامة الوحدة الأساسية (Base Unit Integrity Invariant)**: كل منتج غير محذوف يمتلك وحدة أساسية واحدة مرتبطة به ذرياً وغير محذوفة وتتبع لنفس المنتج (assertProductBaseUnitIntegrity). لا يمكن حذف الوحدة الأساسية ولا تعديل معادلة تحويلها.
+    - **سلسلة تحويل الوحدات (Unit Conversion Chain)**: كل وحدة إضافية يجب أن ترتبط بوحدة مقابلة تنتمي لنفس المنتج، وتخضع لتحقق صارم يمنع الحلقات الدائرية ويضمن انتهاء السلسلة حتماً بالوحدة الأساسية. أي انقطاع يفشل مغلقاً (INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT).
+    - **دقة الحقول العشرية (Decimal Precision & Scale)**: السعر price يطابق DECIMAL(18,4) (غير سالب، بحد أقصى 14 خانة صحيحة و4 خانات عشرية)، ومعامل التحويل conversionQuantity يطابق DECIMAL(18,6) (أكبر تماماً من الصفر، بحد أقصى 12 خانة صحيحة و6 خانات عشرية).
+    - **قفل سجلات المنتجات والوحدات**: كل عملية تعديل أو إضافة أو حذف لوحدات المنتج تبدأ بقفل سجل المنتج تشاؤمياً (pessimistic_write) كجذر قفل.
+    - **سلامة واجهات الإدارة (UI Invariants)**: شجرة الفئات تدعم التصفح والتحميل الموضعي (Load More Pagination) دون اقتطاع صامت. واجهات التعديل تحافظ على العلاقات الحالية المعطلة وتمنع فقدانها عند الحفظ. العمليات غير الآمنة تستخدم حصراً window.erpFetch.
+
+---
+
 ## Implemented Infrastructure
 
 - Dynamic Production Access Scopes & Row-Level Authorization Infrastructure (`src/modules/production/authorization/`).
@@ -1457,14 +1512,22 @@ src/
 - Initial System Seed Data & Runner (`npm run seed`).
 - Password Hashing & Comparison Utilities (`src/common/security/password.util.ts`).
 - Migrations:
-  - `1710000000000-CreateSystemCoreTables.ts` (executed).
-  - `1710000000001-CreateSystemSessionTable.ts` (executed).
-  - `1710000000002-CreateProductionDepartmentsAndYards.ts` (executed).
+  - `1710000000000-CreateSystemCoreTables.ts`
+  - `1710000000001-CreateSystemSessionTable.ts`
+  - `1710000000002-CreateProductionDepartmentsAndYards.ts`
+  - `1710000000003-CreateProductionTeamAssignments.ts`
+  - `1710000000004-CreateInventoryCategories.ts`
+  - `1710000000005-CreateInventoryProductsAndUnits.ts`
+  - `1710000000006-HardenInventoryCatalogConstraints.ts`
 - Centralized DTO Validation Middleware (`src/common/middleware/validate-dto.middleware.ts`).
 - Standardized `ValidationError` representation (`src/common/errors/validation.error.ts`).
 - Centralized Error Handling (`AppError`, `errorHandlerMiddleware`).
 - Standardized typed `ApiResponse` for API endpoints.
 - EJS + `express-ejs-layouts` server-rendered views with Bootstrap validation.
 - Static assets serving (`src/public`).
-- Client scripts (`src/public/js/app.js`, `src/public/js/login.js`, `src/public/js/users.js`, `src/public/js/roles.js`, `src/public/js/user-permissions.js`, `src/public/js/production-departments.js`, `src/public/js/production-yards.js`).
+- Client scripts (`src/public/js/app.js`, `src/public/js/login.js`, `src/public/js/users.js`, `src/public/js/roles.js`, `src/public/js/user-permissions.js`, `src/public/js/production-departments.js`, `src/public/js/production-yards.js`, `src/public/js/inventory-categories.js`, `src/public/js/inventory-products.js`).
 - TypeORM MySQL connection and robust graceful shutdown.
+- Inventory Product Catalog Module (`src/modules/inventory/category/`, `src/modules/inventory/product/`).
+- Inventory Category Service with Fail-Closed Ancestry Cycle Check, Deactivation Restrictions, and Unique Race Handling (`src/modules/inventory/category/inventory-category.service.ts`).
+- Inventory Product Service with Atomic Base Unit Creation, Asserted Base Unit Integrity Helper, Conversion Chain Traversal, Pessimistic Locking, and MySQL Duplicate Key Mapping (`src/modules/inventory/product/inventory-product.service.ts`).
+- Inventory Catalog Test Suite covering DTO validation, precision boundaries, and domain invariants (`tests/inventory-catalog.test.ts`).

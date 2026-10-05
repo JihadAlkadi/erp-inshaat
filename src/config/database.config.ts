@@ -10,10 +10,16 @@ import { ProductionDepartmentEntity } from '../modules/production/department/pro
 import { ProductionYardEntity } from '../modules/production/yard/production-yard.entity.js';
 import { ProductionDepartmentEngineerEntity } from '../modules/production/team/entities/production-department-engineer.entity.js';
 import { ProductionYardEngineerEntity } from '../modules/production/team/entities/production-yard-engineer.entity.js';
+import { InventoryCategoryEntity } from '../modules/inventory/category/inventory-category.entity.js';
+import { InventoryProductEntity } from '../modules/inventory/product/inventory-product.entity.js';
+import { InventoryProductUnitEntity } from '../modules/inventory/product/inventory-product-unit.entity.js';
 import { CreateSystemCoreTables1710000000000 } from '../database/migrations/1710000000000-CreateSystemCoreTables.js';
 import { CreateSystemSessionTable1710000000001 } from '../database/migrations/1710000000001-CreateSystemSessionTable.js';
 import { CreateProductionDepartmentsAndYards1710000000002 } from '../database/migrations/1710000000002-CreateProductionDepartmentsAndYards.js';
 import { CreateProductionTeamAssignments1710000000003 } from '../database/migrations/1710000000003-CreateProductionTeamAssignments.js';
+import { CreateInventoryCategories1710000000004 } from '../database/migrations/1710000000004-CreateInventoryCategories.js';
+import { CreateInventoryProductsAndUnits1710000000005 } from '../database/migrations/1710000000005-CreateInventoryProductsAndUnits.js';
+import { HardenInventoryCatalogConstraints1710000000006 } from '../database/migrations/1710000000006-HardenInventoryCatalogConstraints.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -35,13 +41,21 @@ export const databaseConfig: DataSourceOptions = {
     ProductionYardEntity,
     ProductionDepartmentEngineerEntity,
     ProductionYardEngineerEntity,
+    InventoryCategoryEntity,
+    InventoryProductEntity,
+    InventoryProductUnitEntity,
   ],
   migrations: [
     CreateSystemCoreTables1710000000000,
     CreateSystemSessionTable1710000000001,
     CreateProductionDepartmentsAndYards1710000000002,
     CreateProductionTeamAssignments1710000000003,
+    CreateInventoryCategories1710000000004,
+    CreateInventoryProductsAndUnits1710000000005,
+    HardenInventoryCatalogConstraints1710000000006,
   ],
   subscribers: [],
 };
+
+
 
