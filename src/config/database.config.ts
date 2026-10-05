@@ -19,6 +19,7 @@ import { CreateProductionDepartmentsAndYards1710000000002 } from '../database/mi
 import { CreateProductionTeamAssignments1710000000003 } from '../database/migrations/1710000000003-CreateProductionTeamAssignments.js';
 import { CreateInventoryCategories1710000000004 } from '../database/migrations/1710000000004-CreateInventoryCategories.js';
 import { CreateInventoryProductsAndUnits1710000000005 } from '../database/migrations/1710000000005-CreateInventoryProductsAndUnits.js';
+import { HardenInventoryCatalogConstraints1710000000006 } from '../database/migrations/1710000000006-HardenInventoryCatalogConstraints.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -51,6 +52,7 @@ export const databaseConfig: DataSourceOptions = {
     CreateProductionTeamAssignments1710000000003,
     CreateInventoryCategories1710000000004,
     CreateInventoryProductsAndUnits1710000000005,
+    HardenInventoryCatalogConstraints1710000000006,
   ],
   subscribers: [],
 };

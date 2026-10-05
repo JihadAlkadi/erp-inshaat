@@ -21,6 +21,8 @@ import { InventoryProductUnitEntity } from '../src/modules/inventory/product/inv
 import { BusinessRuleError } from '../src/common/errors/business-rule.error.js';
 import { ConflictError } from '../src/common/errors/conflict.error.js';
 import { NotFoundError } from '../src/common/errors/not-found.error.js';
+import { databaseConfig } from '../src/config/database.config.js';
+import { HardenInventoryCatalogConstraints1710000000006 } from '../src/database/migrations/1710000000006-HardenInventoryCatalogConstraints.js';
 
 // --- Test Mock Infrastructure ---
 
@@ -908,6 +910,64 @@ describe('Inventory Product Catalog Hardening & Service Regression Tests', () =>
       const errsInvalid = await validate(invalidDto);
       assert.ok(errsInvalid.some((e) => e.property === 'page'));
       assert.ok(errsInvalid.some((e) => e.property === 'limit'));
+    });
+
+    it('InventoryCategoryService.listOptions supports pagination across pages without truncation', async () => {
+      const categoriesMap = new Map<string, InventoryCategoryEntity>();
+      for (let i = 1; i <= 25; i++) {
+        const id = `cat-${i}`;
+        categoriesMap.set(id, {
+          id,
+          name: `Category ${i.toString().padStart(2, '0')}`,
+          code: `CAT_${i}`,
+          parentId: null,
+          isActive: true,
+          deletedAt: null,
+        } as any);
+      }
+
+      const store: MockStore = {
+        categories: categoriesMap,
+        products: new Map(),
+        units: new Map(),
+      };
+      const service = new InventoryCategoryService(createMockDataSource(store));
+
+      // Fetch page 1 (limit 10)
+      const page1 = await service.listOptions({ page: 1, limit: 10 });
+      assert.equal(page1.page, 1);
+      assert.equal(page1.limit, 10);
+      assert.equal(page1.total, 25);
+      assert.equal(page1.totalPages, 3);
+      assert.equal(page1.items.length, 10);
+
+      // Fetch page 2 (limit 10)
+      const page2 = await service.listOptions({ page: 2, limit: 10 });
+      assert.equal(page2.page, 2);
+      assert.equal(page2.items.length, 10);
+
+      // Fetch page 3 (limit 10)
+      const page3 = await service.listOptions({ page: 3, limit: 10 });
+      assert.equal(page3.page, 3);
+      assert.equal(page3.items.length, 5);
+
+      // All 25 items retrieved without truncation
+      const allIds = [...page1.items, ...page2.items, ...page3.items].map((c) => c.id);
+      assert.equal(allIds.length, 25);
+    });
+  });
+
+  // =========================================================================
+  // 8. Migration Registration Invariant Test
+  // =========================================================================
+  describe('8. Migration Registration Invariant', () => {
+    it('databaseConfig.migrations explicitly includes HardenInventoryCatalogConstraints1710000000006', () => {
+      assert.ok(Array.isArray(databaseConfig.migrations), 'databaseConfig.migrations must be an array');
+      const migrations = databaseConfig.migrations as unknown[];
+      assert.ok(
+        migrations.includes(HardenInventoryCatalogConstraints1710000000006),
+        'HardenInventoryCatalogConstraints1710000000006 must be registered in databaseConfig.migrations'
+      );
     });
   });
 });

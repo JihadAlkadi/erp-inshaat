@@ -31,7 +31,7 @@ inventoryCategoryApiRouter.get(
   inventoryCategoryController.searchCategories
 );
 
-// GET /api/inventory/categories/options - Bounded options lookup (max 100)
+// GET /api/inventory/categories/options - Paginated active category options lookup
 inventoryCategoryApiRouter.get(
   '/options',
   requirePermission(SystemPermission.INVENTORY_CATEGORY_VIEW),

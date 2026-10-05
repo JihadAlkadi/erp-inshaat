@@ -57,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /**
    * Helper to fetch all active category options across pages without truncation.
+   * Fails closed if any page fails, response is invalid, or pagination metadata is inconsistent.
    */
   async function fetchAllActiveCategoryOptions() {
     const allItems = [];
@@ -65,12 +66,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
     while (page <= totalPages) {
       const res = await fetch(`/api/inventory/categories/options?page=${page}&limit=100`);
-      const json = await res.json();
-      if (!json.success || !json.data) {
-        break;
+      if (!res.ok) {
+        throw new Error(`Failed to load category options (HTTP ${res.status})`);
       }
-      const items = Array.isArray(json.data) ? json.data : (json.data.items || []);
-      totalPages = (json.data && json.data.totalPages) ? json.data.totalPages : 1;
+
+      let json;
+      try {
+        json = await res.json();
+      } catch (e) {
+        throw new Error('Invalid JSON received for category options');
+      }
+
+      if (!json || json.success !== true || !json.data || !Array.isArray(json.data.items)) {
+        throw new Error('Invalid response structure for category options');
+      }
+
+      const { items, page: resPage, totalPages: resTotalPages } = json.data;
+
+      if (
+        typeof resPage !== 'number' ||
+        typeof resTotalPages !== 'number' ||
+        resPage <= 0 ||
+        resTotalPages <= 0 ||
+        resPage !== page ||
+        resPage > resTotalPages
+      ) {
+        throw new Error('Inconsistent pagination metadata received for category options');
+      }
+
+      totalPages = resTotalPages;
       allItems.push(...items);
       page++;
     }
@@ -80,14 +104,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /**
    * Fetch category options for dropdown selectors (handles inactive current parent preservation).
+   * Rebuilds select only after 100% of pages are successfully fetched (fail-closed).
    */
   async function loadCategoryOptions(selectedId = '', currentParentName = '') {
     if (!categoryParentSelect) return;
 
     try {
+      // 1. Fetch all pages first into temporary array
       const options = await fetchAllActiveCategoryOptions();
 
-      // Clear all options except default
+      // 2. Only rebuild select after complete success
       while (categoryParentSelect.options.length > 1) {
         categoryParentSelect.remove(1);
       }
@@ -121,6 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       console.error('Failed to load category options:', err);
+      showAlert('فشل في تحميل قائمة فئات المنتجات بشكل كامل. تم الحفاظ على الحالة الحالية لمنع فقدان البيانات.');
     }
   }
 

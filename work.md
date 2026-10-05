@@ -20,7 +20,7 @@
     - جدول `inventory_product` وجدول `inventory_product_unit` مع قيد فرادة الرمز الدائم ورمز الباركود عالمياً.
     - رمز المنتج `code` ثابت وغير قابل للتعديل بعد الإنشاء.
     - قاعدة اتساق الوحدة الأساسية (Base Unit Invariant): كل منتج صالح يملك وحدة أساسية واحدة إلزامية ومشار إليها عبر `base_unit_id` وتتبع لنفس المنتج وغير محذوفة ناعماً.
-    - الإنشاء الذري (Atomic Creation): يتم إنشاء المنتج ووحدته الأساسية ذرية داخل Transaction، حيث تُدرج الوحدة أولاً بدون مرجع تحويل (`equivalentToUnitId = null`) ثم يُربط المنتج بها.
+    - الإنشاء الذري (Atomic Creation): يتم إنشاء سجل المنتج أولاً داخل Transaction مع base_unit_id = null، ثم إنشاء الوحدة الأساسية التابعة للمنتج، ثم تحديث base_unit_id للإشارة إلى الوحدة الأساسية. ويتم Rollback كامل للعملية إذا فشلت أي خطوة.
     - القراءة الآمنة المنغلقة (Fail-Closed Read): يتم جلب الوحدة الأساسية ضمن استعلام القائمة `listProducts` عبر `LEFT JOIN` بدون N+1، والتحقق الصارم من اتساقها لكل منتج، والرمي الفوري لخطأ `INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT` في حال تلف أي سجل دون إخفائه بصمت.
     - ثبات الوحدة الأساسية: يُحظر نهائياً حذف الوحدة الأساسية أو تعديل معادلة تحويلها.
   - **سلسلة تحويل الوحدات والمواصفات المرنة (Unit Conversion Chain & Specifications JSON)**:
@@ -432,7 +432,10 @@ src/
 │   │   ├── 1710000000000-CreateSystemCoreTables.ts
 │   │   ├── 1710000000001-CreateSystemSessionTable.ts
 │   │   ├── 1710000000002-CreateProductionDepartmentsAndYards.ts
-│   │   └── 1710000000003-CreateProductionTeamAssignments.ts
+│   │   ├── 1710000000003-CreateProductionTeamAssignments.ts
+│   │   ├── 1710000000004-CreateInventoryCategories.ts
+│   │   ├── 1710000000005-CreateInventoryProductsAndUnits.ts
+│   │   └── 1710000000006-HardenInventoryCatalogConstraints.ts
 │   ├── seeds/
 │   │   └── system-initial.seed.ts
 │   └── data-source.ts
@@ -1509,11 +1512,13 @@ src/
 - Initial System Seed Data & Runner (`npm run seed`).
 - Password Hashing & Comparison Utilities (`src/common/security/password.util.ts`).
 - Migrations:
-  - `1710000000000-CreateSystemCoreTables.ts` (executed).
-  - `1710000000001-CreateSystemSessionTable.ts` (executed).
-  - `1710000000002-CreateProductionDepartmentsAndYards.ts` (executed).
-  - `1710000000004-CreateInventoryCategories.ts` (executed).
-  - `1710000000005-CreateInventoryProductsAndUnits.ts` (executed).
+  - `1710000000000-CreateSystemCoreTables.ts`
+  - `1710000000001-CreateSystemSessionTable.ts`
+  - `1710000000002-CreateProductionDepartmentsAndYards.ts`
+  - `1710000000003-CreateProductionTeamAssignments.ts`
+  - `1710000000004-CreateInventoryCategories.ts`
+  - `1710000000005-CreateInventoryProductsAndUnits.ts`
+  - `1710000000006-HardenInventoryCatalogConstraints.ts`
 - Centralized DTO Validation Middleware (`src/common/middleware/validate-dto.middleware.ts`).
 - Standardized `ValidationError` representation (`src/common/errors/validation.error.ts`).
 - Centralized Error Handling (`AppError`, `errorHandlerMiddleware`).
