@@ -11,8 +11,12 @@ import { productionYardWebController } from '../modules/production/yard/producti
 import { productionTeamWebController } from '../modules/production/team/production-team.web.controller.js';
 
 import { userPortfolioWebController } from '../modules/system/user/portfolio/user-portfolio.web.controller.js';
+import { inventoryCategoryWebController } from '../modules/inventory/category/inventory-category.web.controller.js';
+import { inventoryProductWebController } from '../modules/inventory/product/inventory-product.web.controller.js';
+import { inventoryHomeWebController } from '../modules/inventory/inventory.web.controller.js';
 
 const webRouter: Router = Router();
+
 
 // GET / - Home Applications Launcher Page (Protected)
 webRouter.get('/', requireWebAuth, (_req: Request, res: Response) => {
@@ -237,6 +241,68 @@ webRouter.get(
   productionYardWebController.renderEditYardForm
 );
 
+// ==========================================
+// INVENTORY MODULE WEB ROUTES (/inventory)
+// ==========================================
+
+// GET /inventory - Inventory Dashboard (Protected)
+webRouter.get(
+  '/inventory',
+  requireWebAuth,
+  inventoryHomeWebController.renderInventoryHome
+);
+
+// GET /inventory/categories - Inventory Categories Tree (Protected)
+webRouter.get(
+  '/inventory/categories',
+  requireWebAuth,
+  requirePermission(SystemPermission.INVENTORY_CATEGORY_VIEW),
+  inventoryCategoryWebController.renderCategoryTree
+);
+
+// GET /inventory/categories/create - Create Category Page (Protected)
+webRouter.get(
+  '/inventory/categories/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.INVENTORY_CATEGORY_CREATE),
+  inventoryCategoryWebController.renderCategoryCreate
+);
+
+// GET /inventory/categories/:id/edit - Edit Category Page (Protected)
+webRouter.get(
+  '/inventory/categories/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.INVENTORY_CATEGORY_UPDATE),
+  validateUuidParam('id'),
+  inventoryCategoryWebController.renderCategoryEdit
+);
+
+// GET /inventory/products - Products List (Protected)
+webRouter.get(
+  '/inventory/products',
+  requireWebAuth,
+  requirePermission(SystemPermission.INVENTORY_PRODUCT_VIEW),
+  inventoryProductWebController.renderProductList
+);
+
+// GET /inventory/products/create - Create Product Page (Protected)
+webRouter.get(
+  '/inventory/products/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.INVENTORY_PRODUCT_CREATE),
+  inventoryProductWebController.renderProductCreate
+);
+
+// GET /inventory/products/:id/edit - Edit Product Page (Protected)
+webRouter.get(
+  '/inventory/products/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.INVENTORY_PRODUCT_UPDATE),
+  validateUuidParam('id'),
+  inventoryProductWebController.renderProductEdit
+);
+
 export { webRouter };
+
 
 

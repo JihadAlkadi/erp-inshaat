@@ -1,0 +1,84 @@
+<div class="container-fluid">
+  <!-- Page Header -->
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h3 class="fw-bold mb-1" style="color: #2D3436;">
+        <i class="fa-solid fa-boxes-stacked me-2" style="color: #10AC84;"></i> إدارة المستودعات
+      </h3>
+      <p class="text-muted mb-0">كتالوج المواد والمنتجات ووحدات القياس المرجعية</p>
+    </div>
+  </div>
+
+  <!-- Cards Section -->
+  <div class="row g-4 mt-2">
+    <!-- Category Card -->
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100 rounded-4 transition-card" style="border-top: 4px solid #10AC84 !important;">
+        <div class="card-body p-4 d-flex flex-column">
+          <div class="d-flex align-items-center mb-3">
+            <div class="rounded-3 p-3 text-white me-3" style="background: linear-gradient(135deg, #1DD1A1 0%, #10AC84 100%);">
+              <i class="fa-solid fa-folder-tree fa-2x"></i>
+            </div>
+            <div>
+              <h5 class="fw-bold mb-1">شجرة الفئات</h5>
+              <span class="badge bg-light text-muted border">هيكل تنظيمي هرمي</span>
+            </div>
+          </div>
+          <p class="text-muted flex-grow-1">
+            تنظيم وتصنيف المواد والمنتجات ضمن شجرة فئات رئيسية وفرعية متعددة المستويات لتسهيل التصفح والبحث.
+          </p>
+          <div class="pt-3 border-top d-flex justify-content-between align-items-center">
+            <a href="/inventory/categories" class="btn btn-outline-success rounded-pill px-4 fw-bold">
+              استعراض الفئات <i class="fa-solid fa-arrow-left ms-1"></i>
+            </a>
+            <% if (typeof canCreateCategory !== 'undefined' && canCreateCategory) { %>
+              <a href="/inventory/categories/create" class="btn btn-sm btn-link text-decoration-none" style="color: #10AC84;">
+                <i class="fa-solid fa-plus me-1"></i> إضافة فئة
+              </a>
+            <% } %>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product Card -->
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100 rounded-4 transition-card" style="border-top: 4px solid #10AC84 !important;">
+        <div class="card-body p-4 d-flex flex-column">
+          <div class="d-flex align-items-center mb-3">
+            <div class="rounded-3 p-3 text-white me-3" style="background: linear-gradient(135deg, #10AC84 0%, #0c8868 100%);">
+              <i class="fa-solid fa-box-open fa-2x"></i>
+            </div>
+            <div>
+              <h5 class="fw-bold mb-1">دليل المنتجات والمواد</h5>
+              <span class="badge bg-light text-muted border">البيانات المرجعية (Master Data)</span>
+            </div>
+          </div>
+          <p class="text-muted flex-grow-1">
+            تعريف المواد والمنتجات ووحداتها الأساسية والإضافية ومعاملات التحويل ومواصفاتها الفنية وأسعارها المرجعية.
+          </p>
+          <div class="pt-3 border-top d-flex justify-content-between align-items-center">
+            <a href="/inventory/products" class="btn btn-outline-success rounded-pill px-4 fw-bold">
+              استعراض المنتجات <i class="fa-solid fa-arrow-left ms-1"></i>
+            </a>
+            <% if (typeof canCreateProduct !== 'undefined' && canCreateProduct) { %>
+              <a href="/inventory/products/create" class="btn btn-sm btn-link text-decoration-none" style="color: #10AC84;">
+                <i class="fa-solid fa-plus me-1"></i> إضافة منتج
+              </a>
+            <% } %>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.transition-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.transition-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 20px rgba(0,0,0,0.08) !important;
+}
+</style>

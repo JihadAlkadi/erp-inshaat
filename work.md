@@ -2,7 +2,35 @@
 
 ## Current Project State
 
-تم تنفيذ مرحلة الملف الإداري الموحد للمستخدم (User Portfolio / Central User Administration Profile) ومرحلة إدارة الصلاحيات وقواعد الوصول الكاملة (Complete Permission & Access Rule Administration) ومرحلة نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core) ومرحلة فرق عمل ومسؤوليات الإنتاج (Production Department Team & Engineer Assignments Core) ومرحلة الهيكل التشغيلي لتطبيق الإنتاج (Production Departments & Yards Core) ومرحلة إدارة الأدوار والصلاحيات (Role Management & Permission Administration) ومرحلة إدارة المستخدمين (User Management) ومرحلة محرك الصلاحيات (Authorization Core) ومرحلة المصادقة الأساسية (Authentication Core) بالكامل:
+- **كتالوج المنتجات والمستودعات الأساسية (Inventory Product Catalog Core & Administration UI)** (`src/modules/inventory/`):
+  - **البيانات المرجعية (Master Data Architecture)**:
+    - كتالوج مركزي للمواد والمنتجات ووحدات القياس التابعة لها، تم بناؤه كمتطلب أساسي وحصري يسبق بناء قوالب المنتجات والغرف (Product / Room Templates) بحيث ستشير قوالب المواد والمهام لاحقاً إلى `inventory_product.id` و `inventory_product_unit.id`.
+    - لا يشمل أي مفاهيم مخزنية متقدمة (No Warehouses, No Stock Balances, No Movements, No Receipts/Issues, No Costing/Price History). حقل "مكان وجود المادة" `locationName` مجرد نص وصفي اختياري داخل المنتج.
+  - **شجرة الفئات (Category Hierarchy / Adjacency List)**:
+    - جدول `inventory_category` يعتمد قائمة الجوار (Adjacency List عبر `parent_id`) مع قيد فرادة الرمز `code` الدائم بما يشمل السجلات المؤرشفة ناعماً (`withDeleted: true`).
+    - رمز الفئة `code` ثابت وغير قابل للتعديل بعد الإنشاء (Immutable).
+    - حظر الحلقات الدائرية (Cycle Detection) عبر تتبع شجرة الأسلاف باستخدام `visited Set` والإغلاق الآمن فوراً (`Fail Closed` بـ `INVENTORY_CATEGORY_CYCLE` أو `INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT`).
+    - اشتراط فعالية الفئة الأب عند إنشاء أو تفعيل فئة تابعة لها، ومنع تعطيل أو أرشفة الفئة إذا كانت تحتوي على فئات فرعية أو منتجات نشطة أو غير محذوفة.
+    - واجهة شجرة تفاعلية تعتمد التحميل الكسول (Lazy-loaded Tree Nodes via API) وبحثاً مسطحاً وخيارات محددة بـ 100 عنصر للقوائم المنسدلة.
+  - **كتالوج المنتجات والوحدة الأساسية (Product Master & Base Unit Invariant)**:
+    - جدول `inventory_product` وجدول `inventory_product_unit` مع قيد فرادة الرمز الدائم ورمز الباركود عالمياً.
+    - رمز المنتج `code` ثابت وغير قابل للتعديل بعد الإنشاء.
+    - قاعدة اتساق الوحدة الأساسية (Base Unit Invariant): كل منتج صالح يملك وحدة أساسية واحدة إلزامية ومشار إليها عبر `base_unit_id`.
+    - الإنشاء الذري (Atomic Creation): يتم إنشاء المنتج ووحدته الأساسية ذرية داخل Transaction، حيث تُدرج الوحدة أولاً بدون مرجع تحويل (`equivalentToUnitId = null`) ثم يُربط المنتج بها.
+    - القراءة الآمنة المنغلقة (Fail-Closed Read): أي منتج مفقود الوحدة الأساسية أو تالف يُرجع فوراً خطأ `INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT`.
+    - ثبات الوحدة الأساسية: يُحظر نهائياً حذف الوحدة الأساسية أو تغيير معادلة تحويلها.
+  - **سلسلة تحويل الوحدات والمواصفات المرنة (Unit Conversion Chain & Specifications JSON)**:
+    - الوحدات الإضافية تعرّف حصراً بالنسبة لوحدة أخرى من نفس المنتج (`1 current unit = conversionQuantity × equivalentToUnit`).
+    - حظر الإشارة لوحدة خارج نفس المنتج (`INVENTORY_PRODUCT_UNIT_REFERENCE_OUTSIDE_PRODUCT`).
+    - التحقق الصارم من انتهاء سلسلة التحويل بالوحدة الأساسية وخلوها من الحلقات الدائرية (`INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE` / `INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT`).
+    - ترتيب الأقفال ومنع التعارضات: كل تعديل لوحدات المنتج يتسلسل عبر قفل سجل المنتج أولاً (`Product row` via `pessimistic_write` كـ Lock Root) ثم قفل سجلات الوحدات المعنية.
+    - منع حذف أي وحدة تعتمد عليها وحدات أخرى في سلسلة التحويل (`INVENTORY_PRODUCT_UNIT_HAS_DEPENDENTS`).
+    - المواصفات الفنية المرنة: حقل JSON `specifications` يدعم حتى 50 خاصية لكل وحدة بصيغة `{ name, value, unit }` مع منع تكرار أسماء الخصائص داخل نفس الوحدة.
+  - **الصلاحيات والأمان والواجهات**:
+    - صلاحيات النظام: `inventory.category.view/create/update/delete` و `inventory.product.view/create/update/delete`، وتخضع لنطاق الوصول الشامل `ALL`.
+    - مسارات آمنة عبر `window.erpFetch` لكافة العمليات التعديلية مع التحقق المركزي من CSRF ومصادقة الجلسة.
+    - واجهات Bootstrap متجاوبة وثيم المستودعات الأخضر `#10AC84`، مع منع حقن النصوص واستخدام Native DOM APIs لحظر ثغرات XSS.
+
 - **حماية CSRF المرتبطة بالجلسة (Session-Bound CSRF Protection)** (`src/modules/system/auth/csrf.service.ts`, `src/modules/system/auth/csrf.middleware.ts`, `src/modules/system/auth/auth.middleware.ts`):
   - **نموذج أمني مشتق من الجلسة (Session-Bound HMAC Token)**:
     - توليد رمز CSRF باستخدام HMAC-SHA256 مع مفتاح سري مستقل وإلزامي `AUTH_CSRF_SECRET` (32 حرفاً على الأقل ومختلف وجوباً عن `AUTH_JWT_SECRET`) مرتبط بمعرف الجلسة الموثقة `sessionId` (`erp-csrf-v1:${sessionId}`).
