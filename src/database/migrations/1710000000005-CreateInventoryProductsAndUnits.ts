@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey, TableCheck } from 'typeorm';
+import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
 
 export class CreateInventoryProductsAndUnits1710000000005 implements MigrationInterface {
   name = 'CreateInventoryProductsAndUnits1710000000005';

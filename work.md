@@ -6,26 +6,36 @@
   - **البيانات المرجعية (Master Data Architecture)**:
     - كتالوج مركزي للمواد والمنتجات ووحدات القياس التابعة لها، تم بناؤه كمتطلب أساسي وحصري يسبق بناء قوالب المنتجات والغرف (Product / Room Templates) بحيث ستشير قوالب المواد والمهام لاحقاً إلى `inventory_product.id` و `inventory_product_unit.id`.
     - لا يشمل أي مفاهيم مخزنية متقدمة (No Warehouses, No Stock Balances, No Movements, No Receipts/Issues, No Costing/Price History). حقل "مكان وجود المادة" `locationName` مجرد نص وصفي اختياري داخل المنتج.
-  - **شجرة الفئات (Category Hierarchy / Adjacency List)**:
+  - **معالجة عقود Null في PATCH DTOs (Strict PATCH Null Semantics)**:
+    - التحقق الصارم من الحقول عبر `class-validator` باستخدام `@ValidateIf((_obj, val) => val !== undefined)` لمنع وصول `null` إلى الحقول الإلزامية وتفادي استثناءات التشغيل (Runtime errors) في `.trim()` أو تلوث قاعدة البيانات.
+    - الحقول التي ترفض `null` بشكل قطعي: `name` و `isActive` في الفئات والمنتجات، و `name` و `price` و `conversionQuantity` و `equivalentToUnitId` في الوحدات.
+    - الحقول التي تسمح بـ `null` لمسح القيمة أو فك الارتباط: `description` و `parentId` في الفئات، و `description` و `locationName` و `categoryId` في المنتجات، و `barcode` و `specifications` في الوحدات.
+  - **شجرة الفئات وإدارتها (Category Hierarchy & Clean Lifecycle)**:
     - جدول `inventory_category` يعتمد قائمة الجوار (Adjacency List عبر `parent_id`) مع قيد فرادة الرمز `code` الدائم بما يشمل السجلات المؤرشفة ناعماً (`withDeleted: true`).
     - رمز الفئة `code` ثابت وغير قابل للتعديل بعد الإنشاء (Immutable).
-    - حظر الحلقات الدائرية (Cycle Detection) عبر تتبع شجرة الأسلاف باستخدام `visited Set` والإغلاق الآمن فوراً (`Fail Closed` بـ `INVENTORY_CATEGORY_CYCLE` أو `INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT`).
-    - اشتراط فعالية الفئة الأب عند إنشاء أو تفعيل فئة تابعة لها، ومنع تعطيل أو أرشفة الفئة إذا كانت تحتوي على فئات فرعية أو منتجات نشطة أو غير محذوفة.
-    - واجهة شجرة تفاعلية تعتمد التحميل الكسول (Lazy-loaded Tree Nodes via API) وبحثاً مسطحاً وخيارات محددة بـ 100 عنصر للقوائم المنسدلة.
-  - **كتالوج المنتجات والوحدة الأساسية (Product Master & Base Unit Invariant)**:
+    - حظر الحلقات الدائرية (Cycle Detection) عبر تتبع شجرة الأسلاف والانغلاق الآمن فوراً (`Fail Closed` بـ `INVENTORY_CATEGORY_CYCLE` أو `INVENTORY_CATEGORY_HIERARCHY_INCONSISTENT` عند وجود أسلاف مفقودة أو محذوفة ناعماً).
+    - اشتراط فعالية الفئة الأب عند إنشاء أو تفعيل فئة تابعة لها، ومنع تعطيل أو أرشفة الفئة إذا كانت تحتوي على أي فئات فرعية أو أي منتجات مرتبطة بها باستخدام `InventoryProductEntity` مباشرة دون الاعتماد على استعلامات فحص الجداول الانتقالية.
+    - خيارات الفئات مع ترقيم الصفحات (`CategoryOptionsQueryDto` عبر `page`, `limit`, `search`) مع دالة عميل `fetchAllActiveCategoryOptions` لجلب كافة الفئات النشطة ومنع البتر الصامت لما بعد أول 100 خيار، مع الحفاظ على الفئة المعطلة المرتبطة حالياً كخيار محدد مع وسام `(معطلة)`.
+  - **كتالوج المنتجات والوحدة الأساسية (Product Master & Base Unit Fail-Closed Invariant)**:
     - جدول `inventory_product` وجدول `inventory_product_unit` مع قيد فرادة الرمز الدائم ورمز الباركود عالمياً.
     - رمز المنتج `code` ثابت وغير قابل للتعديل بعد الإنشاء.
-    - قاعدة اتساق الوحدة الأساسية (Base Unit Invariant): كل منتج صالح يملك وحدة أساسية واحدة إلزامية ومشار إليها عبر `base_unit_id`.
+    - قاعدة اتساق الوحدة الأساسية (Base Unit Invariant): كل منتج صالح يملك وحدة أساسية واحدة إلزامية ومشار إليها عبر `base_unit_id` وتتبع لنفس المنتج وغير محذوفة ناعماً.
     - الإنشاء الذري (Atomic Creation): يتم إنشاء المنتج ووحدته الأساسية ذرية داخل Transaction، حيث تُدرج الوحدة أولاً بدون مرجع تحويل (`equivalentToUnitId = null`) ثم يُربط المنتج بها.
-    - القراءة الآمنة المنغلقة (Fail-Closed Read): أي منتج مفقود الوحدة الأساسية أو تالف يُرجع فوراً خطأ `INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT`.
-    - ثبات الوحدة الأساسية: يُحظر نهائياً حذف الوحدة الأساسية أو تغيير معادلة تحويلها.
+    - القراءة الآمنة المنغلقة (Fail-Closed Read): يتم جلب الوحدة الأساسية ضمن استعلام القائمة `listProducts` عبر `LEFT JOIN` بدون N+1، والتحقق الصارم من اتساقها لكل منتج، والرمي الفوري لخطأ `INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT` في حال تلف أي سجل دون إخفائه بصمت.
+    - ثبات الوحدة الأساسية: يُحظر نهائياً حذف الوحدة الأساسية أو تعديل معادلة تحويلها.
   - **سلسلة تحويل الوحدات والمواصفات المرنة (Unit Conversion Chain & Specifications JSON)**:
     - الوحدات الإضافية تعرّف حصراً بالنسبة لوحدة أخرى من نفس المنتج (`1 current unit = conversionQuantity × equivalentToUnit`).
     - حظر الإشارة لوحدة خارج نفس المنتج (`INVENTORY_PRODUCT_UNIT_REFERENCE_OUTSIDE_PRODUCT`).
     - التحقق الصارم من انتهاء سلسلة التحويل بالوحدة الأساسية وخلوها من الحلقات الدائرية (`INVENTORY_PRODUCT_UNIT_CONVERSION_CYCLE` / `INVENTORY_PRODUCT_UNIT_CONVERSION_INCONSISTENT`).
     - ترتيب الأقفال ومنع التعارضات: كل تعديل لوحدات المنتج يتسلسل عبر قفل سجل المنتج أولاً (`Product row` via `pessimistic_write` كـ Lock Root) ثم قفل سجلات الوحدات المعنية.
     - منع حذف أي وحدة تعتمد عليها وحدات أخرى في سلسلة التحويل (`INVENTORY_PRODUCT_UNIT_HAS_DEPENDENTS`).
-    - المواصفات الفنية المرنة: حقل JSON `specifications` يدعم حتى 50 خاصية لكل وحدة بصيغة `{ name, value, unit }` مع منع تكرار أسماء الخصائص داخل نفس الوحدة.
+    - المواصفات الفنية المرنة: حقل JSON `specifications` يدعم حتى 50 خاصية لكل وحدة بصيغة `{ name, value, unit }` مع منع تكرار أسماء الخصائص داخل نفس الوحدة، والتحقق في واجهة العميل لمنع فقدان البيانات عند إدخال صفوف جزئية.
+  - **معالجة تعارضات المفاتيح المكررة في MySQL (Race Condition 1062 Mapping)**:
+    - استخراج خطأ التكرار بدقة من `QueryFailedError.driverError` لـ `ER_DUP_ENTRY` (errno 1062) وتحويله إلى `ConflictError` برمز خطأ موحد (409) لرمز المنتج والباركود واسم الوحدة لمنع تحول أخطاء التزامن إلى 500 Internal Server Error.
+  - **ترقية المخطط وقيود الفحص (Reconciliation Migration)**:
+    - توفير `1710000000006-HardenInventoryCatalogConstraints.ts` لضمان وجود قيود الـ CHECK في البيئات القائمة مسبقاً بشكل Idempotent.
+  - **الاختبارات الآلية (Regression Tests)**:
+    - اختبارات شاملة تغطي الخدمات الحقيقية لـ Category و Product والوحدات وعقود Null والتكرارات وكسور Decimal وسلسلة التحويل متاحة عبر `npm test`.
   - **الصلاحيات والأمان والواجهات**:
     - صلاحيات النظام: `inventory.category.view/create/update/delete` و `inventory.product.view/create/update/delete`، وتخضع لنطاق الوصول الشامل `ALL`.
     - مسارات آمنة عبر `window.erpFetch` لكافة العمليات التعديلية مع التحقق المركزي من CSRF ومصادقة الجلسة.

@@ -106,14 +106,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /**
    * Helper to collect specifications from a container.
+   * Returns validation result:
+   * - If both name and value are empty: row is ignored.
+   * - If name provided but value empty: invalid.
+   * - If value provided but name empty: invalid.
    */
   function collectSpecifications(container) {
-    if (!container) return null;
+    if (!container) return { valid: true, specifications: null };
     const rows = container.querySelectorAll('.spec-row');
-    if (rows.length === 0) return null;
+    if (rows.length === 0) return { valid: true, specifications: null };
 
     const specs = [];
-    rows.forEach((r) => {
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
       const nameInput = r.querySelector('.spec-name-input');
       const valInput = r.querySelector('.spec-value-input');
       const unitInput = r.querySelector('.spec-unit-input');
@@ -122,12 +127,56 @@ document.addEventListener('DOMContentLoaded', () => {
       const value = valInput ? valInput.value.trim() : '';
       const unit = unitInput ? unitInput.value.trim() || null : null;
 
-      if (name && value) {
-        specs.push({ name, value, unit });
+      if (!name && !value) {
+        continue;
       }
-    });
 
-    return specs.length > 0 ? specs : null;
+      if (name && !value) {
+        return {
+          valid: false,
+          specifications: null,
+          message: `تم إدخال اسم الخاصية "${name}" بدون تحديد القيمة`,
+        };
+      }
+
+      if (!name && value) {
+        return {
+          valid: false,
+          specifications: null,
+          message: `تم إدخال قيمة الخاصية "${value}" بدون تحديد اسم الخاصية`,
+        };
+      }
+
+      specs.push({ name, value, unit });
+    }
+
+    return {
+      valid: true,
+      specifications: specs.length > 0 ? specs : null,
+    };
+  }
+
+  /**
+   * Helper to fetch all active category options across pages without truncation.
+   */
+  async function fetchAllActiveCategoryOptions() {
+    const allItems = [];
+    let page = 1;
+    let totalPages = 1;
+
+    while (page <= totalPages) {
+      const res = await fetch(`/api/inventory/categories/options?page=${page}&limit=100`);
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        break;
+      }
+      const items = Array.isArray(json.data) ? json.data : (json.data.items || []);
+      totalPages = (json.data && json.data.totalPages) ? json.data.totalPages : 1;
+      allItems.push(...items);
+      page++;
+    }
+
+    return allItems;
   }
 
   /**
@@ -137,34 +186,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!selectElement) return;
 
     try {
-      const res = await fetch('/api/inventory/categories/options?limit=100');
-      const json = await res.json();
+      const options = await fetchAllActiveCategoryOptions();
 
-      if (json.success && json.data) {
-        while (selectElement.options.length > 1) {
-          selectElement.remove(1);
+      while (selectElement.options.length > 1) {
+        selectElement.remove(1);
+      }
+
+      let selectedFound = false;
+
+      options.forEach((cat) => {
+        const opt = document.createElement('option');
+        opt.value = cat.id;
+        opt.textContent = cat.parentName ? `${cat.name} (${cat.code}) - [${cat.parentName}]` : `${cat.name} (${cat.code})`;
+        if (cat.id === selectedId) {
+          opt.selected = true;
+          selectedFound = true;
         }
+        selectElement.appendChild(opt);
+      });
 
-        let selectedFound = false;
-
-        json.data.forEach((cat) => {
-          const opt = document.createElement('option');
-          opt.value = cat.id;
-          opt.textContent = cat.parentName ? `${cat.name} (${cat.code}) - [${cat.parentName}]` : `${cat.name} (${cat.code})`;
-          if (cat.id === selectedId) {
-            opt.selected = true;
-            selectedFound = true;
-          }
-          selectElement.appendChild(opt);
-        });
-
-        if (selectedId && !selectedFound) {
-          const inactiveOpt = document.createElement('option');
-          inactiveOpt.value = selectedId;
-          inactiveOpt.selected = true;
-          inactiveOpt.textContent = currentCategoryName ? `${currentCategoryName} (معطلة)` : 'الفئة الحالية (معطلة)';
-          selectElement.appendChild(inactiveOpt);
-        }
+      if (selectedId && !selectedFound) {
+        const inactiveOpt = document.createElement('option');
+        inactiveOpt.value = selectedId;
+        inactiveOpt.selected = true;
+        inactiveOpt.textContent = currentCategoryName ? `${currentCategoryName} (معطلة)` : 'الفئة الحالية (معطلة)';
+        selectElement.appendChild(inactiveOpt);
       }
     } catch (err) {
       console.error('Failed to load category options:', err);
@@ -494,7 +540,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      const specifications = collectSpecifications(baseSpecsContainer);
+      const specsResult = collectSpecifications(baseSpecsContainer);
+      if (!specsResult.valid) {
+        showAlert(specsResult.message || 'بيانات مواصفات الوحدة غير صالحة');
+        return;
+      }
+      const specifications = specsResult.specifications;
 
       const payload = {
         name,
@@ -926,7 +977,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
           }
 
-          const specifications = collectSpecifications(unitSpecsContainer);
+          const specsResult = collectSpecifications(unitSpecsContainer);
+          if (!specsResult.valid) {
+            showAlert(specsResult.message || 'بيانات مواصفات الوحدة غير صالحة', 'danger', addAlert);
+            return;
+          }
+          const specifications = specsResult.specifications;
 
           const payload = {
             name,
@@ -1025,7 +1081,12 @@ document.addEventListener('DOMContentLoaded', () => {
             payload.equivalentToUnitId = equivalentToUnitId;
           }
 
-          payload.specifications = collectSpecifications(editUnitSpecsContainer);
+          const specsResult = collectSpecifications(editUnitSpecsContainer);
+          if (!specsResult.valid) {
+            showAlert(specsResult.message || 'بيانات مواصفات الوحدة غير صالحة', 'danger', editAlert);
+            return;
+          }
+          payload.specifications = specsResult.specifications;
 
           if (submitBtn) submitBtn.disabled = true;
           if (spinner) spinner.classList.remove('d-none');

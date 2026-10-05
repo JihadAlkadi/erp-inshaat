@@ -1,4 +1,4 @@
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, QueryFailedError } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { InventoryProductEntity } from './inventory-product.entity.js';
 import { InventoryProductUnitEntity } from './inventory-product-unit.entity.js';
@@ -26,13 +26,26 @@ function isProductOrUnitDuplicateKeyError(err: unknown): { isDup: boolean; const
   if (!err || typeof err !== 'object') {
     return { isDup: false, constraint: '' };
   }
-  const e = err as { code?: string; errno?: number; message?: string; sqlMessage?: string };
+
+  const e = err as {
+    code?: string;
+    errno?: number;
+    message?: string;
+    sqlMessage?: string;
+    driverError?: { code?: string; errno?: number; message?: string; sqlMessage?: string };
+  };
+
+  const driverError = e.driverError;
+  const code = driverError?.code || e.code;
+  const errno = driverError?.errno || e.errno;
+  const message = driverError?.sqlMessage || driverError?.message || e.sqlMessage || e.message || '';
+
   const isDup =
-    e.code === 'ER_DUP_ENTRY' ||
-    e.errno === 1062 ||
-    (typeof e.message === 'string' && e.message.includes('ER_DUP_ENTRY'));
-  const constraint = e.sqlMessage || e.message || '';
-  return { isDup, constraint };
+    code === 'ER_DUP_ENTRY' ||
+    errno === 1062 ||
+    (typeof message === 'string' && (message.includes('ER_DUP_ENTRY') || message.includes('Duplicate entry')));
+
+  return { isDup, constraint: message };
 }
 
 export class InventoryProductService {
@@ -118,6 +131,7 @@ export class InventoryProductService {
 
   /**
    * Lists products with pagination, search, category filter, and status filter.
+   * Performs fail-closed validation on baseUnit integrity for all returned products.
    */
   async listProducts(query: ListInventoryProductsQueryDto): Promise<PaginatedProductsResult> {
     const page = Math.max(1, query.page || 1);
@@ -126,6 +140,7 @@ export class InventoryProductService {
 
     const qb = this.productRepository.createQueryBuilder('p')
       .leftJoinAndSelect('p.category', 'category')
+      .leftJoinAndSelect('p.baseUnit', 'baseUnit')
       .where('p.deleted_at IS NULL');
 
     if (query.categoryId) {
@@ -151,13 +166,6 @@ export class InventoryProductService {
     const rawItems = await qb
       .addSelect((subQb) => {
         return subQb
-          .select('u.name', 'base_unit_name')
-          .from(InventoryProductUnitEntity, 'u')
-          .where('u.id = p.base_unit_id')
-          .andWhere('u.deleted_at IS NULL');
-      }, 'base_unit_name')
-      .addSelect((subQb) => {
-        return subQb
           .select('COUNT(u2.id)', 'unit_count')
           .from(InventoryProductUnitEntity, 'u2')
           .where('u2.product_id = p.id')
@@ -169,8 +177,19 @@ export class InventoryProductService {
       .getRawAndEntities();
 
     const items: InventoryProductListItemDto[] = rawItems.entities.map((entity, index) => {
+      if (
+        !entity.baseUnitId ||
+        !entity.baseUnit ||
+        entity.baseUnit.deletedAt !== null ||
+        entity.baseUnit.productId !== entity.id
+      ) {
+        throw new BusinessRuleError(
+          'المنتج غير متسق (الوحدة الأساسية مفقودة أو غير صالحة)',
+          'INVENTORY_PRODUCT_BASE_UNIT_INCONSISTENT'
+        );
+      }
+
       const raw = rawItems.raw[index];
-      const baseUnitName = raw.base_unit_name || null;
       const unitCount = parseInt(raw.unit_count || '0', 10);
 
       return {
@@ -181,7 +200,7 @@ export class InventoryProductService {
         categoryName: entity.category ? entity.category.name : null,
         locationName: entity.locationName,
         baseUnitId: entity.baseUnitId,
-        baseUnitName,
+        baseUnitName: entity.baseUnit.name,
         isActive: entity.isActive,
         unitCount,
         createdAt: entity.createdAt,
@@ -365,7 +384,7 @@ export class InventoryProductService {
         if (dup.constraint.includes('UQ_inventory_product_code') || dup.constraint.includes('code')) {
           throw new ConflictError('رمز المنتج مستخدم بالفعل', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
         }
-        throw new ConflictError('قيمة فريدة مكررة بالفعل في المنتج', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
+        throw new ConflictError('رمز المنتج مستخدم بالفعل', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
       }
       throw err;
     }
@@ -487,7 +506,7 @@ export class InventoryProductService {
         if (dup.constraint.includes('UQ_inventory_product_code') || dup.constraint.includes('code')) {
           throw new ConflictError('رمز المنتج مستخدم بالفعل', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
         }
-        throw new ConflictError('قيمة مكررة بالفعل في المنتج', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
+        throw new ConflictError('رمز المنتج مستخدم بالفعل', 'INVENTORY_PRODUCT_CODE_ALREADY_EXISTS');
       }
       throw err;
     }
@@ -718,13 +737,17 @@ export class InventoryProductService {
         if (dup.constraint.includes('UQ_inventory_product_unit_barcode') || dup.constraint.includes('barcode')) {
           throw new ConflictError('الباركود مستخدم بالفعل', 'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS');
         }
-        if (dup.constraint.includes('UQ_inventory_product_unit_product_name') || dup.constraint.includes('product_id')) {
+        if (
+          dup.constraint.includes('UQ_inventory_product_unit_product_name') ||
+          dup.constraint.includes('product_id') ||
+          dup.constraint.includes('name')
+        ) {
           throw new ConflictError(
             'اسم الوحدة مستخدم بالفعل داخل هذا المنتج',
             'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS'
           );
         }
-        throw new ConflictError('بيانات الوحدة مكررة بالفعل', 'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS');
+        throw new ConflictError('اسم الوحدة مستخدم بالفعل داخل هذا المنتج', 'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS');
       }
       throw err;
     }
@@ -941,13 +964,17 @@ export class InventoryProductService {
         if (dup.constraint.includes('UQ_inventory_product_unit_barcode') || dup.constraint.includes('barcode')) {
           throw new ConflictError('الباركود مستخدم بالفعل', 'INVENTORY_PRODUCT_UNIT_BARCODE_ALREADY_EXISTS');
         }
-        if (dup.constraint.includes('UQ_inventory_product_unit_product_name') || dup.constraint.includes('product_id')) {
+        if (
+          dup.constraint.includes('UQ_inventory_product_unit_product_name') ||
+          dup.constraint.includes('product_id') ||
+          dup.constraint.includes('name')
+        ) {
           throw new ConflictError(
             'اسم الوحدة مستخدم بالفعل داخل هذا المنتج',
             'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS'
           );
         }
-        throw new ConflictError('بيانات الوحدة مكررة بالفعل', 'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS');
+        throw new ConflictError('اسم الوحدة مستخدم بالفعل داخل هذا المنتج', 'INVENTORY_PRODUCT_UNIT_NAME_ALREADY_EXISTS');
       }
       throw err;
     }

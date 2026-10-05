@@ -56,48 +56,68 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
+   * Helper to fetch all active category options across pages without truncation.
+   */
+  async function fetchAllActiveCategoryOptions() {
+    const allItems = [];
+    let page = 1;
+    let totalPages = 1;
+
+    while (page <= totalPages) {
+      const res = await fetch(`/api/inventory/categories/options?page=${page}&limit=100`);
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        break;
+      }
+      const items = Array.isArray(json.data) ? json.data : (json.data.items || []);
+      totalPages = (json.data && json.data.totalPages) ? json.data.totalPages : 1;
+      allItems.push(...items);
+      page++;
+    }
+
+    return allItems;
+  }
+
+  /**
    * Fetch category options for dropdown selectors (handles inactive current parent preservation).
    */
   async function loadCategoryOptions(selectedId = '', currentParentName = '') {
     if (!categoryParentSelect) return;
 
     try {
-      const res = await fetch('/api/inventory/categories/options?limit=100');
-      const json = await res.json();
+      const options = await fetchAllActiveCategoryOptions();
 
-      if (json.success && json.data) {
-        // Clear all options except default
-        while (categoryParentSelect.options.length > 1) {
-          categoryParentSelect.remove(1);
+      // Clear all options except default
+      while (categoryParentSelect.options.length > 1) {
+        categoryParentSelect.remove(1);
+      }
+
+      const currentCategoryId = editCategoryForm ? editCategoryForm.dataset.categoryId : null;
+      let selectedFound = false;
+
+      options.forEach((cat) => {
+        // Do not include the current category itself in edit mode (self-parent prevention)
+        if (currentCategoryId && cat.id === currentCategoryId) {
+          return;
         }
 
-        const currentCategoryId = editCategoryForm ? editCategoryForm.dataset.categoryId : null;
-        let selectedFound = false;
-
-        json.data.forEach((cat) => {
-          // Do not include the current category itself in edit mode (self-parent prevention)
-          if (currentCategoryId && cat.id === currentCategoryId) {
-            return;
-          }
-
-          const opt = document.createElement('option');
-          opt.value = cat.id;
-          opt.textContent = cat.parentName ? `${cat.name} (${cat.code}) - [${cat.parentName}]` : `${cat.name} (${cat.code})`;
-          if (cat.id === selectedId) {
-            opt.selected = true;
-            selectedFound = true;
-          }
-          categoryParentSelect.appendChild(opt);
-        });
-
-        // If current parent is inactive (not returned in options), preserve it
-        if (selectedId && !selectedFound && selectedId !== currentCategoryId) {
-          const inactiveOpt = document.createElement('option');
-          inactiveOpt.value = selectedId;
-          inactiveOpt.selected = true;
-          inactiveOpt.textContent = currentParentName ? `${currentParentName} (معطلة)` : 'الفئة الأب الحالية (معطلة)';
-          categoryParentSelect.appendChild(inactiveOpt);
+        const opt = document.createElement('option');
+        opt.value = cat.id;
+        opt.textContent = cat.parentName ? `${cat.name} (${cat.code}) - [${cat.parentName}]` : `${cat.name} (${cat.code})`;
+        if (cat.id === selectedId) {
+          opt.selected = true;
+          selectedFound = true;
         }
+        categoryParentSelect.appendChild(opt);
+      });
+
+      // If current parent is inactive (not returned in options), preserve it
+      if (selectedId && !selectedFound && selectedId !== currentCategoryId) {
+        const inactiveOpt = document.createElement('option');
+        inactiveOpt.value = selectedId;
+        inactiveOpt.selected = true;
+        inactiveOpt.textContent = currentParentName ? `${currentParentName} (معطلة)` : 'الفئة الأب الحالية (معطلة)';
+        categoryParentSelect.appendChild(inactiveOpt);
       }
     } catch (err) {
       console.error('Failed to load category options:', err);

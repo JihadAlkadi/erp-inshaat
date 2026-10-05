@@ -1,6 +1,7 @@
 import { DataSource, Repository, QueryFailedError } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { InventoryCategoryEntity } from './inventory-category.entity.js';
+import { InventoryProductEntity } from '../product/inventory-product.entity.js';
 import { CreateInventoryCategoryDto } from './dto/create-inventory-category.dto.js';
 import { UpdateInventoryCategoryDto } from './dto/update-inventory-category.dto.js';
 import { ListInventoryCategoriesQueryDto } from './dto/list-inventory-categories-query.dto.js';
@@ -24,7 +25,6 @@ function isCategoryDuplicateKeyError(error: unknown): boolean {
   }
   return false;
 }
-
 
 export interface CategoryTreeNodeDto {
   id: string;
@@ -56,19 +56,19 @@ export interface PaginatedCategoriesResult {
   totalPages: number;
 }
 
+export interface PaginatedCategoryOptionsResult {
+  items: CategoryOptionDto[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export class InventoryCategoryService {
   private categoryRepository: Repository<InventoryCategoryEntity>;
 
   constructor(private dataSource: DataSource = AppDataSource) {
     this.categoryRepository = this.dataSource.getRepository(InventoryCategoryEntity);
-  }
-
-  /**
-   * Helper to check if inventory_product table exists for productCount subqueries.
-   * If table doesn't exist yet (e.g. before migration 5), safely returns '0'.
-   */
-  private getProductCountSubquery(): string {
-    return `(SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'inventory_product') > 0`;
   }
 
   /**
@@ -90,7 +90,6 @@ export class InventoryCategoryService {
 
     const total = await qb.getCount();
 
-    // Select aggregated columns
     const rawItems = await qb
       .addSelect((subQb) => {
         return subQb
@@ -99,7 +98,13 @@ export class InventoryCategoryService {
           .where('child.parent_id = c.id')
           .andWhere('child.deleted_at IS NULL');
       }, 'children_count')
-      .addSelect(`CASE WHEN ${this.getProductCountSubquery()} THEN (SELECT COUNT(1) FROM inventory_product p WHERE p.category_id = c.id AND p.deleted_at IS NULL) ELSE 0 END`, 'product_count')
+      .addSelect((subQb) => {
+        return subQb
+          .select('COUNT(p.id)', 'product_count')
+          .from(InventoryProductEntity, 'p')
+          .where('p.category_id = c.id')
+          .andWhere('p.deleted_at IS NULL');
+      }, 'product_count')
       .orderBy('c.name', 'ASC')
       .skip(skip)
       .take(limit)
@@ -171,7 +176,13 @@ export class InventoryCategoryService {
           .where('child.parent_id = c.id')
           .andWhere('child.deleted_at IS NULL');
       }, 'children_count')
-      .addSelect(`CASE WHEN ${this.getProductCountSubquery()} THEN (SELECT COUNT(1) FROM inventory_product p WHERE p.category_id = c.id AND p.deleted_at IS NULL) ELSE 0 END`, 'product_count')
+      .addSelect((subQb) => {
+        return subQb
+          .select('COUNT(p.id)', 'product_count')
+          .from(InventoryProductEntity, 'p')
+          .where('p.category_id = c.id')
+          .andWhere('p.deleted_at IS NULL');
+      }, 'product_count')
       .orderBy('c.name', 'ASC')
       .skip(skip)
       .take(limit)
@@ -234,7 +245,13 @@ export class InventoryCategoryService {
           .where('child.parent_id = c.id')
           .andWhere('child.deleted_at IS NULL');
       }, 'children_count')
-      .addSelect(`CASE WHEN ${this.getProductCountSubquery()} THEN (SELECT COUNT(1) FROM inventory_product p WHERE p.category_id = c.id AND p.deleted_at IS NULL) ELSE 0 END`, 'product_count')
+      .addSelect((subQb) => {
+        return subQb
+          .select('COUNT(p.id)', 'product_count')
+          .from(InventoryProductEntity, 'p')
+          .where('p.category_id = c.id')
+          .andWhere('p.deleted_at IS NULL');
+      }, 'product_count')
       .orderBy('c.name', 'ASC')
       .skip(skip)
       .take(limit)
@@ -271,10 +288,12 @@ export class InventoryCategoryService {
   }
 
   /**
-   * Bounded lookup options for product and category dropdown selectors.
+   * Bounded lookup options for product and category dropdown selectors with pagination.
    */
-  async listOptions(query: CategoryOptionsQueryDto): Promise<CategoryOptionDto[]> {
+  async listOptions(query: CategoryOptionsQueryDto): Promise<PaginatedCategoryOptionsResult> {
+    const page = Math.max(1, query.page || 1);
     const limit = Math.max(1, Math.min(100, query.limit || 50));
+    const skip = (page - 1) * limit;
 
     const qb = this.categoryRepository.createQueryBuilder('c')
       .leftJoinAndSelect('c.parent', 'parent')
@@ -286,17 +305,28 @@ export class InventoryCategoryService {
       qb.andWhere('(c.name LIKE :term OR c.code LIKE :term)', { term });
     }
 
+    const total = await qb.getCount();
+
     const categories = await qb
       .orderBy('c.name', 'ASC')
+      .skip(skip)
       .take(limit)
       .getMany();
 
-    return categories.map((c) => ({
+    const items = categories.map((c) => ({
       id: c.id,
       name: c.name,
       code: c.code,
       parentName: c.parent ? c.parent.name : null,
     }));
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
   }
 
   /**
@@ -316,7 +346,13 @@ export class InventoryCategoryService {
           .where('child.parent_id = c.id')
           .andWhere('child.deleted_at IS NULL');
       }, 'children_count')
-      .addSelect(`CASE WHEN ${this.getProductCountSubquery()} THEN (SELECT COUNT(1) FROM inventory_product p WHERE p.category_id = c.id AND p.deleted_at IS NULL) ELSE 0 END`, 'product_count')
+      .addSelect((subQb) => {
+        return subQb
+          .select('COUNT(p.id)', 'product_count')
+          .from(InventoryProductEntity, 'p')
+          .where('p.category_id = c.id')
+          .andWhere('p.deleted_at IS NULL');
+      }, 'product_count')
       .getRawAndEntities();
 
     if (!rawItem.entities || rawItem.entities.length === 0) {
@@ -518,18 +554,13 @@ export class InventoryCategoryService {
             }
 
             // Reject if has ANY non-deleted product (active or inactive)
-            const productTableCheck = await manager.query(
-              `SELECT COUNT(1) as cnt FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'inventory_product'`
-            );
-            if (parseInt(productTableCheck[0]?.cnt || '0', 10) > 0) {
-              const productCountResult = await manager.query(
-                `SELECT COUNT(1) as cnt FROM inventory_product WHERE category_id = ? AND deleted_at IS NULL`,
-                [id]
-              );
-              const productsCount = parseInt(productCountResult[0]?.cnt || '0', 10);
-              if (productsCount > 0) {
-                throw new BusinessRuleError('لا يمكن تعطيل فئة مرتبطة بمنتجات', 'INVENTORY_CATEGORY_HAS_PRODUCTS');
-              }
+            const productRepo = manager.getRepository(InventoryProductEntity);
+            const productsCount = await productRepo.count({
+              where: { categoryId: id },
+            });
+
+            if (productsCount > 0) {
+              throw new BusinessRuleError('لا يمكن تعطيل فئة مرتبطة بمنتجات', 'INVENTORY_CATEGORY_HAS_PRODUCTS');
             }
           }
 
@@ -553,7 +584,6 @@ export class InventoryCategoryService {
       throw err;
     }
   }
-
 
   /**
    * Soft deletes (archives) a category.
@@ -582,18 +612,13 @@ export class InventoryCategoryService {
       }
 
       // Check for any non-deleted products
-      const productTableCheck = await manager.query(
-        `SELECT COUNT(1) as cnt FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'inventory_product'`
-      );
-      if (parseInt(productTableCheck[0]?.cnt || '0', 10) > 0) {
-        const productCountResult = await manager.query(
-          `SELECT COUNT(1) as cnt FROM inventory_product WHERE category_id = ? AND deleted_at IS NULL`,
-          [id]
-        );
-        const productsCount = parseInt(productCountResult[0]?.cnt || '0', 10);
-        if (productsCount > 0) {
-          throw new BusinessRuleError('لا يمكن أرشفة فئة مرتبطة بمنتجات', 'INVENTORY_CATEGORY_HAS_PRODUCTS');
-        }
+      const productRepo = manager.getRepository(InventoryProductEntity);
+      const productsCount = await productRepo.count({
+        where: { categoryId: id },
+      });
+
+      if (productsCount > 0) {
+        throw new BusinessRuleError('لا يمكن أرشفة فئة مرتبطة بمنتجات', 'INVENTORY_CATEGORY_HAS_PRODUCTS');
       }
 
       category.deletedAt = new Date();
