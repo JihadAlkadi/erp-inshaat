@@ -167,26 +167,26 @@ export const SYSTEM_PERMISSION_DEFINITIONS: Record<SystemPermission, PermissionD
     module: 'inventory',
   },
 
-  // Studies Template Permissions
-  [SystemPermission.STUDIES_TEMPLATE_VIEW]: {
-    name: SystemPermission.STUDIES_TEMPLATE_VIEW,
+  // Production Template Permissions
+  [SystemPermission.PRODUCTION_TEMPLATE_VIEW]: {
+    name: SystemPermission.PRODUCTION_TEMPLATE_VIEW,
     description: 'عرض قوالب التصنيع ومراحلها ومواصفاتها',
-    module: 'studies',
+    module: 'production',
   },
-  [SystemPermission.STUDIES_TEMPLATE_CREATE]: {
-    name: SystemPermission.STUDIES_TEMPLATE_CREATE,
+  [SystemPermission.PRODUCTION_TEMPLATE_CREATE]: {
+    name: SystemPermission.PRODUCTION_TEMPLATE_CREATE,
     description: 'إنشاء قوالب التصنيع',
-    module: 'studies',
+    module: 'production',
   },
-  [SystemPermission.STUDIES_TEMPLATE_UPDATE]: {
-    name: SystemPermission.STUDIES_TEMPLATE_UPDATE,
+  [SystemPermission.PRODUCTION_TEMPLATE_UPDATE]: {
+    name: SystemPermission.PRODUCTION_TEMPLATE_UPDATE,
     description: 'تعديل قوالب التصنيع ومراحلها وترتيبها وموادها',
-    module: 'studies',
+    module: 'production',
   },
-  [SystemPermission.STUDIES_TEMPLATE_DELETE]: {
-    name: SystemPermission.STUDIES_TEMPLATE_DELETE,
+  [SystemPermission.PRODUCTION_TEMPLATE_DELETE]: {
+    name: SystemPermission.PRODUCTION_TEMPLATE_DELETE,
     description: 'أرشفة قوالب التصنيع ومراحلها',
-    module: 'studies',
+    module: 'production',
   },
 };
 

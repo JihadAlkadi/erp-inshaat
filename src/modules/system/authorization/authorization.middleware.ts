@@ -26,3 +26,29 @@ export function requirePermission(
     }
   };
 }
+
+export function requireAnyPermission(
+  permissionNames: string[],
+  authzService: AuthorizationService = authorizationService
+): RequestHandler {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.user) {
+        return next(new UnauthorizedError('يرجى تسجيل الدخول أولاً'));
+      }
+
+      for (const perm of permissionNames) {
+        const isAllowed = await authzService.hasPermission(req.user, perm);
+        if (isAllowed) {
+          return next();
+        }
+      }
+
+      return next(
+        new ForbiddenError('ليس لديك صلاحية لتنفيذ هذا الإجراء', 'PERMISSION_DENIED')
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+}

@@ -14,7 +14,7 @@ import { userPortfolioWebController } from '../modules/system/user/portfolio/use
 import { inventoryCategoryWebController } from '../modules/inventory/category/inventory-category.web.controller.js';
 import { inventoryProductWebController } from '../modules/inventory/product/inventory-product.web.controller.js';
 import { inventoryHomeWebController } from '../modules/inventory/inventory.web.controller.js';
-import { studiesTemplateWebController } from '../modules/studies/template/controllers/studies-template.web.controller.js';
+import { productionTemplateWebController } from '../modules/production/template/production-template.web.controller.js';
 
 const webRouter: Router = Router();
 
@@ -313,41 +313,41 @@ webRouter.get(
 );
 
 // ==========================================
-// Studies Module Web Routes (/studies)
+// Production Templates Web Routes (/production/templates)
 // ==========================================
 
-// GET /studies/templates - Templates List (Protected)
+// GET /production/templates - Templates List (Protected)
 webRouter.get(
-  '/studies/templates',
+  '/production/templates',
   requireWebAuth,
-  requirePermission(SystemPermission.STUDIES_TEMPLATE_VIEW),
-  studiesTemplateWebController.renderTemplatesList
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_VIEW),
+  productionTemplateWebController.renderTemplatesList
 );
 
-// GET /studies/templates/create - Create Template Page (Protected)
+// GET /production/templates/create - Create Template Page (Protected)
 webRouter.get(
-  '/studies/templates/create',
+  '/production/templates/create',
   requireWebAuth,
-  requirePermission(SystemPermission.STUDIES_TEMPLATE_CREATE),
-  studiesTemplateWebController.renderTemplateCreate
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_CREATE),
+  productionTemplateWebController.renderTemplateCreate
 );
 
-// GET /studies/templates/:id - Template Details Page (Protected)
+// GET /production/templates/:id - Template Details Page (Protected)
 webRouter.get(
-  '/studies/templates/:id',
+  '/production/templates/:id',
   requireWebAuth,
-  requirePermission(SystemPermission.STUDIES_TEMPLATE_VIEW),
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_VIEW),
   validateUuidParam('id'),
-  studiesTemplateWebController.renderTemplateShow
+  productionTemplateWebController.renderTemplateShow
 );
 
-// GET /studies/templates/:id/edit - Edit Template Page (Protected)
+// GET /production/templates/:id/edit - Edit Template Page (Protected)
 webRouter.get(
-  '/studies/templates/:id/edit',
+  '/production/templates/:id/edit',
   requireWebAuth,
-  requirePermission(SystemPermission.STUDIES_TEMPLATE_UPDATE),
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_UPDATE),
   validateUuidParam('id'),
-  studiesTemplateWebController.renderTemplateEdit
+  productionTemplateWebController.renderTemplateEdit
 );
 
 export { webRouter };

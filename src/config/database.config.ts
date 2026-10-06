@@ -13,10 +13,10 @@ import { ProductionYardEngineerEntity } from '../modules/production/team/entitie
 import { InventoryCategoryEntity } from '../modules/inventory/category/inventory-category.entity.js';
 import { InventoryProductEntity } from '../modules/inventory/product/inventory-product.entity.js';
 import { InventoryProductUnitEntity } from '../modules/inventory/product/inventory-product-unit.entity.js';
-import { StudiesTemplateEntity } from '../modules/studies/template/entities/studies-template.entity.js';
-import { StudiesTemplateSpecificationEntity } from '../modules/studies/template/entities/studies-template-specification.entity.js';
-import { StudiesTemplateStageEntity } from '../modules/studies/template/entities/studies-template-stage.entity.js';
-import { StudiesTemplateStageMaterialEntity } from '../modules/studies/template/entities/studies-template-stage-material.entity.js';
+import { ProductionTemplateEntity } from '../modules/production/template/production-template.entity.js';
+import { ProductionTemplateSpecificationEntity } from '../modules/production/template-specification/production-template-specification.entity.js';
+import { ProductionTemplateStageEntity } from '../modules/production/template-stage/production-template-stage.entity.js';
+import { ProductionTemplateStageMaterialEntity } from '../modules/production/template-stage-material/production-template-stage-material.entity.js';
 import { CreateSystemCoreTables1710000000000 } from '../database/migrations/1710000000000-CreateSystemCoreTables.js';
 import { CreateSystemSessionTable1710000000001 } from '../database/migrations/1710000000001-CreateSystemSessionTable.js';
 import { CreateProductionDepartmentsAndYards1710000000002 } from '../database/migrations/1710000000002-CreateProductionDepartmentsAndYards.js';
@@ -25,6 +25,7 @@ import { CreateInventoryCategories1710000000004 } from '../database/migrations/1
 import { CreateInventoryProductsAndUnits1710000000005 } from '../database/migrations/1710000000005-CreateInventoryProductsAndUnits.js';
 import { HardenInventoryCatalogConstraints1710000000006 } from '../database/migrations/1710000000006-HardenInventoryCatalogConstraints.js';
 import { CreateStudiesTemplateCoreTables1710000000007 } from '../database/migrations/1710000000007-CreateStudiesTemplateCoreTables.js';
+import { MigrateStudiesToProductionTemplateTables1710000000008 } from '../database/migrations/1710000000008-MigrateStudiesToProductionTemplateTables.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -49,10 +50,10 @@ export const databaseConfig: DataSourceOptions = {
     InventoryCategoryEntity,
     InventoryProductEntity,
     InventoryProductUnitEntity,
-    StudiesTemplateEntity,
-    StudiesTemplateSpecificationEntity,
-    StudiesTemplateStageEntity,
-    StudiesTemplateStageMaterialEntity,
+    ProductionTemplateEntity,
+    ProductionTemplateSpecificationEntity,
+    ProductionTemplateStageEntity,
+    ProductionTemplateStageMaterialEntity,
   ],
   migrations: [
     CreateSystemCoreTables1710000000000,
@@ -63,6 +64,7 @@ export const databaseConfig: DataSourceOptions = {
     CreateInventoryProductsAndUnits1710000000005,
     HardenInventoryCatalogConstraints1710000000006,
     CreateStudiesTemplateCoreTables1710000000007,
+    MigrateStudiesToProductionTemplateTables1710000000008,
   ],
   subscribers: [],
 };

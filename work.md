@@ -1596,3 +1596,43 @@ src/
 - Inventory Category Service with Fail-Closed Ancestry Cycle Check, Deactivation Restrictions, and Unique Race Handling (`src/modules/inventory/category/inventory-category.service.ts`).
 - Inventory Product Service with Atomic Base Unit Creation, Asserted Base Unit Integrity Helper, Conversion Chain Traversal, Pessimistic Locking, and MySQL Duplicate Key Mapping (`src/modules/inventory/product/inventory-product.service.ts`).
 - Inventory Catalog Test Suite covering DTO validation, precision boundaries, and domain invariants (`tests/inventory-catalog.test.ts`).
+- Production Template Core Hardening Test Suite covering architecture, permissions, DTOs, consecutive grouping, inventory reference fail-closed invariants, and XSS safety (`tests/production-template.test.ts`).
+- Migrations:
+  - `1710000000000-CreateSystemCoreTables.ts`
+  - `1710000000001-CreateSystemSessionTable.ts`
+  - `1710000000002-CreateProductionDepartmentsAndYards.ts`
+  - `1710000000003-CreateProductionTeamAssignments.ts`
+  - `1710000000004-CreateInventoryCategories.ts`
+  - `1710000000005-CreateInventoryProductsAndUnits.ts`
+  - `1710000000006-HardenInventoryCatalogConstraints.ts`
+  - `1710000000007-CreateStudiesTemplateCoreTables.ts`
+  - `1710000000008-MigrateStudiesToProductionTemplateTables.ts`
+
+---
+
+13. **Production Template Core Hardening & Architectural Invariants**:
+    - **التصحيح المعماري الأساسي (Application Boundary Correction)**:
+      - نقل قوالب التصنيع لتكون جزءاً أصيلاً من تطبيق الإنتاج (`Production Application`) تحت `src/modules/production/` بدلاً من تطبيق مستقل باسم Studies. قسم الدراسات هو مالك وظيفي (`Business Owner`) وليس مساحة تقنية مستقلة.
+      - إزالة كافة الآثار الفنية القديمة لموديول الدراسات بالكامل: حذف مجلدات `src/modules/studies/` و `src/views/dashboard/studies/` وملفات الأصول `src/public/css/studies.css` و `src/public/js/studies-*.js` ومسارات `/studies/templates`.
+      - المسارات المعتمدة حصراً: Web `/production/templates` و API `/api/production/templates`.
+    - **التقسيم إلى 4 Submodules مستقلة ومفصولة**:
+      - `src/modules/production/template/`: الكيان الرئيسي للقالب والبيانات الوصفية وأبعاد الغرفة.
+      - `src/modules/production/template-specification/`: المواصفات الفنية الملحقة بالقالب وترتيبها.
+      - `src/modules/production/template-stage/`: مراحل التصنيع وترتيبها الكثيف وتجميع الأقسام المتتالية.
+      - `src/modules/production/template-stage-material/`: المواد المخططة لكل مرحلة مع الكميات والوحدات.
+    - **بروتوكول الأقفال التشاؤمية لمنع التعارضات (Pessimistic Locking Concurrency Protocol)**:
+      - استخدام قفل تشاؤمي حصري للكتابة (`pessimistic_write`) على سجل القالب الرئيسي `ProductionTemplateEntity` داخل Transactions لكافة عمليات إضافة أو إعادة ترتيب أو أرشفة المراحل والمواصفات لضمان التسلسل ومنع Race Conditions والتسلسل الكثيف (1..N).
+    - **حدود الوحدات الأخرى والتحقق المنغلق أمنياً (Cross-Module Boundaries & Fail-Closed Validation)**:
+      - التعامل مع أقسام الإنتاج حصراً عبر `ProductionDepartmentService.validateDepartmentForStage`.
+      - التعامل مع كتالوج المواد حصراً عبر `InventoryProductReferenceService` دون استعلام مباشر لكيانات المواد:
+        - `searchProductReferences`: إرجاع بيانات مرجعية مقلصة فقط للمنتجات النشطة.
+        - `getProductUnitReferences`: إرجاع الوحدات الصالحة مع التحقق من سلامة الوحدة الأساسية.
+        - `validatePlannedMaterialUnit`: التحقق المنغلق أمنياً من وجود ونشاط المنتج، سلامة الوحدة الأساسية ذرياً، تبعية الوحدة المختارة لنفس المنتج، وخلو سلسلة التحويل من الحلقات الدائرية وانتهاؤها حتماً بالوحدة الأساسية.
+    - **صلاحيات وقدرات الوصول (Permissions & Capability Registry)**:
+      - تسجيل الصلاحيات: `production.template.view`, `production.template.create`, `production.template.update`, `production.template.delete`.
+      - تسجيلها في `AccessScopeCapabilityRegistry` لدعم قالب `ALL` فقط، مع بقاء أي صلاحية غير مسجلة فاشلة مغلقة (`[]`).
+    - **حماية الواجهات من حقن النصوص (Stored XSS Hardening & Safe JSON Serialization)**:
+      - استخدام `safeJsonStringify` لتشفير المحارف الخاصة (`<`, `>`, `&`, Line Terminators) داخل جزر السكربت الآمنة `<script type="application/json">` بدلاً من البيانات النصية المباشرة في الـ DOM.
+    - **تطابق الصلاحيات في واجهة المستخدم (UI Permission Parity)**:
+      - ربط تعديل المرا والمواد وحذف المراحل بصلاحية التحديث `production.template.update`.
+      - ربط أرشفة القالب بصلاحية الحذف `production.template.delete`.
