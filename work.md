@@ -1,6 +1,55 @@
 # Project Technical Map
 
-## Current Project State
+- **تأسيس نظام القوالب والمراحل الهندسية — Studies Template Core Foundation** (`src/modules/studies/template/`):
+  - **القرار المعماري الإلزامي والمحدد (Architectural Decision)**:
+    > Template stages are globally ordered.
+    > Each stage owns departmentId.
+    > UI groups only consecutive stages with the same departmentId.
+    > The same department may therefore appear in multiple visual groups within one template.
+    > No TemplateDepartmentSection entity/table exists.
+    > Department Groups are derived UI presentation only and are never persisted.
+  - **فصل قالب التصنيع عن كتالوج المستودعات (Template != Inventory Product)**:
+    - كيان `StudiesTemplateEntity` (`studies_template`) يمثل التعريف التخطيطي الكامل لمنتج يتم تصنيعه (غرفة مسبقة الصنع أو أي منتج مصنع آخر).
+    - كيان `InventoryProductEntity` يمثل مادة أو عنصر كتالوج مخزني يُستخدم كمادة مخططة داخل مراحل التصنيع. الكيانان مستقلان تماماً وممنوع دمجهما.
+    - يدعم القالب: `id`, `name`, `code` (كود تقني فريد وموحد بأحرف كبيرة وثابت وغير قابل للتعديل بعد الإنشاء حتى مع السجلات المؤرشفة ناعماً), `referenceNumber` (رقم مرجعي للمنتج غير مقيد بقيد فرادة إلا وفق متطلبات العمل), `description`, `isActive`, `deletedAt` (أرشفة ناعمة حصراً Soft Delete مع بقاء السجلات التابعة تاريخياً).
+  - **المواصفات الديناميكية للقالب (Template Dynamic Specifications)**:
+    - جدول `studies_template_specification`: يدعم مواصفات مرنة قابلة للترتيب (`name`, `value`, `unit`, `sortOrder`).
+    - عمليات كاملة للإضافة والتعديل والحذف وإعادة الترتيب التفاعلي.
+  - **المراحل وسير العمل (Workflow Stages & Global Dense Ordering)**:
+    - **حظر المراحل الفرعية (No Sub-Stages)**: لا يوجد أي مفهوم للمراحل المتداخلة أو `parentStageId`. كل مرحلة عنصر مباشر ومستقل تابع للقالب.
+    - **الترتيب العالمي (Global Ordering)**: المراحل مرتبة عالمياً على مستوى القالب `sortOrder: 1..N` ولا تعتمد على `createdAt` ولا ترتب داخل القسم.
+    - **ملكية القسم التشغيلي (Stage Owns departmentId)**: كل مرحلة ترتبط مباشرة بقسم إنتاجي `departmentId` يشير إلى `production_department`.
+    - **التجميع البصري التلقائي (Consecutive Department Grouping Rule)**:
+      - الواجهة تجمع المراحل المتتالية فقط التي لها نفس `departmentId`.
+      - ظهور نفس القسم مرتين أو أكثر في سير العمل (مثال: الصب -> الجودة -> الصب) هو سلوك مقصود وصحيح تماماً.
+      - حظر `GROUP BY departmentId` أو تخزين أي مجموعات في قاعدة البيانات.
+  - **إعادة الترتيب والسحب والإفلات الذري (Drag & Drop Reordering Transaction)**:
+    - مسار `PATCH /api/studies/templates/:id/stages/reorder` يستقبل مصفوفة `stageIds`.
+    - يتم فحص صحة المعرفات، ومطابقة عدد المراحل الإجمالي للقالب، ومنع إدخال مراحل لقوالب أخرى (Cross-Template Mutation Attack)، ومنع التكرار.
+    - العملية تنفذ داخل Database Transaction مع قفل للقالب والمراحل، وتنتج ترتيباً مكثفاً `1..N`.
+    - السحب والإفلات يغير الترتيب فقط، ولا يغير `departmentId` بصمت إطلاقاً.
+    - واجهة تفاعلية فورية تدعم التراجع التلقائي (Rollback) في حال فشل الطلب بالخادم، مع أزرار بديلة لتحريك المراحل لأعلى وأسفل لدعم إمكانية الوصول (Accessibility).
+  - **المواد المخططة للمرحلة والتكامل مع المستودعات (Planned Materials & Inventory Catalog Integration)**:
+    - جدول `studies_template_stage_material`: يربط المرحلة بمادة `productId` ووحدة قياس `productUnitId` وكمية مخططة `plannedQuantity`.
+    - التحقق الصارم: يجب أن يتبع `productUnitId` لنفس المنتج `productId` المحدد (حظر إسناد وحدة من منتج آخر)، وأن يكون المنتج فعالاً وغير محذوف، وأن تكون الوحدة غير مؤرشفة، وأن تكون الكمية عدداً عشرياً موجباً `> 0`.
+    - منع تكرار نفس الوحدة للمرحلة الواحدة.
+    - لا تشمل هذه المرحلة أي حركات مخزنية أو استهلاك فعلي (No Stock Movements, No Actual Consumption).
+  - **جاهزية اللقطات التاريخية (Snapshot Readiness)**:
+    - تصميم القوالب والمراحل والمواد المخططة مهيأ للنسخ مستقبلاً إلى أوامر الإنتاج وتشغيل التصنيع دون اعتماد الإنتاج على القالب الحي.
+  - **الصلاحيات والأمان (Permissions & Authorization)**:
+    - صلاحيات جديدة في سجل النظام:
+      - `studies.template.view`
+      - `studies.template.create`
+      - `studies.template.update`
+      - `studies.template.delete`
+    - تخضع لنطاق الوصول الشامل `ALL` فقط. مدير النظام `SYSTEM_ADMIN` يحصل عليها تلقائياً عبر المصالحة الزمنية `reconcileSystemPermissions`.
+    - جميع مسارات التعديل محمية بالمصادقة والتحقق من الصلاحيات والـ CSRF عبر `window.erpFetch`.
+    - واجهات العميل تستخدم Native DOM APIs لمنع ثغرات XSS.
+  - **الواجهات وتجربة المستخدم**:
+    - تطبيق الدراسات والقوالب بلون الثيم المميز `#4F46E5` (Indigo) مع احترام كامل لـ `UI_DESIGN_RULES.md`.
+    - قائمة القوالب `/studies/templates` مع KPI والبحث والفلترة والترقيم.
+    - صفحة إنشاء وتعديل القالب مع ثبات الكود التقني.
+    - صفحة تفاصيل القالب وتصميم سير العمل `/studies/templates/:id` بمجموعات الأقسام المتتالية والسحب والإفلات ومودال إدارة المواد المخططة والخصائص الهندسية.
 
 - **كتالوج المنتجات والمستودعات الأساسية (Inventory Product Catalog Core & Administration UI)** (`src/modules/inventory/`):
   - **البيانات المرجعية (Master Data Architecture)**:
