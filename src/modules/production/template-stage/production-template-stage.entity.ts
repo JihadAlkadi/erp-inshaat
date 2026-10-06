@@ -74,4 +74,10 @@ export class ProductionTemplateStageEntity {
     eager: false,
   })
   plannedMaterials?: ProductionTemplateStageMaterialEntity[];
+
+  @OneToMany('ProductionTemplateStageAttachmentEntity', (att: any) => att.stage, {
+    cascade: false,
+    eager: false,
+  })
+  attachments?: any[];
 }

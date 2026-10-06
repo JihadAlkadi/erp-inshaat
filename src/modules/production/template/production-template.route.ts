@@ -17,6 +17,9 @@ import { UpdateTemplateStageDto } from '../template-stage/dto/update-stage.dto.j
 import { ReorderTemplateStagesDto } from '../template-stage/dto/reorder-stages.dto.js';
 import { AddTemplateStageMaterialDto } from '../template-stage-material/dto/add-stage-material.dto.js';
 import { UpdateTemplateStageMaterialDto } from '../template-stage-material/dto/update-stage-material.dto.js';
+import { UpdateStageAttachmentDto } from '../template-stage-attachment/dto/update-stage-attachment.dto.js';
+import { ReorderStageAttachmentsDto } from '../template-stage-attachment/dto/reorder-stage-attachments.dto.js';
+import { upload } from '../../../config/multer.config.js';
 
 const productionTemplateApiRouter: Router = Router();
 
@@ -191,6 +194,70 @@ productionTemplateApiRouter.delete(
   validateUuidParam('stageId'),
   validateUuidParam('materialId'),
   productionTemplateController.removeStageMaterial
+);
+
+// ==========================================
+// 5. STAGE REFERENCE ATTACHMENTS ENDPOINTS
+// ==========================================
+
+// GET /api/production/templates/:id/stages/:stageId/attachments - List reference attachments
+productionTemplateApiRouter.get(
+  '/:id/stages/:stageId/attachments',
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_VIEW),
+  validateUuidParam('id'),
+  validateUuidParam('stageId'),
+  productionTemplateController.listStageAttachments
+);
+
+// POST /api/production/templates/:id/stages/:stageId/attachments - Upload reference attachment
+productionTemplateApiRouter.post(
+  '/:id/stages/:stageId/attachments',
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_UPDATE),
+  validateUuidParam('id'),
+  validateUuidParam('stageId'),
+  upload.single('file'),
+  productionTemplateController.addStageAttachment
+);
+
+// PATCH /api/production/templates/:id/stages/:stageId/attachments/reorder - Reorder attachments
+productionTemplateApiRouter.patch(
+  '/:id/stages/:stageId/attachments/reorder',
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_UPDATE),
+  validateUuidParam('id'),
+  validateUuidParam('stageId'),
+  validateDto(ReorderStageAttachmentsDto),
+  productionTemplateController.reorderStageAttachments
+);
+
+// PUT /api/production/templates/:id/stages/:stageId/attachments/:attachmentId - Update attachment metadata (description)
+productionTemplateApiRouter.put(
+  '/:id/stages/:stageId/attachments/:attachmentId',
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_UPDATE),
+  validateUuidParam('id'),
+  validateUuidParam('stageId'),
+  validateUuidParam('attachmentId'),
+  validateDto(UpdateStageAttachmentDto),
+  productionTemplateController.updateStageAttachment
+);
+
+// DELETE /api/production/templates/:id/stages/:stageId/attachments/:attachmentId - Soft delete reference attachment
+productionTemplateApiRouter.delete(
+  '/:id/stages/:stageId/attachments/:attachmentId',
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_UPDATE),
+  validateUuidParam('id'),
+  validateUuidParam('stageId'),
+  validateUuidParam('attachmentId'),
+  productionTemplateController.softDeleteStageAttachment
+);
+
+// GET /api/production/templates/:id/stages/:stageId/attachments/:attachmentId/file - Download reference file (authenticated + authorized)
+productionTemplateApiRouter.get(
+  '/:id/stages/:stageId/attachments/:attachmentId/file',
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_VIEW),
+  validateUuidParam('id'),
+  validateUuidParam('stageId'),
+  validateUuidParam('attachmentId'),
+  productionTemplateController.downloadStageAttachment
 );
 
 export { productionTemplateApiRouter };

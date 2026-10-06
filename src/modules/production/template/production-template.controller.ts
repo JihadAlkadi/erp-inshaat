@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ApiResponse } from '../../../common/responses/api-response.js';
+import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 import { ProductionTemplateService, productionTemplateService } from './production-template.service.js';
 import {
   ProductionTemplateSpecificationService,
@@ -13,6 +14,10 @@ import {
   ProductionTemplateStageMaterialService,
   productionTemplateStageMaterialService,
 } from '../template-stage-material/production-template-stage-material.service.js';
+import {
+  ProductionTemplateStageAttachmentService,
+  productionTemplateStageAttachmentService,
+} from '../template-stage-attachment/production-template-stage-attachment.service.js';
 import { CreateProductionTemplateDto } from './dto/create-template.dto.js';
 import { UpdateProductionTemplateDto } from './dto/update-template.dto.js';
 import { ListProductionTemplatesQueryDto } from './dto/list-templates-query.dto.js';
@@ -24,13 +29,16 @@ import { UpdateTemplateStageDto } from '../template-stage/dto/update-stage.dto.j
 import { ReorderTemplateStagesDto } from '../template-stage/dto/reorder-stages.dto.js';
 import { AddTemplateStageMaterialDto } from '../template-stage-material/dto/add-stage-material.dto.js';
 import { UpdateTemplateStageMaterialDto } from '../template-stage-material/dto/update-stage-material.dto.js';
+import { UpdateStageAttachmentDto } from '../template-stage-attachment/dto/update-stage-attachment.dto.js';
+import { ReorderStageAttachmentsDto } from '../template-stage-attachment/dto/reorder-stage-attachments.dto.js';
 
 export class ProductionTemplateController {
   constructor(
     private templateService: ProductionTemplateService = productionTemplateService,
     private specService: ProductionTemplateSpecificationService = productionTemplateSpecificationService,
     private stageService: ProductionTemplateStageService = productionTemplateStageService,
-    private materialService: ProductionTemplateStageMaterialService = productionTemplateStageMaterialService
+    private materialService: ProductionTemplateStageMaterialService = productionTemplateStageMaterialService,
+    private attachmentService: ProductionTemplateStageAttachmentService = productionTemplateStageAttachmentService
   ) {}
 
   // ==========================================
@@ -228,6 +236,113 @@ export class ProductionTemplateController {
       const { id, stageId, materialId } = req.params;
       await this.materialService.removePlannedMaterial(id as string, stageId as string, materialId as string);
       res.status(200).json(ApiResponse.success(null, 'تم حذف المادة المخططة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 5. STAGE REFERENCE ATTACHMENTS
+  // ==========================================
+
+  listStageAttachments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, stageId } = req.params;
+      const attachments = await this.attachmentService.listStageAttachments(id as string, stageId as string);
+      res.status(200).json(ApiResponse.success(attachments));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addStageAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, stageId } = req.params;
+      if (!req.file) {
+        throw new BusinessRuleError('الملف مطلوب', 'STAGE_ATTACHMENT_FILE_MISSING');
+      }
+      const description = typeof req.body?.description === 'string' ? req.body.description : undefined;
+      const attachment = await this.attachmentService.addStageAttachment(
+        id as string,
+        stageId as string,
+        {
+          originalname: req.file.originalname,
+          mimetype: req.file.mimetype,
+          size: req.file.size,
+          buffer: req.file.buffer,
+          path: req.file.path,
+        },
+        description,
+        req.user?.id
+      );
+      res.status(201).json(ApiResponse.success(attachment, 'تم رفع الوثيقة المرجعية بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateStageAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, stageId, attachmentId } = req.params;
+      const dto = req.body as UpdateStageAttachmentDto;
+      const attachment = await this.attachmentService.updateStageAttachment(
+        id as string,
+        stageId as string,
+        attachmentId as string,
+        dto
+      );
+      res.status(200).json(ApiResponse.success(attachment, 'تم تحديث بيانات الوثيقة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  softDeleteStageAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, stageId, attachmentId } = req.params;
+      await this.attachmentService.softDeleteStageAttachment(
+        id as string,
+        stageId as string,
+        attachmentId as string
+      );
+      res.status(200).json(ApiResponse.success(null, 'تم حذف الوثيقة المرجعية بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  reorderStageAttachments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, stageId } = req.params;
+      const dto = req.body as ReorderStageAttachmentsDto;
+      const attachments = await this.attachmentService.reorderStageAttachments(
+        id as string,
+        stageId as string,
+        dto
+      );
+      res.status(200).json(ApiResponse.success(attachments, 'تم إعادة ترتيب الوثائق بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  downloadStageAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, stageId, attachmentId } = req.params;
+      const { attachment, absoluteFilePath } = await this.attachmentService.getAttachmentForDownload(
+        id as string,
+        stageId as string,
+        attachmentId as string
+      );
+
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Type', attachment.mimeType);
+      const encodedFilename = encodeURIComponent(attachment.originalFileName);
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`
+      );
+      res.sendFile(absoluteFilePath);
     } catch (error) {
       next(error);
     }
