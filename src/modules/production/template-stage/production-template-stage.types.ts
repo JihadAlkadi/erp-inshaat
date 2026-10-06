@@ -43,6 +43,7 @@ export interface ProductionTemplateStageBrowserDto {
   estimatedDurationMinutes: number | null;
   estimatedCost: string | null;
   plannedMaterialsCount: number;
+  attachmentsCount: number;
 }
 
 export interface ConsecutiveDepartmentGroup<T = ProductionTemplateStageBrowserDto> {

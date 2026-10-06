@@ -87,7 +87,6 @@ export class ProductionTemplateSpecificationService {
     if (dto.name !== undefined) spec.name = dto.name.trim();
     if (dto.value !== undefined) spec.value = dto.value.trim();
     if (dto.unit !== undefined) spec.unit = dto.unit ? dto.unit.trim() : null;
-    if (dto.sortOrder !== undefined) spec.sortOrder = dto.sortOrder;
 
     return await this.specRepo.save(spec);
   }

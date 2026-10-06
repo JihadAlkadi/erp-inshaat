@@ -8,6 +8,10 @@ import {
 } from '../../inventory/product/inventory-product-reference.service.js';
 import { AddTemplateStageMaterialDto } from './dto/add-stage-material.dto.js';
 import { UpdateTemplateStageMaterialDto } from './dto/update-stage-material.dto.js';
+import {
+  ProductionTemplateStageMaterialDto,
+  toStageMaterialDto,
+} from './production-template-stage-material.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
@@ -26,7 +30,7 @@ export class ProductionTemplateStageMaterialService {
     this.inventoryReferenceService = inventoryRefService;
   }
 
-  async listStageMaterials(templateId: string, stageId: string): Promise<ProductionTemplateStageMaterialEntity[]> {
+  async listStageMaterials(templateId: string, stageId: string): Promise<ProductionTemplateStageMaterialDto[]> {
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -34,7 +38,7 @@ export class ProductionTemplateStageMaterialService {
       throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
     }
 
-    return await this.materialRepo.find({
+    const materials = await this.materialRepo.find({
       where: { stageId },
       relations: {
         product: true,
@@ -42,13 +46,15 @@ export class ProductionTemplateStageMaterialService {
       },
       order: { createdAt: 'ASC' },
     });
+
+    return materials.map(toStageMaterialDto);
   }
 
   async addPlannedMaterial(
     templateId: string,
     stageId: string,
     dto: AddTemplateStageMaterialDto
-  ): Promise<ProductionTemplateStageMaterialEntity> {
+  ): Promise<ProductionTemplateStageMaterialDto> {
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -88,13 +94,14 @@ export class ProductionTemplateStageMaterialService {
 
     try {
       const saved = await this.materialRepo.save(material);
-      return await this.materialRepo.findOneOrFail({
+      const reloaded = await this.materialRepo.findOneOrFail({
         where: { id: saved.id },
         relations: {
           product: true,
           productUnit: true,
         },
       });
+      return toStageMaterialDto(reloaded);
     } catch (err) {
       if (err instanceof QueryFailedError && (err as any).driverError?.errno === 1062) {
         throw new ConflictError(
@@ -111,7 +118,7 @@ export class ProductionTemplateStageMaterialService {
     stageId: string,
     materialId: string,
     dto: UpdateTemplateStageMaterialDto
-  ): Promise<ProductionTemplateStageMaterialEntity> {
+  ): Promise<ProductionTemplateStageMaterialDto> {
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -153,13 +160,14 @@ export class ProductionTemplateStageMaterialService {
 
     try {
       await this.materialRepo.save(material);
-      return await this.materialRepo.findOneOrFail({
+      const reloaded = await this.materialRepo.findOneOrFail({
         where: { id: materialId },
         relations: {
           product: true,
           productUnit: true,
         },
       });
+      return toStageMaterialDto(reloaded);
     } catch (err) {
       if (err instanceof QueryFailedError && (err as any).driverError?.errno === 1062) {
         throw new ConflictError(

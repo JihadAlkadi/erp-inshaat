@@ -103,12 +103,13 @@ export class ProductionTemplateWebController {
         name: stage.name,
         description: stage.description,
         departmentId: stage.departmentId,
-        departmentName: stage.department?.name || 'قسم غير محدد',
-        departmentCode: stage.department?.code || 'N/A',
+        departmentName: stage.departmentName || 'قسم غير محدد',
+        departmentCode: stage.departmentCode || 'N/A',
         sortOrder: stage.sortOrder,
         estimatedDurationMinutes: stage.estimatedDurationMinutes,
         estimatedCost: stage.estimatedCost,
-        plannedMaterialsCount: Array.isArray(stage.plannedMaterials) ? stage.plannedMaterials.length : 0,
+        plannedMaterialsCount: stage.plannedMaterialsCount || 0,
+        attachmentsCount: stage.attachmentsCount || 0,
       }));
 
       // Calculate consecutive groups for presentation

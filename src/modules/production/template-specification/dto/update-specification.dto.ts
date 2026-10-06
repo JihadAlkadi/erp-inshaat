@@ -34,10 +34,4 @@ export class UpdateTemplateSpecificationDto {
     return value ?? null;
   })
   unit?: string | null;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'ترتيب الخاصية يجب أن يكون عدداً صحيحاً' })
-  @Min(1, { message: 'ترتيب الخاصية يجب ألا يقل عن 1' })
-  sortOrder?: number;
 }

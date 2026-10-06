@@ -6,7 +6,10 @@ import { ProductionTemplateSpecificationEntity } from '../template-specification
 import { CreateProductionTemplateDto } from './dto/create-template.dto.js';
 import { UpdateProductionTemplateDto } from './dto/update-template.dto.js';
 import { ListProductionTemplatesQueryDto } from './dto/list-templates-query.dto.js';
-import { PaginatedProductionTemplatesResult } from './production-template.types.js';
+import {
+  PaginatedProductionTemplatesResult,
+  ProductionTemplateDetailDto,
+} from './production-template.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
 
@@ -73,17 +76,15 @@ export class ProductionTemplateService {
     };
   }
 
-  async getTemplateById(id: string): Promise<ProductionTemplateEntity> {
+  async getTemplateById(id: string): Promise<ProductionTemplateDetailDto> {
     const template = await this.templateRepo.findOne({
       where: { id, deletedAt: IsNull() },
       relations: {
         specifications: true,
         stages: {
           department: true,
-          plannedMaterials: {
-            product: true,
-            productUnit: true,
-          },
+          plannedMaterials: true,
+          attachments: true,
         },
       },
     });
@@ -92,15 +93,59 @@ export class ProductionTemplateService {
       throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
     }
 
-    if (template.specifications) {
-      template.specifications.sort((a, b) => a.sortOrder - b.sortOrder);
-    }
+    const specifications = (template.specifications || [])
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        value: s.value,
+        unit: s.unit,
+        sortOrder: s.sortOrder,
+      }));
 
-    if (template.stages) {
-      template.stages = template.stages.filter((s) => !s.deletedAt);
-      template.stages.sort((a, b) => a.sortOrder - b.sortOrder);
-    }
+    const stages = (template.stages || [])
+      .filter((s) => !s.deletedAt)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((s) => {
+        const plannedMaterialsCount = (s.plannedMaterials || []).length;
+        const attachmentsCount = (s.attachments || []).filter((a: any) => !a.deletedAt).length;
 
+        return {
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          departmentId: s.departmentId,
+          departmentName: s.department?.name,
+          departmentCode: s.department?.code,
+          sortOrder: s.sortOrder,
+          estimatedDurationMinutes: s.estimatedDurationMinutes,
+          estimatedCost: s.estimatedCost ? String(s.estimatedCost) : null,
+          plannedMaterialsCount,
+          attachmentsCount,
+        };
+      });
+
+    return {
+      id: template.id,
+      name: template.name,
+      referenceNumber: template.referenceNumber,
+      code: template.code,
+      description: template.description,
+      isActive: template.isActive,
+      createdAt: template.createdAt,
+      updatedAt: template.updatedAt,
+      specifications,
+      stages,
+    };
+  }
+
+  async findTemplateEntityById(id: string): Promise<ProductionTemplateEntity> {
+    const template = await this.templateRepo.findOne({
+      where: { id, deletedAt: IsNull() },
+    });
+    if (!template) {
+      throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+    }
     return template;
   }
 

@@ -28,7 +28,7 @@ export class CreateProductionTemplateDto {
   })
   referenceNumber?: string | null;
 
-  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   @IsString({ message: 'رمز القالب التقني يجب أن يكون نصاً' })
   @IsNotEmpty({ message: 'رمز القالب التقني مطلوب' })
   @Length(2, 50, { message: 'رمز القالب التقني يجب أن يتكون من حرفين إلى 50 حرفاً' })

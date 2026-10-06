@@ -21,6 +21,41 @@ export interface PaginatedProductionTemplatesResult {
   totalPages: number;
 }
 
+export interface ProductionTemplateDetailSpecificationDto {
+  id: string;
+  name: string;
+  value: string;
+  unit: string | null;
+  sortOrder: number;
+}
+
+export interface ProductionTemplateDetailStageDto {
+  id: string;
+  name: string;
+  description: string | null;
+  departmentId: string;
+  departmentName?: string;
+  departmentCode?: string;
+  sortOrder: number;
+  estimatedDurationMinutes: number | null;
+  estimatedCost: string | null;
+  plannedMaterialsCount: number;
+  attachmentsCount: number;
+}
+
+export interface ProductionTemplateDetailDto {
+  id: string;
+  name: string;
+  referenceNumber: string | null;
+  code: string;
+  description: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  specifications: ProductionTemplateDetailSpecificationDto[];
+  stages: ProductionTemplateDetailStageDto[];
+}
+
 /**
  * Escapes characters that can break out of HTML/script contexts:
  * <, >, &, \u2028, \u2029
