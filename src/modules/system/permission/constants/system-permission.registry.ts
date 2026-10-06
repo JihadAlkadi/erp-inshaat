@@ -166,6 +166,28 @@ export const SYSTEM_PERMISSION_DEFINITIONS: Record<SystemPermission, PermissionD
     description: 'أرشفة منتج مستودعات',
     module: 'inventory',
   },
+
+  // Studies Template Permissions
+  [SystemPermission.STUDIES_TEMPLATE_VIEW]: {
+    name: SystemPermission.STUDIES_TEMPLATE_VIEW,
+    description: 'عرض قوالب التصنيع ومراحلها ومواصفاتها',
+    module: 'studies',
+  },
+  [SystemPermission.STUDIES_TEMPLATE_CREATE]: {
+    name: SystemPermission.STUDIES_TEMPLATE_CREATE,
+    description: 'إنشاء قوالب التصنيع',
+    module: 'studies',
+  },
+  [SystemPermission.STUDIES_TEMPLATE_UPDATE]: {
+    name: SystemPermission.STUDIES_TEMPLATE_UPDATE,
+    description: 'تعديل قوالب التصنيع ومراحلها وترتيبها وموادها',
+    module: 'studies',
+  },
+  [SystemPermission.STUDIES_TEMPLATE_DELETE]: {
+    name: SystemPermission.STUDIES_TEMPLATE_DELETE,
+    description: 'أرشفة قوالب التصنيع ومراحلها',
+    module: 'studies',
+  },
 };
 
 export const ALL_SYSTEM_PERMISSION_DEFINITIONS: PermissionDefinition[] = Object.values(

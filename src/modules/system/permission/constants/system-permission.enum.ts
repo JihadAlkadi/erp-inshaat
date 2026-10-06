@@ -27,6 +27,10 @@ export enum SystemPermission {
   INVENTORY_PRODUCT_CREATE = 'inventory.product.create',
   INVENTORY_PRODUCT_UPDATE = 'inventory.product.update',
   INVENTORY_PRODUCT_DELETE = 'inventory.product.delete',
+  STUDIES_TEMPLATE_VIEW = 'studies.template.view',
+  STUDIES_TEMPLATE_CREATE = 'studies.template.create',
+  STUDIES_TEMPLATE_UPDATE = 'studies.template.update',
+  STUDIES_TEMPLATE_DELETE = 'studies.template.delete',
 }
 
 
