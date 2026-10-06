@@ -14,6 +14,7 @@ import { userPortfolioWebController } from '../modules/system/user/portfolio/use
 import { inventoryCategoryWebController } from '../modules/inventory/category/inventory-category.web.controller.js';
 import { inventoryProductWebController } from '../modules/inventory/product/inventory-product.web.controller.js';
 import { inventoryHomeWebController } from '../modules/inventory/inventory.web.controller.js';
+import { studiesTemplateWebController } from '../modules/studies/template/controllers/studies-template.web.controller.js';
 
 const webRouter: Router = Router();
 
@@ -309,6 +310,44 @@ webRouter.get(
   requirePermission(SystemPermission.INVENTORY_PRODUCT_UPDATE),
   validateUuidParam('id'),
   inventoryProductWebController.renderProductEdit
+);
+
+// ==========================================
+// Studies Module Web Routes (/studies)
+// ==========================================
+
+// GET /studies/templates - Templates List (Protected)
+webRouter.get(
+  '/studies/templates',
+  requireWebAuth,
+  requirePermission(SystemPermission.STUDIES_TEMPLATE_VIEW),
+  studiesTemplateWebController.renderTemplatesList
+);
+
+// GET /studies/templates/create - Create Template Page (Protected)
+webRouter.get(
+  '/studies/templates/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.STUDIES_TEMPLATE_CREATE),
+  studiesTemplateWebController.renderTemplateCreate
+);
+
+// GET /studies/templates/:id - Template Details Page (Protected)
+webRouter.get(
+  '/studies/templates/:id',
+  requireWebAuth,
+  requirePermission(SystemPermission.STUDIES_TEMPLATE_VIEW),
+  validateUuidParam('id'),
+  studiesTemplateWebController.renderTemplateShow
+);
+
+// GET /studies/templates/:id/edit - Edit Template Page (Protected)
+webRouter.get(
+  '/studies/templates/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.STUDIES_TEMPLATE_UPDATE),
+  validateUuidParam('id'),
+  studiesTemplateWebController.renderTemplateEdit
 );
 
 export { webRouter };

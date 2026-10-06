@@ -1,0 +1,56 @@
+<!-- Sidebar: Offcanvas on mobile, static on desktop -->
+<div class="offcanvas-md offcanvas-start studies-sidebar shadow-sm" tabindex="-1" id="appSidebar">
+  <div class="offcanvas-header d-md-none border-bottom pb-3 mb-2">
+    <h5 class="offcanvas-title fw-bold" id="offcanvasNavbarLabel">
+      <i class="fa-solid fa-compass-drafting me-2" style="color: #4F46E5;"></i> الدراسات والقوالب
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#appSidebar"></button>
+  </div>
+  
+  <div class="offcanvas-body flex-column p-0 py-md-2">
+    <div class="px-3 mb-2 mt-md-0 mt-2 text-muted" style="font-size: 0.85rem; font-weight: 700;">الدراسات والتصميم</div>
+    <ul class="nav flex-column mb-3">
+      <li class="nav-item">
+        <a class="nav-link <%= typeof activeTab !== 'undefined' && activeTab === 'templates' ? 'active' : '' %>" href="/studies/templates">
+          <i class="fa-solid fa-cubes"></i> قوالب المنتجات
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<style>
+/* Sidebar styles for Studies module matching System/Inventory module */
+.studies-sidebar { 
+  background-color: #ffffff; 
+  border-left: 1px solid rgba(0,0,0,0.08); 
+  height: calc(100vh - 56px); 
+  padding-top: 15px; 
+  overflow-y: auto; 
+  width: 250px; 
+  flex-shrink: 0; 
+}
+.studies-sidebar .nav-link { 
+  color: #4B5563; 
+  padding: 10px 20px; 
+  font-weight: 600; 
+  border-radius: 8px; 
+  margin: 2px 10px; 
+  transition: all 0.2s; 
+}
+.studies-sidebar .nav-link:hover, .studies-sidebar .nav-link.active { 
+  background-color: rgba(79, 70, 229, 0.08); 
+  color: #4F46E5; 
+}
+.studies-sidebar .nav-link i { 
+  width: 30px; 
+  text-align: center; 
+}
+@media (max-width: 767.98px) { 
+  .studies-sidebar { 
+    border-left: none; 
+    height: 100%; 
+    padding-top: 0; 
+  } 
+}
+</style>
