@@ -1,3 +1,5 @@
+import { ProductionTemplateStageEntity } from './production-template-stage.entity.js';
+
 export interface ProductionTemplateStageDto {
   id: string;
   templateId: string;
@@ -31,6 +33,31 @@ export interface ProductionTemplateStageDto {
     };
   }>;
 }
+
+export function toProductionTemplateStageDto(
+  stage: ProductionTemplateStageEntity
+): ProductionTemplateStageDto {
+  return {
+    id: stage.id,
+    templateId: stage.templateId,
+    departmentId: stage.departmentId,
+    name: stage.name,
+    description: stage.description,
+    sortOrder: stage.sortOrder,
+    estimatedDurationMinutes: stage.estimatedDurationMinutes,
+    estimatedCost: stage.estimatedCost ? String(stage.estimatedCost) : null,
+    createdAt: stage.createdAt,
+    updatedAt: stage.updatedAt,
+    department: stage.department
+      ? {
+          id: stage.department.id,
+          name: stage.department.name,
+          code: stage.department.code,
+        }
+      : undefined,
+  };
+}
+
 
 export interface ProductionTemplateStageBrowserDto {
   id: string;

@@ -6,6 +6,10 @@ import {
   InventoryProductReferenceService,
   inventoryProductReferenceService,
 } from '../../inventory/product/inventory-product-reference.service.js';
+import {
+  ProductionTemplateGuardService,
+  productionTemplateGuardService,
+} from '../template/production-template-guard.service.js';
 import { AddTemplateStageMaterialDto } from './dto/add-stage-material.dto.js';
 import { UpdateTemplateStageMaterialDto } from './dto/update-stage-material.dto.js';
 import {
@@ -20,17 +24,22 @@ export class ProductionTemplateStageMaterialService {
   private materialRepo: Repository<ProductionTemplateStageMaterialEntity>;
   private stageRepo: Repository<ProductionTemplateStageEntity>;
   private inventoryReferenceService: InventoryProductReferenceService;
+  private guardService: ProductionTemplateGuardService;
 
   constructor(
     private dataSource: DataSource = AppDataSource,
-    inventoryRefService: InventoryProductReferenceService = inventoryProductReferenceService
+    inventoryRefService: InventoryProductReferenceService = inventoryProductReferenceService,
+    guardService: ProductionTemplateGuardService = productionTemplateGuardService
   ) {
     this.materialRepo = this.dataSource.getRepository(ProductionTemplateStageMaterialEntity);
     this.stageRepo = this.dataSource.getRepository(ProductionTemplateStageEntity);
     this.inventoryReferenceService = inventoryRefService;
+    this.guardService = guardService;
   }
 
   async listStageMaterials(templateId: string, stageId: string): Promise<ProductionTemplateStageMaterialDto[]> {
+    await this.guardService.requireExistingTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -55,6 +64,8 @@ export class ProductionTemplateStageMaterialService {
     stageId: string,
     dto: AddTemplateStageMaterialDto
   ): Promise<ProductionTemplateStageMaterialDto> {
+    await this.guardService.requireMutableTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -119,6 +130,8 @@ export class ProductionTemplateStageMaterialService {
     materialId: string,
     dto: UpdateTemplateStageMaterialDto
   ): Promise<ProductionTemplateStageMaterialDto> {
+    await this.guardService.requireMutableTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -180,6 +193,8 @@ export class ProductionTemplateStageMaterialService {
   }
 
   async removePlannedMaterial(templateId: string, stageId: string, materialId: string): Promise<void> {
+    await this.guardService.requireMutableTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });

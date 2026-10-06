@@ -32,7 +32,13 @@ import { ReorderStageAttachmentsDto } from '../src/modules/production/template-s
 
 // Helpers & Types
 import { calculateConsecutiveDepartmentGroups } from '../src/modules/production/template-stage/consecutive-department-grouping.helper.js';
-import { safeJsonStringify } from '../src/modules/production/template/production-template.types.js';
+import {
+  safeJsonStringify,
+  toProductionTemplateDto,
+  toProductionTemplateListItemDto,
+} from '../src/modules/production/template/production-template.types.js';
+import { toProductionTemplateSpecificationDto } from '../src/modules/production/template-specification/production-template-specification.types.js';
+import { toProductionTemplateStageDto } from '../src/modules/production/template-stage/production-template-stage.types.js';
 import { toStageMaterialDto } from '../src/modules/production/template-stage-material/production-template-stage-material.types.js';
 import { toStageAttachmentDto } from '../src/modules/production/template-stage-attachment/production-template-stage-attachment.types.js';
 
@@ -47,9 +53,16 @@ import { InventoryProductUnitEntity } from '../src/modules/inventory/product/inv
 
 // Services
 import { InventoryProductReferenceService } from '../src/modules/inventory/product/inventory-product-reference.service.js';
+import { ProductionTemplateGuardService } from '../src/modules/production/template/production-template-guard.service.js';
+import { ProductionTemplateService } from '../src/modules/production/template/production-template.service.js';
+import { ProductionTemplateStageService } from '../src/modules/production/template-stage/production-template-stage.service.js';
+import { ProductionTemplateSpecificationService } from '../src/modules/production/template-specification/production-template-specification.service.js';
+import { ProductionTemplateStageMaterialService } from '../src/modules/production/template-stage-material/production-template-stage-material.service.js';
+import { ProductionTemplateStageAttachmentService } from '../src/modules/production/template-stage-attachment/production-template-stage-attachment.service.js';
 import {
   TemplateStageAttachmentStorageService,
   ATTACHMENT_MAX_FILE_SIZE_BYTES,
+  ALLOWED_MIME_EXTENSIONS_MAP,
 } from '../src/modules/production/template-stage-attachment/template-stage-attachment-storage.service.js';
 import { BusinessRuleError } from '../src/common/errors/business-rule.error.js';
 import { NotFoundError } from '../src/common/errors/not-found.error.js';
@@ -86,7 +99,7 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       assert.strictEqual(fs.existsSync(path.join(baseProd, 'template-stage-attachment')), true);
     });
 
-    it('verifies databaseConfig includes all 5 production template entities and migrations 008, 009', () => {
+    it('verifies databaseConfig includes all 5 production template entities and migrations 008, 009, 010', () => {
       const entities = (databaseConfig.entities as Function[]).map((e) => e.name);
       assert.ok(entities.includes('ProductionTemplateEntity'));
       assert.ok(entities.includes('ProductionTemplateSpecificationEntity'));
@@ -97,6 +110,7 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       const migrations = (databaseConfig.migrations as Function[]).map((m) => m.name);
       assert.ok(migrations.includes('MigrateStudiesToProductionTemplateTables1710000000008'));
       assert.ok(migrations.includes('HardenProductionTemplateCoreAndStageAttachments1710000000009'));
+      assert.ok(migrations.includes('FinalizeProductionTemplateHardening1710000000010'));
     });
   });
 
@@ -1082,5 +1096,647 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       assert.strictEqual(result.items.length, 100);
     });
   });
+
+  // =========================================================================
+  // 10. Storage Service Lifecycle, Rollback & Path Containment Invariants
+  // =========================================================================
+  describe('10. Storage Service Lifecycle, Rollback & Path Containment Invariants', () => {
+    const testStorageDir = path.resolve(process.cwd(), 'storage/test-hardening-attachments');
+    const testUploadsDir = path.resolve(process.cwd(), 'storage/test-hardening-uploads');
+
+    const setupDirs = () => {
+      if (!fs.existsSync(testStorageDir)) fs.mkdirSync(testStorageDir, { recursive: true });
+      if (!fs.existsSync(testUploadsDir)) fs.mkdirSync(testUploadsDir, { recursive: true });
+    };
+
+    const cleanupDirs = () => {
+      if (fs.existsSync(testStorageDir)) fs.rmSync(testStorageDir, { recursive: true, force: true });
+      if (fs.existsSync(testUploadsDir)) fs.rmSync(testUploadsDir, { recursive: true, force: true });
+    };
+
+    it('rejects MIME/extension mismatch (file.pdf with image/jpeg) and deletes temp file', async () => {
+      setupDirs();
+      const storage = new TemplateStageAttachmentStorageService(testStorageDir);
+      const tempFile = path.join(testUploadsDir, 'fake-mismatch.pdf');
+      fs.writeFileSync(tempFile, 'not-a-real-pdf');
+      assert.strictEqual(fs.existsSync(tempFile), true);
+
+      await assert.rejects(
+        async () => {
+          await storage.saveFile('stage-1', {
+            originalname: 'fake-mismatch.pdf',
+            mimetype: 'image/jpeg', // mismatch!
+            size: 15,
+            path: tempFile,
+          });
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'ATTACHMENT_MIME_EXTENSION_MISMATCH');
+          return true;
+        }
+      );
+
+      // Verify temp file was cleaned up on validation failure
+      assert.strictEqual(fs.existsSync(tempFile), false, 'Temp file must be deleted on MIME mismatch');
+      cleanupDirs();
+    });
+
+    it('rejects unsupported extension (file.exe) and deletes temp file', async () => {
+      setupDirs();
+      const storage = new TemplateStageAttachmentStorageService(testStorageDir);
+      const tempFile = path.join(testUploadsDir, 'malware.exe');
+      fs.writeFileSync(tempFile, 'mz-header');
+
+      await assert.rejects(
+        async () => {
+          await storage.saveFile('stage-1', {
+            originalname: 'malware.exe',
+            mimetype: 'application/pdf',
+            size: 9,
+            path: tempFile,
+          });
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'ATTACHMENT_UNSUPPORTED_EXTENSION');
+          return true;
+        }
+      );
+
+      assert.strictEqual(fs.existsSync(tempFile), false, 'Temp file must be deleted on unsupported extension');
+      cleanupDirs();
+    });
+
+    it('enforces path traversal containment via path.relative check', () => {
+      setupDirs();
+      const storage = new TemplateStageAttachmentStorageService(testStorageDir);
+
+      assert.throws(
+        () => storage.resolveAbsolutePath('../evil.pdf'),
+        (err: any) => {
+          assert.ok(err.code === 'ATTACHMENT_PATH_TRAVERSAL' || err.code === 'ATTACHMENT_INVALID_KEY');
+          return true;
+        }
+      );
+
+      assert.throws(
+        () => storage.resolveAbsolutePath('..\\evil.pdf'),
+        (err: any) => {
+          assert.ok(err.code === 'ATTACHMENT_PATH_TRAVERSAL' || err.code === 'ATTACHMENT_INVALID_KEY');
+          return true;
+        }
+      );
+      cleanupDirs();
+    });
+
+    it('cleans up final file and temp file if DB transaction fails after storage save', async () => {
+      setupDirs();
+      const storage = new TemplateStageAttachmentStorageService(testStorageDir);
+      const tempFile = path.join(testUploadsDir, 'test-rollback.pdf');
+      fs.writeFileSync(tempFile, '%PDF-1.4 dummy content');
+
+      // Mock DataSource that fails on manager.save
+      let capturedStorageKey: string | null = null;
+      const mockManager = {
+        findOne: async (entity: any, opts: any) => {
+          if (entity === ProductionTemplateEntity) return { id: 'tmpl-1', deletedAt: null };
+          if (entity === ProductionTemplateStageEntity) return { id: 'stage-1', templateId: 'tmpl-1', deletedAt: null };
+          return null;
+        },
+        count: async () => 0,
+        create: (entity: any, data: any) => {
+          capturedStorageKey = data.storageKey;
+          return { id: 'att-1', ...data };
+        },
+        save: async () => {
+          throw new Error('Database connection killed during save');
+        },
+      };
+
+      const mockDataSource = {
+        transaction: async (cb: any) => cb(mockManager),
+        getRepository: () => ({}),
+      } as any;
+
+      const attachmentService = new ProductionTemplateStageAttachmentService(
+        mockDataSource,
+        storage,
+        new ProductionTemplateGuardService(mockDataSource)
+      );
+
+      await assert.rejects(
+        async () => {
+          await attachmentService.addStageAttachment(
+            'tmpl-1',
+            'stage-1',
+            {
+              originalname: 'test-rollback.pdf',
+              mimetype: 'application/pdf',
+              size: 21,
+              path: tempFile,
+            },
+            'rollback test'
+          );
+        },
+        (err: any) => {
+          assert.strictEqual(err.message, 'Database connection killed during save');
+          return true;
+        }
+      );
+
+      // Verify temp file is deleted
+      assert.strictEqual(fs.existsSync(tempFile), false, 'Temp file must be deleted on DB failure');
+
+      // Verify final file was rolled back / deleted from final storage
+      assert.ok(capturedStorageKey, 'Storage key must have been generated before failure');
+      const finalPhysicalPath = path.resolve(testStorageDir, capturedStorageKey!);
+      assert.strictEqual(fs.existsSync(finalPhysicalPath), false, 'Final stored file must be deleted on DB failure');
+
+      cleanupDirs();
+    });
+
+    it('successful upload keeps final file and deletes temp file', async () => {
+      setupDirs();
+      const storage = new TemplateStageAttachmentStorageService(testStorageDir);
+      const tempFile = path.join(testUploadsDir, 'valid-document.pdf');
+      fs.writeFileSync(tempFile, '%PDF-1.4 valid content');
+
+      let savedRecord: any = null;
+      const mockManager = {
+        findOne: async (entity: any) => {
+          if (entity === ProductionTemplateEntity) return { id: 'tmpl-1', deletedAt: null };
+          if (entity === ProductionTemplateStageEntity) return { id: 'stage-1', templateId: 'tmpl-1', deletedAt: null };
+          return null;
+        },
+        count: async () => 0,
+        create: (entity: any, data: any) => ({ id: 'att-100', ...data }),
+        save: async (entity: any) => {
+          savedRecord = { ...entity, createdAt: new Date(), updatedAt: new Date() };
+          return savedRecord;
+        },
+      };
+
+      const mockDataSource = {
+        transaction: async (cb: any) => cb(mockManager),
+        getRepository: () => ({}),
+      } as any;
+
+      const attachmentService = new ProductionTemplateStageAttachmentService(
+        mockDataSource,
+        storage,
+        new ProductionTemplateGuardService(mockDataSource)
+      );
+
+      const result = await attachmentService.addStageAttachment(
+        'tmpl-1',
+        'stage-1',
+        {
+          originalname: 'valid-document.pdf',
+          mimetype: 'application/pdf',
+          size: 23,
+          path: tempFile,
+        },
+        'successful upload'
+      );
+
+      assert.strictEqual(result.id, 'att-100');
+      assert.strictEqual(fs.existsSync(tempFile), false, 'Temp file must be deleted on success');
+
+      const finalPath = storage.resolveAbsolutePath(savedRecord.storageKey);
+      assert.strictEqual(fs.existsSync(finalPath), true, 'Final physical file must exist on disk');
+
+      cleanupDirs();
+    });
+
+    it('soft delete does NOT physically delete the stored file', async () => {
+      setupDirs();
+      const storage = new TemplateStageAttachmentStorageService(testStorageDir);
+
+      // Create physical file
+      const stored = await storage.saveFile('stage-1', {
+        originalname: 'doc.pdf',
+        mimetype: 'application/pdf',
+        size: 10,
+        buffer: Buffer.from('%PDF-1.4 test'),
+      });
+      const finalPath = storage.resolveAbsolutePath(stored.storageKey);
+      assert.strictEqual(fs.existsSync(finalPath), true);
+
+      let softDeleteCalled = false;
+      const mockManager = {
+        findOne: async (entity: any) => {
+          if (entity === ProductionTemplateEntity) return { id: 'tmpl-1', deletedAt: null };
+          if (entity === ProductionTemplateStageEntity) return { id: 'stage-1', templateId: 'tmpl-1', deletedAt: null };
+          if (entity === ProductionTemplateStageAttachmentEntity) {
+            return { id: 'att-1', stageId: 'stage-1', storageKey: stored.storageKey, deletedAt: null };
+          }
+          return null;
+        },
+        softDelete: async () => {
+          softDeleteCalled = true;
+        },
+        find: async () => [],
+      };
+
+      const mockDataSource = {
+        transaction: async (cb: any) => cb(mockManager),
+        getRepository: () => ({}),
+      } as any;
+
+      const attachmentService = new ProductionTemplateStageAttachmentService(
+        mockDataSource,
+        storage,
+        new ProductionTemplateGuardService(mockDataSource)
+      );
+
+      await attachmentService.softDeleteStageAttachment('tmpl-1', 'stage-1', 'att-1');
+
+      assert.strictEqual(softDeleteCalled, true);
+      assert.strictEqual(fs.existsSync(finalPath), true, 'Physical file must remain on disk after soft delete');
+      cleanupDirs();
+    });
+
+    it('download fails closed with ATTACHMENT_FILE_MISSING when physical file is missing', async () => {
+      setupDirs();
+      const storage = new TemplateStageAttachmentStorageService(testStorageDir);
+
+      const mockDataSource = {
+        getRepository: (entity: any) => {
+          if (entity === ProductionTemplateEntity) {
+            return { findOne: async () => ({ id: 'tmpl-1', deletedAt: null }) };
+          }
+          if (entity === ProductionTemplateStageEntity) {
+            return { findOne: async () => ({ id: 'stage-1', templateId: 'tmpl-1', deletedAt: null }) };
+          }
+          if (entity === ProductionTemplateStageAttachmentEntity) {
+            return {
+              findOne: async () => ({
+                id: 'att-missing',
+                stageId: 'stage-1',
+                storageKey: 'production-template-stage/stage-1/non-existent-uuid.pdf',
+                deletedAt: null,
+              }),
+            };
+          }
+          return {};
+        },
+      } as any;
+
+      const attachmentService = new ProductionTemplateStageAttachmentService(
+        mockDataSource,
+        storage,
+        new ProductionTemplateGuardService(mockDataSource)
+      );
+
+      await assert.rejects(
+        async () => {
+          await attachmentService.getAttachmentForDownload('tmpl-1', 'stage-1', 'att-missing');
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'ATTACHMENT_FILE_MISSING');
+          return true;
+        }
+      );
+
+      cleanupDirs();
+    });
+  });
+
+  // =========================================================================
+  // 11. Public API DTO Boundaries & Entity Exposure Prohibition
+  // =========================================================================
+  describe('11. Public API DTO Boundaries & Entity Exposure Prohibition', () => {
+    it('toProductionTemplateStageDto strictly omits internal department fields', () => {
+      const mockStageEntity = {
+        id: 'stg-1',
+        templateId: 'tmpl-1',
+        departmentId: 'dept-1',
+        name: 'Iron Bending',
+        description: 'Prepare rebar',
+        sortOrder: 1,
+        estimatedDurationMinutes: 120,
+        estimatedCost: '500.0000',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        department: {
+          id: 'dept-1',
+          name: 'Iron Department',
+          code: 'FE',
+          headUserId: 'usr-admin-id',
+          isActive: true,
+          deletedAt: null,
+          engineers: [{ id: 'eng-1' }],
+          yards: [{ id: 'yard-1' }],
+          headUser: { id: 'usr-1', username: 'john' },
+        },
+      } as unknown as ProductionTemplateStageEntity;
+
+      const dto = toProductionTemplateStageDto(mockStageEntity);
+
+      // Verify minimal department fields exist
+      assert.strictEqual(dto.id, 'stg-1');
+      assert.strictEqual(dto.department?.id, 'dept-1');
+      assert.strictEqual(dto.department?.name, 'Iron Department');
+      assert.strictEqual(dto.department?.code, 'FE');
+
+      // Verify internal security and administrative fields are strictly absent
+      assert.strictEqual('headUserId' in (dto.department as any), false, 'headUserId must never leak');
+      assert.strictEqual('isActive' in (dto.department as any), false, 'isActive must never leak');
+      assert.strictEqual('deletedAt' in (dto.department as any), false, 'deletedAt must never leak');
+      assert.strictEqual('engineers' in (dto.department as any), false, 'engineers relation must never leak');
+      assert.strictEqual('yards' in (dto.department as any), false, 'yards relation must never leak');
+      assert.strictEqual('headUser' in (dto.department as any), false, 'headUser relation must never leak');
+    });
+
+    it('toProductionTemplateDto returns clean DTO without internal ORM entity relations', () => {
+      const mockEntity = {
+        id: 'tmpl-1',
+        name: 'Standard Room',
+        code: 'STD-01',
+        referenceNumber: 'REF-100',
+        description: 'Room desc',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        stages: [{ id: 'stg-1' }],
+        specifications: [{ id: 'spec-1' }],
+      } as unknown as ProductionTemplateEntity;
+
+      const dto = toProductionTemplateDto(mockEntity);
+      assert.strictEqual(dto.id, 'tmpl-1');
+      assert.strictEqual(dto.name, 'Standard Room');
+      assert.strictEqual(dto.code, 'STD-01');
+      assert.strictEqual('stages' in dto, false);
+      assert.strictEqual('specifications' in dto, false);
+    });
+
+    it('toProductionTemplateListItemDto returns clean item with counts and without entity relations', () => {
+      const mockEntity = {
+        id: 'tmpl-2',
+        name: 'Vip Room',
+        code: 'VIP-01',
+        referenceNumber: null,
+        description: null,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as ProductionTemplateEntity;
+
+      const dto = toProductionTemplateListItemDto(mockEntity, 4, 2);
+      assert.strictEqual(dto.id, 'tmpl-2');
+      assert.strictEqual(dto.stagesCount, 4);
+      assert.strictEqual(dto.specsCount, 2);
+      assert.strictEqual('stages' in dto, false);
+    });
+
+    it('toProductionTemplateSpecificationDto returns pure DTO', () => {
+      const mockSpecEntity = {
+        id: 'spec-1',
+        templateId: 'tmpl-1',
+        name: 'Length',
+        value: '6.5',
+        unit: 'm',
+        sortOrder: 1,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        template: { id: 'tmpl-1' },
+      } as unknown as ProductionTemplateSpecificationEntity;
+
+      const dto = toProductionTemplateSpecificationDto(mockSpecEntity);
+      assert.strictEqual(dto.id, 'spec-1');
+      assert.strictEqual(dto.name, 'Length');
+      assert.strictEqual(dto.value, '6.5');
+      assert.strictEqual(dto.unit, 'm');
+      assert.strictEqual('template' in dto, false, 'Template entity relation must never be returned');
+    });
+  });
+
+  // =========================================================================
+  // 12. Parent Template Lifecycle Protection & Archived State Immutability
+  // =========================================================================
+  describe('12. Parent Template Lifecycle Protection & Archived State Immutability', () => {
+    it('ProductionTemplateGuardService rejects operations on archived template (deletedAt != null)', async () => {
+      const mockRepo = {
+        findOne: async (opts: any) => {
+          // If deletedAt is checked with IsNull(), archived record returns null
+          return null;
+        },
+      } as any;
+
+      const mockDataSource = {
+        getRepository: () => mockRepo,
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDataSource);
+
+      await assert.rejects(
+        async () => {
+          await guard.requireExistingTemplate('archived-template-id');
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+
+      await assert.rejects(
+        async () => {
+          await guard.requireMutableTemplate('archived-template-id');
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+
+      await assert.rejects(
+        async () => {
+          await guard.requireStageBelongsToTemplate('archived-template-id', 'stg-1');
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+    });
+
+    const mockDs = {
+      getRepository: () => ({
+        findOne: async () => null,
+        find: async () => [],
+      }),
+    } as any;
+
+    it('Stage Service blocks updating a stage if parent template is archived', async () => {
+      const mockGuard = {
+        requireExistingTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+        requireMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+      } as any;
+
+      const stageService = new ProductionTemplateStageService(
+        mockDs,
+        {} as any,
+        mockGuard
+      );
+
+      await assert.rejects(
+        async () => {
+          await stageService.updateStage('archived-template-id', 'stg-1', { name: 'New Name' });
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+    });
+
+    it('Planned Material Service blocks operations if parent template is archived', async () => {
+      const mockGuard = {
+        requireExistingTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+        requireMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+      } as any;
+
+      const matService = new ProductionTemplateStageMaterialService(
+        mockDs,
+        {} as any,
+        mockGuard
+      );
+
+      await assert.rejects(
+        async () => {
+          await matService.addPlannedMaterial('archived-template-id', 'stg-1', {
+            productId: 'p-1',
+            productUnitId: 'u-1',
+            plannedQuantity: '10',
+          });
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+
+      await assert.rejects(
+        async () => {
+          await matService.listStageMaterials('archived-template-id', 'stg-1');
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+    });
+
+    it('Specification Service blocks operations if parent template is archived', async () => {
+      const mockGuard = {
+        requireExistingTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+        requireMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+      } as any;
+
+      const specService = new ProductionTemplateSpecificationService(
+        mockDs,
+        mockGuard
+      );
+
+      await assert.rejects(
+        async () => {
+          await specService.updateSpecification('archived-template-id', 'spec-1', { name: 'Width' });
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+
+      await assert.rejects(
+        async () => {
+          await specService.listSpecifications('archived-template-id');
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+    });
+
+    it('Attachment Service blocks download and mutations if parent template is archived', async () => {
+      const mockGuard = {
+        requireExistingTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+        requireMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+      } as any;
+
+      const attService = new ProductionTemplateStageAttachmentService(
+        mockDs,
+        {} as any,
+        mockGuard
+      );
+
+      await assert.rejects(
+        async () => {
+          await attService.getAttachmentForDownload('archived-template-id', 'stg-1', 'att-1');
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+
+      await assert.rejects(
+        async () => {
+          await attService.listStageAttachments('archived-template-id', 'stg-1');
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+    });
+  });
+
+  // =========================================================================
+  // 13. Attachment Server-Side Description Validation
+  // =========================================================================
+  describe('13. Attachment Server-Side Description Validation', () => {
+    it('rejects description longer than 500 characters and deletes temp file', async () => {
+      const tempUploads = path.resolve(process.cwd(), 'storage/test-desc-uploads');
+      if (!fs.existsSync(tempUploads)) fs.mkdirSync(tempUploads, { recursive: true });
+
+      const tempFile = path.join(tempUploads, 'sample.pdf');
+      fs.writeFileSync(tempFile, '%PDF-1.4 sample content');
+
+      const storage = new TemplateStageAttachmentStorageService();
+      const mockDs = { getRepository: () => ({ findOne: async () => null, find: async () => [] }) } as any;
+      const attService = new ProductionTemplateStageAttachmentService(
+        mockDs,
+        storage,
+        new ProductionTemplateGuardService(mockDs)
+      );
+
+      const longDesc = 'A'.repeat(501);
+
+      await assert.rejects(
+        async () => {
+          await attService.addStageAttachment(
+            'tmpl-1',
+            'stg-1',
+            {
+              originalname: 'sample.pdf',
+              mimetype: 'application/pdf',
+              size: 20,
+              path: tempFile,
+            },
+            longDesc
+          );
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'STAGE_ATTACHMENT_DESCRIPTION_TOO_LONG');
+          return true;
+        }
+      );
+
+      assert.strictEqual(fs.existsSync(tempFile), false, 'Temp file must be deleted on description validation failure');
+      if (fs.existsSync(tempUploads)) fs.rmSync(tempUploads, { recursive: true, force: true });
+    });
+  });
 });
+
 

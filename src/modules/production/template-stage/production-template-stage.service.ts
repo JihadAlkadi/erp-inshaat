@@ -3,29 +3,42 @@ import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionTemplateEntity } from '../template/production-template.entity.js';
 import { ProductionTemplateStageEntity } from './production-template-stage.entity.js';
 import {
+  ProductionTemplateGuardService,
+  productionTemplateGuardService,
+} from '../template/production-template-guard.service.js';
+import {
   ProductionDepartmentService,
   productionDepartmentService,
 } from '../department/production-department.service.js';
 import { CreateTemplateStageDto } from './dto/create-stage.dto.js';
 import { UpdateTemplateStageDto } from './dto/update-stage.dto.js';
 import { ReorderTemplateStagesDto } from './dto/reorder-stages.dto.js';
+import {
+  ProductionTemplateStageDto,
+  toProductionTemplateStageDto,
+} from './production-template-stage.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 
 export class ProductionTemplateStageService {
   private stageRepo: Repository<ProductionTemplateStageEntity>;
   private departmentService: ProductionDepartmentService;
+  private guardService: ProductionTemplateGuardService;
 
   constructor(
     private dataSource: DataSource = AppDataSource,
-    deptService: ProductionDepartmentService = productionDepartmentService
+    deptService: ProductionDepartmentService = productionDepartmentService,
+    guardService: ProductionTemplateGuardService = productionTemplateGuardService
   ) {
     this.stageRepo = this.dataSource.getRepository(ProductionTemplateStageEntity);
     this.departmentService = deptService;
+    this.guardService = guardService;
   }
 
-  async listStages(templateId: string): Promise<ProductionTemplateStageEntity[]> {
-    return await this.stageRepo.find({
+  async listStages(templateId: string): Promise<ProductionTemplateStageDto[]> {
+    await this.guardService.requireExistingTemplate(templateId);
+
+    const stages = await this.stageRepo.find({
       where: { templateId, deletedAt: IsNull() },
       relations: {
         department: true,
@@ -36,9 +49,13 @@ export class ProductionTemplateStageService {
       },
       order: { sortOrder: 'ASC' },
     });
+
+    return stages.map(toProductionTemplateStageDto);
   }
 
-  async getStageById(templateId: string, stageId: string): Promise<ProductionTemplateStageEntity> {
+  async getStageById(templateId: string, stageId: string): Promise<ProductionTemplateStageDto> {
+    await this.guardService.requireExistingTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
       relations: {
@@ -54,10 +71,10 @@ export class ProductionTemplateStageService {
       throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
     }
 
-    return stage;
+    return toProductionTemplateStageDto(stage);
   }
 
-  async addStage(templateId: string, dto: CreateTemplateStageDto): Promise<ProductionTemplateStageEntity> {
+  async addStage(templateId: string, dto: CreateTemplateStageDto): Promise<ProductionTemplateStageDto> {
     // 1. Cross-module boundary: validate department via department service
     await this.departmentService.validateDepartmentForStage(dto.departmentId);
 
@@ -68,7 +85,7 @@ export class ProductionTemplateStageService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
       }
 
       // Read current active stages under lock
@@ -107,10 +124,12 @@ export class ProductionTemplateStageService {
 
       const savedStage = await manager.save(stage);
 
-      return await manager.findOneOrFail(ProductionTemplateStageEntity, {
+      const reloaded = await manager.findOneOrFail(ProductionTemplateStageEntity, {
         where: { id: savedStage.id },
         relations: { department: true },
       });
+
+      return toProductionTemplateStageDto(reloaded);
     });
   }
 
@@ -118,7 +137,9 @@ export class ProductionTemplateStageService {
     templateId: string,
     stageId: string,
     dto: UpdateTemplateStageDto
-  ): Promise<ProductionTemplateStageEntity> {
+  ): Promise<ProductionTemplateStageDto> {
+    await this.guardService.requireMutableTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -138,21 +159,23 @@ export class ProductionTemplateStageService {
 
     await this.stageRepo.save(stage);
 
-    return await this.stageRepo.findOneOrFail({
+    const reloaded = await this.stageRepo.findOneOrFail({
       where: { id: stageId },
       relations: { department: true },
     });
+
+    return toProductionTemplateStageDto(reloaded);
   }
 
   async softDeleteStage(templateId: string, stageId: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      // 1. Lock template row
+      // 1. Lock template row & verify not archived
       const template = await manager.findOne(ProductionTemplateEntity, {
         where: { id: templateId, deletedAt: IsNull() },
         lock: { mode: 'pessimistic_write' },
       });
       if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
       }
 
       const stage = await manager.findOne(ProductionTemplateStageEntity, {
@@ -184,15 +207,15 @@ export class ProductionTemplateStageService {
   async reorderStages(
     templateId: string,
     dto: ReorderTemplateStagesDto
-  ): Promise<ProductionTemplateStageEntity[]> {
+  ): Promise<ProductionTemplateStageDto[]> {
     return await this.dataSource.transaction(async (manager) => {
-      // 1. Lock template row
+      // 1. Lock template row & verify not archived
       const template = await manager.findOne(ProductionTemplateEntity, {
         where: { id: templateId, deletedAt: IsNull() },
         lock: { mode: 'pessimistic_write' },
       });
       if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
       }
 
       // 2. Lock active stages for this template
@@ -232,13 +255,16 @@ export class ProductionTemplateStageService {
         );
       }
 
-      return await manager.find(ProductionTemplateStageEntity, {
+      const updated = await manager.find(ProductionTemplateStageEntity, {
         where: { templateId, deletedAt: IsNull() },
         relations: { department: true },
         order: { sortOrder: 'ASC' },
       });
+
+      return updated.map(toProductionTemplateStageDto);
     });
   }
 }
 
 export const productionTemplateStageService = new ProductionTemplateStageService();
+

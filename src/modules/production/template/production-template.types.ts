@@ -1,5 +1,16 @@
 import { ProductionTemplateEntity } from './production-template.entity.js';
 
+export interface ProductionTemplateDto {
+  id: string;
+  name: string;
+  code: string;
+  referenceNumber: string | null;
+  description: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ProductionTemplateListItemDto {
   id: string;
   name: string;
@@ -13,13 +24,46 @@ export interface ProductionTemplateListItemDto {
   updatedAt: Date;
 }
 
+export function toProductionTemplateDto(entity: ProductionTemplateEntity): ProductionTemplateDto {
+  return {
+    id: entity.id,
+    name: entity.name,
+    code: entity.code,
+    referenceNumber: entity.referenceNumber,
+    description: entity.description,
+    isActive: entity.isActive,
+    createdAt: entity.createdAt,
+    updatedAt: entity.updatedAt,
+  };
+}
+
+export function toProductionTemplateListItemDto(
+  entity: ProductionTemplateEntity,
+  stagesCount = 0,
+  specsCount = 0
+): ProductionTemplateListItemDto {
+  return {
+    id: entity.id,
+    name: entity.name,
+    code: entity.code,
+    referenceNumber: entity.referenceNumber,
+    description: entity.description,
+    isActive: entity.isActive,
+    stagesCount,
+    specsCount,
+    createdAt: entity.createdAt,
+    updatedAt: entity.updatedAt,
+  };
+}
+
 export interface PaginatedProductionTemplatesResult {
-  items: Array<ProductionTemplateEntity & { stagesCount: number; specsCount: number }>;
+  items: ProductionTemplateListItemDto[];
   total: number;
   page: number;
   limit: number;
   totalPages: number;
 }
+
 
 export interface ProductionTemplateDetailSpecificationDto {
   id: string;

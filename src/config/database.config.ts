@@ -28,6 +28,7 @@ import { HardenInventoryCatalogConstraints1710000000006 } from '../database/migr
 import { CreateStudiesTemplateCoreTables1710000000007 } from '../database/migrations/1710000000007-CreateStudiesTemplateCoreTables.js';
 import { MigrateStudiesToProductionTemplateTables1710000000008 } from '../database/migrations/1710000000008-MigrateStudiesToProductionTemplateTables.js';
 import { HardenProductionTemplateCoreAndStageAttachments1710000000009 } from '../database/migrations/1710000000009-HardenProductionTemplateCoreAndStageAttachments.js';
+import { FinalizeProductionTemplateHardening1710000000010 } from '../database/migrations/1710000000010-FinalizeProductionTemplateHardening.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -69,6 +70,7 @@ export const databaseConfig: DataSourceOptions = {
     CreateStudiesTemplateCoreTables1710000000007,
     MigrateStudiesToProductionTemplateTables1710000000008,
     HardenProductionTemplateCoreAndStageAttachments1710000000009,
+    FinalizeProductionTemplateHardening1710000000010,
   ],
   subscribers: [],
 };

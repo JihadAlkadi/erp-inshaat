@@ -2,38 +2,55 @@ import { DataSource, Repository, IsNull } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionTemplateEntity } from '../template/production-template.entity.js';
 import { ProductionTemplateSpecificationEntity } from './production-template-specification.entity.js';
+import {
+  ProductionTemplateGuardService,
+  productionTemplateGuardService,
+} from '../template/production-template-guard.service.js';
 import { CreateTemplateSpecificationDto } from './dto/create-specification.dto.js';
 import { UpdateTemplateSpecificationDto } from './dto/update-specification.dto.js';
 import { ReorderTemplateSpecificationsDto } from './dto/reorder-specifications.dto.js';
+import {
+  ProductionTemplateSpecificationDto,
+  toProductionTemplateSpecificationDto,
+} from './production-template-specification.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 
 export class ProductionTemplateSpecificationService {
   private specRepo: Repository<ProductionTemplateSpecificationEntity>;
+  private guardService: ProductionTemplateGuardService;
 
-  constructor(private dataSource: DataSource = AppDataSource) {
+  constructor(
+    private dataSource: DataSource = AppDataSource,
+    guardService: ProductionTemplateGuardService = productionTemplateGuardService
+  ) {
     this.specRepo = this.dataSource.getRepository(ProductionTemplateSpecificationEntity);
+    this.guardService = guardService;
   }
 
-  async listSpecifications(templateId: string): Promise<ProductionTemplateSpecificationEntity[]> {
-    return await this.specRepo.find({
+  async listSpecifications(templateId: string): Promise<ProductionTemplateSpecificationDto[]> {
+    await this.guardService.requireExistingTemplate(templateId);
+
+    const specs = await this.specRepo.find({
       where: { templateId },
       order: { sortOrder: 'ASC' },
     });
+
+    return specs.map(toProductionTemplateSpecificationDto);
   }
 
   async addSpecification(
     templateId: string,
     dto: CreateTemplateSpecificationDto
-  ): Promise<ProductionTemplateSpecificationEntity> {
+  ): Promise<ProductionTemplateSpecificationDto> {
     return await this.dataSource.transaction(async (manager) => {
-      // 1. Lock template row explicitly
+      // 1. Lock template row explicitly & check not archived
       const template = await manager.findOne(ProductionTemplateEntity, {
         where: { id: templateId, deletedAt: IsNull() },
         lock: { mode: 'pessimistic_write' },
       });
       if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
       }
 
       // 2. Read current active specifications with lock
@@ -68,7 +85,8 @@ export class ProductionTemplateSpecificationService {
         sortOrder,
       });
 
-      return await manager.save(spec);
+      const saved = await manager.save(spec);
+      return toProductionTemplateSpecificationDto(saved);
     });
   }
 
@@ -76,7 +94,9 @@ export class ProductionTemplateSpecificationService {
     templateId: string,
     specId: string,
     dto: UpdateTemplateSpecificationDto
-  ): Promise<ProductionTemplateSpecificationEntity> {
+  ): Promise<ProductionTemplateSpecificationDto> {
+    await this.guardService.requireMutableTemplate(templateId);
+
     const spec = await this.specRepo.findOne({
       where: { id: specId, templateId },
     });
@@ -88,18 +108,19 @@ export class ProductionTemplateSpecificationService {
     if (dto.value !== undefined) spec.value = dto.value.trim();
     if (dto.unit !== undefined) spec.unit = dto.unit ? dto.unit.trim() : null;
 
-    return await this.specRepo.save(spec);
+    const saved = await this.specRepo.save(spec);
+    return toProductionTemplateSpecificationDto(saved);
   }
 
   async deleteSpecification(templateId: string, specId: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      // 1. Lock template row
+      // 1. Lock template row & verify not archived
       const template = await manager.findOne(ProductionTemplateEntity, {
         where: { id: templateId, deletedAt: IsNull() },
         lock: { mode: 'pessimistic_write' },
       });
       if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
       }
 
       const spec = await manager.findOne(ProductionTemplateSpecificationEntity, {
@@ -131,15 +152,15 @@ export class ProductionTemplateSpecificationService {
   async reorderSpecifications(
     templateId: string,
     dto: ReorderTemplateSpecificationsDto
-  ): Promise<ProductionTemplateSpecificationEntity[]> {
+  ): Promise<ProductionTemplateSpecificationDto[]> {
     return await this.dataSource.transaction(async (manager) => {
-      // 1. Lock template row
+      // 1. Lock template row & verify not archived
       const template = await manager.findOne(ProductionTemplateEntity, {
         where: { id: templateId, deletedAt: IsNull() },
         lock: { mode: 'pessimistic_write' },
       });
       if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
       }
 
       // 2. Lock active specifications
@@ -179,12 +200,15 @@ export class ProductionTemplateSpecificationService {
         );
       }
 
-      return await manager.find(ProductionTemplateSpecificationEntity, {
+      const updated = await manager.find(ProductionTemplateSpecificationEntity, {
         where: { templateId },
         order: { sortOrder: 'ASC' },
       });
+
+      return updated.map(toProductionTemplateSpecificationDto);
     });
   }
 }
 
 export const productionTemplateSpecificationService = new ProductionTemplateSpecificationService();
+

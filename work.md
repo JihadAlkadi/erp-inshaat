@@ -48,9 +48,30 @@
     > Runtime engineer/supervisor attachments will use a separate Production Stage attachment model in a later phase.
     - وثائق القالب المرجعية هي مخططات هندسية، صور، أو أدلة (PDF, PNG, JPG, WEBP بحد أقصى 20 ميغابايت) يضعها مصمم القالب.
     - مستقبلاً عند تنفيذ الغرفة في خط الإنتاج، سيكون للمهندس وثائق تنفيذ مستقلة `ProductionStageAttachment`.
-    - خدمة التخزين `TemplateStageAttachmentStorageService` تخزن الملفات خارج المجلدات العامة بمفاتيح مبهمة مولدة (`production-template-stage/${stageId}/${uuid}.${ext}`) مع حماية تامة ضد Path Traversal والتحقق من نوع MIME والامتداد وحظر الملفات التنفيذية.
-    - التنزيل محمي بالمصادقة والتحقق من التبعية وترويسة `X-Content-Type-Options: nosniff`.
-    - تستخدم الوثائق المرجعية الحذف الناعم (Soft Delete) لحفظ الجاهزية التاريخية لأخذ اللقطات مستقبلاً (Snapshot Readiness).
+    - خدمة التخزين `TemplateStageAttachmentStorageService` تخزن الملفات خارج المجلدات العامة بمفاتيح مبهمة مولدة (`production-template-stage/${stageId}/${uuid}.${ext}`) مع حماية تامة ضد Path Traversal باستخدام `path.relative`، والتحقق الصارم من تطابق نوع المحتوى والامتداد (MIME/Extension Compatibility Mapping)، وحظر الملفات التنفيذية.
+    - التنزيل محمي بالمصادقة والتحقق من التبعية وترويسة `X-Content-Type-Options: nosniff`، ويفشل مغلقاً بـ `ATTACHMENT_FILE_MISSING` إذا كان السجل موجوداً لكن الملف الفعلي مفقود.
+    - تستخدم الوثائق المرجعية الحذف الناعم (Soft Delete) لحفظ الجاهزية التاريخية لأخذ اللقطات مستقبلاً (Snapshot Readiness)، ولا يتم حذف الملف الفعلي نهائياً عند الأرشفة الناعمة.
+    - سلامة التراجع عن الرفع والملفات اليتيمة (Upload Rollback & Orphan File Prevention):
+      > Attachment upload is rollback-safe: temporary and final files are cleaned if validation or DB persistence fails.
+      - في حال فشل التحقق من الملف (MIME, Extension, Size, Description max 500 chars) يتم حذف ملف Multer المؤقت فوراً.
+      - في حال نجاح حفظ الملف في التخزين النهائي ثم فشل معاملة قاعدة البيانات (DB Transaction Failure)، يتم حذف الملف النهائي فوراً من التخزين وحذف الملف المؤقت منعاً لتراكم أي ملفات يتيمة على القرص.
+      - عند نجاح العملية بالكامل، يتم تنظيف ملف Multer المؤقت بشكل حتمي.
+  - **حدود واجهات برمجة التطبيقات ومنع تسريب الكيانات (API DTO Boundaries & Entity Exposure Prohibition)**:
+    > All public Production Template APIs return explicit DTOs and never expose ORM entities directly.
+    - كافة مسارات HTTP الخاصة بالقوالب والمواصفات والمراحل والمواد المخططة والوثائق المرجعية تعيد DTOs صريحة ومحددة (`ProductionTemplateDto`, `ProductionTemplateListItemDto`, `ProductionTemplateDetailDto`, `ProductionTemplateSpecificationDto`, `ProductionTemplateStageDto`, `ProductionTemplateStageMaterialDto`, `ProductionTemplateStageAttachmentDto`).
+    - يمنع كلياً إرجاع أي كائن TypeORM Entity مباشرة كعقد عام لـ API.
+    - واجهات المراحل تعيد كائن قسم مبسط `{ id, name, code }` ويحظر نهائياً تسريب أي حقول داخلية لإدارة الأقسام مثل `headUserId`, `isActive`, `deletedAt`, `engineers`, `yards`, `headUser`.
+  - **حماية دورة حياة القالب الأب والموارد التابعة (Parent Template Lifecycle Protection)**:
+    > Nested template resources are inaccessible once the parent template is archived.
+    - تم اعتماد `ProductionTemplateGuardService` لفرض قيود موحدة على مستوى العمليات والكيانات التابعة:
+      - `requireExistingTemplate`: للقراءة النشطة، يتحقق من `deletedAt IS NULL`.
+      - `requireMutableTemplate`: لكافة العمليات التعديلية، يمنع أي تعديل على قالب مؤرشف.
+      - `requireStageBelongsToTemplate`: يضمن انتماء المرحلة لقالب نشط وغير مؤرشف.
+    - أرشفة القالب الأب (`deletedAt != null`) تؤدي فوراً لحظر تعديل أو إضافة أو أرشفة أو إعادة ترتيب أي من موارده التابعة (المواصفات، المراحل، المواد المخططة، والوثائق المرجعية)، كما تحظر قراءة أو تنزيل الوثائق والمواد عبر واجهات القالب النشطة.
+  - **توحيد أسماء الفهارس وترقية المخطط (Schema Migration 0010 — Index Normalization)**:
+    - عبر Migration `1710000000010-FinalizeProductionTemplateHardening.ts`، تم استبدال وتوحيد كافة الفهارس القديمة التي كانت تحمل بادئة `studies_*` على الجداول الخمسة بالأسماء النظامية `production_*` (`UQ_production_template_code`, `IDX_production_template_*`, `IDX_production_stage_*`, `UQ_production_stage_material_stage_unit`).
+    - تم فحص المخطط للتأكد من عدم بقاء أي فهرس يحمل اسم `studies_*` بعد الترقية.
+    - تم استبعاد مجلد التخزين `storage/template-stage-attachments/*` في `.gitignore` مع الإبقاء على ملف `.gitkeep`.
   - **الصلاحيات والأمان (Permissions & Authorization Invariants)**:
     - صلاحيات القوالب تتبع موديول `production`:
       - `production.template.view`: تتيح استعراض القوالب والمواصفات والمراحل والمواد وتنزيل الوثائق المرجعية.

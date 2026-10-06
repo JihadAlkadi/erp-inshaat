@@ -9,6 +9,9 @@ import { ListProductionTemplatesQueryDto } from './dto/list-templates-query.dto.
 import {
   PaginatedProductionTemplatesResult,
   ProductionTemplateDetailDto,
+  ProductionTemplateDto,
+  toProductionTemplateDto,
+  toProductionTemplateListItemDto,
 } from './production-template.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
@@ -64,7 +67,7 @@ export class ProductionTemplateService {
       const raw = rawItems.raw[index];
       const stagesCount = parseInt(raw.stages_count || '0', 10);
       const specsCount = parseInt(raw.specs_count || '0', 10);
-      return Object.assign(entity, { stagesCount, specsCount });
+      return toProductionTemplateListItemDto(entity, stagesCount, specsCount);
     });
 
     return {
@@ -149,7 +152,7 @@ export class ProductionTemplateService {
     return template;
   }
 
-  async createTemplate(dto: CreateProductionTemplateDto): Promise<ProductionTemplateEntity> {
+  async createTemplate(dto: CreateProductionTemplateDto): Promise<ProductionTemplateDto> {
     const normalizedCode = dto.code.trim().toUpperCase();
 
     // Check code uniqueness including soft deleted records
@@ -170,7 +173,8 @@ export class ProductionTemplateService {
     });
 
     try {
-      return await this.templateRepo.save(template);
+      const saved = await this.templateRepo.save(template);
+      return toProductionTemplateDto(saved);
     } catch (err) {
       if (err instanceof QueryFailedError && (err as any).driverError?.errno === 1062) {
         throw new ConflictError('رمز القالب مستخدم مسبقاً', 'PRODUCTION_TEMPLATE_CODE_ALREADY_EXISTS');
@@ -179,7 +183,7 @@ export class ProductionTemplateService {
     }
   }
 
-  async updateTemplate(id: string, dto: UpdateProductionTemplateDto): Promise<ProductionTemplateEntity> {
+  async updateTemplate(id: string, dto: UpdateProductionTemplateDto): Promise<ProductionTemplateDto> {
     const template = await this.templateRepo.findOne({
       where: { id, deletedAt: IsNull() },
     });
@@ -200,7 +204,8 @@ export class ProductionTemplateService {
       template.isActive = dto.isActive;
     }
 
-    return await this.templateRepo.save(template);
+    const saved = await this.templateRepo.save(template);
+    return toProductionTemplateDto(saved);
   }
 
   async softDeleteTemplate(id: string): Promise<void> {

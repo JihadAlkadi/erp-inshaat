@@ -8,6 +8,10 @@ import {
   templateStageAttachmentStorageService,
 } from './template-stage-attachment-storage.service.js';
 import {
+  ProductionTemplateGuardService,
+  productionTemplateGuardService,
+} from '../template/production-template-guard.service.js';
+import {
   ProductionTemplateStageAttachmentDto,
   toStageAttachmentDto,
 } from './production-template-stage-attachment.types.js';
@@ -21,21 +25,26 @@ export class ProductionTemplateStageAttachmentService {
   private stageRepo: Repository<ProductionTemplateStageEntity>;
   private templateRepo: Repository<ProductionTemplateEntity>;
   private storageService: TemplateStageAttachmentStorageService;
+  private guardService: ProductionTemplateGuardService;
 
   constructor(
     private dataSource: DataSource = AppDataSource,
-    storageService: TemplateStageAttachmentStorageService = templateStageAttachmentStorageService
+    storageService: TemplateStageAttachmentStorageService = templateStageAttachmentStorageService,
+    guardService: ProductionTemplateGuardService = productionTemplateGuardService
   ) {
     this.attachmentRepo = this.dataSource.getRepository(ProductionTemplateStageAttachmentEntity);
     this.stageRepo = this.dataSource.getRepository(ProductionTemplateStageEntity);
     this.templateRepo = this.dataSource.getRepository(ProductionTemplateEntity);
     this.storageService = storageService;
+    this.guardService = guardService;
   }
 
   async listStageAttachments(
     templateId: string,
     stageId: string
   ): Promise<ProductionTemplateStageAttachmentDto[]> {
+    await this.guardService.requireExistingTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -68,47 +77,69 @@ export class ProductionTemplateStageAttachmentService {
       throw new BusinessRuleError('الملف مطلوب', 'STAGE_ATTACHMENT_FILE_MISSING');
     }
 
-    return await this.dataSource.transaction(async (manager) => {
-      // 1. Lock template to serialize concurrent attachment modifications
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+    // Server-side description validation
+    let cleanDescription: string | null = null;
+    if (description !== undefined && description !== null) {
+      const trimmed = description.trim();
+      if (trimmed.length > 500) {
+        await this.storageService.cleanupTemporaryFile(file.path);
+        throw new BusinessRuleError('وصف الوثيقة يجب ألا يتجاوز 500 حرف', 'STAGE_ATTACHMENT_DESCRIPTION_TOO_LONG');
       }
+      cleanDescription = trimmed.length > 0 ? trimmed : null;
+    }
 
-      const stage = await manager.findOne(ProductionTemplateStageEntity, {
-        where: { id: stageId, templateId, deletedAt: IsNull() },
+    let stored: { storageKey: string; sizeBytes: number; mimeType: string } | null = null;
+
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        // 1. Lock template to serialize concurrent attachment modifications & check active
+        const template = await manager.findOne(ProductionTemplateEntity, {
+          where: { id: templateId, deletedAt: IsNull() },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!template) {
+          throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        }
+
+        const stage = await manager.findOne(ProductionTemplateStageEntity, {
+          where: { id: stageId, templateId, deletedAt: IsNull() },
+        });
+        if (!stage) {
+          throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
+        }
+
+        // 2. Delegate file storage to storage service
+        stored = await this.storageService.saveFile(stageId, file);
+
+        // 3. Determine next dense sortOrder
+        const currentCount = await manager.count(ProductionTemplateStageAttachmentEntity, {
+          where: { stageId, deletedAt: IsNull() },
+        });
+        const nextSortOrder = currentCount + 1;
+
+        // 4. Save attachment record
+        const attachment = manager.create(ProductionTemplateStageAttachmentEntity, {
+          stageId,
+          originalFileName: file.originalname.slice(0, 255),
+          storageKey: stored.storageKey,
+          mimeType: stored.mimeType,
+          sizeBytes: stored.sizeBytes,
+          description: cleanDescription,
+          sortOrder: nextSortOrder,
+          createdByUserId: userId || null,
+        });
+
+        const saved = await manager.save(attachment);
+        return toStageAttachmentDto(saved, templateId);
       });
-      if (!stage) {
-        throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
+    } catch (err) {
+      // Rollback physical final file if DB transaction failed
+      if (stored) {
+        await this.storageService.deleteStoredFile((stored as { storageKey: string }).storageKey);
       }
-
-      // 2. Delegate file storage to storage service
-      const stored = await this.storageService.saveFile(stageId, file);
-
-      // 3. Determine next dense sortOrder
-      const currentCount = await manager.count(ProductionTemplateStageAttachmentEntity, {
-        where: { stageId, deletedAt: IsNull() },
-      });
-      const nextSortOrder = currentCount + 1;
-
-      // 4. Save attachment record
-      const attachment = manager.create(ProductionTemplateStageAttachmentEntity, {
-        stageId,
-        originalFileName: file.originalname.slice(0, 255),
-        storageKey: stored.storageKey,
-        mimeType: stored.mimeType,
-        sizeBytes: stored.sizeBytes,
-        description: description ? description.trim() : null,
-        sortOrder: nextSortOrder,
-        createdByUserId: userId || null,
-      });
-
-      const saved = await manager.save(attachment);
-      return toStageAttachmentDto(saved, templateId);
-    });
+      await this.storageService.cleanupTemporaryFile(file.path);
+      throw err;
+    }
   }
 
   async updateStageAttachment(
@@ -117,6 +148,8 @@ export class ProductionTemplateStageAttachmentService {
     attachmentId: string,
     dto: UpdateStageAttachmentDto
   ): Promise<ProductionTemplateStageAttachmentDto> {
+    await this.guardService.requireMutableTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -145,13 +178,13 @@ export class ProductionTemplateStageAttachmentService {
     attachmentId: string
   ): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      // 1. Lock template
+      // 1. Lock template & verify not archived
       const template = await manager.findOne(ProductionTemplateEntity, {
         where: { id: templateId, deletedAt: IsNull() },
         lock: { mode: 'pessimistic_write' },
       });
       if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
       }
 
       const stage = await manager.findOne(ProductionTemplateStageEntity, {
@@ -168,7 +201,7 @@ export class ProductionTemplateStageAttachmentService {
         throw new NotFoundError('الوثيقة المرفقة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_ATTACHMENT_NOT_FOUND');
       }
 
-      // Soft delete: sets deletedAt
+      // Soft delete: sets deletedAt (physical file is preserved)
       await manager.softDelete(ProductionTemplateStageAttachmentEntity, attachmentId);
 
       // 2. Compact remaining attachments into dense 1..N order
@@ -193,13 +226,13 @@ export class ProductionTemplateStageAttachmentService {
     dto: ReorderStageAttachmentsDto
   ): Promise<ProductionTemplateStageAttachmentDto[]> {
     return await this.dataSource.transaction(async (manager) => {
-      // 1. Lock template
+      // 1. Lock template & verify not archived
       const template = await manager.findOne(ProductionTemplateEntity, {
         where: { id: templateId, deletedAt: IsNull() },
         lock: { mode: 'pessimistic_write' },
       });
       if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
       }
 
       const stage = await manager.findOne(ProductionTemplateStageEntity, {
@@ -261,6 +294,8 @@ export class ProductionTemplateStageAttachmentService {
     stageId: string,
     attachmentId: string
   ): Promise<{ attachment: ProductionTemplateStageAttachmentEntity; absoluteFilePath: string }> {
+    await this.guardService.requireExistingTemplate(templateId);
+
     const stage = await this.stageRepo.findOne({
       where: { id: stageId, templateId, deletedAt: IsNull() },
     });
@@ -275,6 +310,10 @@ export class ProductionTemplateStageAttachmentService {
       throw new NotFoundError('الوثيقة المرفقة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_ATTACHMENT_NOT_FOUND');
     }
 
+    if (!this.storageService.fileExists(attachment.storageKey)) {
+      throw new NotFoundError('الملف الفعلي للوثيقة غير متوفر على الخادم', 'ATTACHMENT_FILE_MISSING');
+    }
+
     const absoluteFilePath = this.storageService.resolveAbsolutePath(attachment.storageKey);
     return {
       attachment,
@@ -284,3 +323,4 @@ export class ProductionTemplateStageAttachmentService {
 }
 
 export const productionTemplateStageAttachmentService = new ProductionTemplateStageAttachmentService();
+
