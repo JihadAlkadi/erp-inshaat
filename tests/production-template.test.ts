@@ -23,24 +23,34 @@ import { CreateTemplateStageDto } from '../src/modules/production/template-stage
 import { UpdateTemplateStageDto } from '../src/modules/production/template-stage/dto/update-stage.dto.js';
 import { ReorderTemplateStagesDto } from '../src/modules/production/template-stage/dto/reorder-stages.dto.js';
 import { CreateTemplateSpecificationDto } from '../src/modules/production/template-specification/dto/create-specification.dto.js';
+import { UpdateTemplateSpecificationDto } from '../src/modules/production/template-specification/dto/update-specification.dto.js';
 import { ReorderTemplateSpecificationsDto } from '../src/modules/production/template-specification/dto/reorder-specifications.dto.js';
 import { AddTemplateStageMaterialDto } from '../src/modules/production/template-stage-material/dto/add-stage-material.dto.js';
 import { UpdateTemplateStageMaterialDto } from '../src/modules/production/template-stage-material/dto/update-stage-material.dto.js';
+import { UpdateStageAttachmentDto } from '../src/modules/production/template-stage-attachment/dto/update-stage-attachment.dto.js';
+import { ReorderStageAttachmentsDto } from '../src/modules/production/template-stage-attachment/dto/reorder-stage-attachments.dto.js';
 
 // Helpers & Types
 import { calculateConsecutiveDepartmentGroups } from '../src/modules/production/template-stage/consecutive-department-grouping.helper.js';
 import { safeJsonStringify } from '../src/modules/production/template/production-template.types.js';
+import { toStageMaterialDto } from '../src/modules/production/template-stage-material/production-template-stage-material.types.js';
+import { toStageAttachmentDto } from '../src/modules/production/template-stage-attachment/production-template-stage-attachment.types.js';
 
 // Entities
 import { ProductionTemplateEntity } from '../src/modules/production/template/production-template.entity.js';
 import { ProductionTemplateStageEntity } from '../src/modules/production/template-stage/production-template-stage.entity.js';
 import { ProductionTemplateSpecificationEntity } from '../src/modules/production/template-specification/production-template-specification.entity.js';
 import { ProductionTemplateStageMaterialEntity } from '../src/modules/production/template-stage-material/production-template-stage-material.entity.js';
+import { ProductionTemplateStageAttachmentEntity } from '../src/modules/production/template-stage-attachment/production-template-stage-attachment.entity.js';
 import { InventoryProductEntity } from '../src/modules/inventory/product/inventory-product.entity.js';
 import { InventoryProductUnitEntity } from '../src/modules/inventory/product/inventory-product-unit.entity.js';
 
 // Services
 import { InventoryProductReferenceService } from '../src/modules/inventory/product/inventory-product-reference.service.js';
+import {
+  TemplateStageAttachmentStorageService,
+  ATTACHMENT_MAX_FILE_SIZE_BYTES,
+} from '../src/modules/production/template-stage-attachment/template-stage-attachment-storage.service.js';
 import { BusinessRuleError } from '../src/common/errors/business-rule.error.js';
 import { NotFoundError } from '../src/common/errors/not-found.error.js';
 
@@ -67,23 +77,26 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       );
     });
 
-    it('verifies 4 segregated submodules exist under src/modules/production/', () => {
+    it('verifies 5 segregated submodules exist under src/modules/production/', () => {
       const baseProd = path.resolve(process.cwd(), 'src/modules/production');
       assert.strictEqual(fs.existsSync(path.join(baseProd, 'template')), true);
       assert.strictEqual(fs.existsSync(path.join(baseProd, 'template-specification')), true);
       assert.strictEqual(fs.existsSync(path.join(baseProd, 'template-stage')), true);
       assert.strictEqual(fs.existsSync(path.join(baseProd, 'template-stage-material')), true);
+      assert.strictEqual(fs.existsSync(path.join(baseProd, 'template-stage-attachment')), true);
     });
 
-    it('verifies databaseConfig includes all 4 production template entities and migration 008', () => {
+    it('verifies databaseConfig includes all 5 production template entities and migrations 008, 009', () => {
       const entities = (databaseConfig.entities as Function[]).map((e) => e.name);
       assert.ok(entities.includes('ProductionTemplateEntity'));
       assert.ok(entities.includes('ProductionTemplateSpecificationEntity'));
       assert.ok(entities.includes('ProductionTemplateStageEntity'));
       assert.ok(entities.includes('ProductionTemplateStageMaterialEntity'));
+      assert.ok(entities.includes('ProductionTemplateStageAttachmentEntity'));
 
       const migrations = (databaseConfig.migrations as Function[]).map((m) => m.name);
       assert.ok(migrations.includes('MigrateStudiesToProductionTemplateTables1710000000008'));
+      assert.ok(migrations.includes('HardenProductionTemplateCoreAndStageAttachments1710000000009'));
     });
   });
 
@@ -142,7 +155,7 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
   // 3. DTO Validation Rules
   // =========================================================================
   describe('3. DTO Validation & Input Constraints', () => {
-    it('CreateProductionTemplateDto: enforces uppercase code pattern ^[A-Z][A-Z0-9_-]*$', async () => {
+    it('CreateProductionTemplateDto: normalizes code to uppercase and enforces pattern ^[A-Z][A-Z0-9_-]*$', async () => {
       const valid = plainToInstance(CreateProductionTemplateDto, {
         code: 'TPL-ROOM_01',
         name: 'قالب غرفة نموذجية',
@@ -150,12 +163,14 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       const validErrors = await validate(valid);
       assert.strictEqual(validErrors.length, 0);
 
-      const invalidLower = plainToInstance(CreateProductionTemplateDto, {
-        code: 'tpl-room-01',
+      // Normalization: lowercase room-a is transformed to uppercase ROOM-A before validation
+      const normalizedLower = plainToInstance(CreateProductionTemplateDto, {
+        code: 'room-a',
         name: 'قالب غرفة',
       });
-      const lowerErrors = await validate(invalidLower);
-      assert.ok(lowerErrors.some((e) => e.property === 'code'));
+      assert.strictEqual(normalizedLower.code, 'ROOM-A');
+      const lowerErrors = await validate(normalizedLower);
+      assert.strictEqual(lowerErrors.length, 0);
 
       const invalidLeadingNumber = plainToInstance(CreateProductionTemplateDto, {
         code: '1TPL',
@@ -170,6 +185,17 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       });
       const spaceErrors = await validate(invalidSpace);
       assert.ok(spaceErrors.some((e) => e.property === 'code'));
+    });
+
+    it('UpdateTemplateSpecificationDto: excludes sortOrder and validates required fields', async () => {
+      const valid = plainToInstance(UpdateTemplateSpecificationDto, {
+        name: 'الطول',
+        value: '6',
+        unit: 'متر',
+      });
+      const errors = await validate(valid);
+      assert.strictEqual(errors.length, 0);
+      assert.strictEqual('sortOrder' in (valid as Record<string, unknown>), false, 'sortOrder must be removed from UpdateTemplateSpecificationDto');
     });
 
     it('UpdateProductionTemplateDto: does not allow code mutation and rejects empty name', async () => {
@@ -677,5 +703,384 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       assert.strictEqual(parsed.name, '</script><script>alert("xss")</script>');
       assert.strictEqual(parsed.description, '<img src=x onerror=alert(1)> & "hello"');
     });
+
+    it('escapes html and script payloads in stage attachment original filenames', () => {
+      const maliciousAttachment = {
+        id: 'att-1',
+        originalFileName: '</script><script>alert("hack")</script>.pdf',
+        description: '<b>خطير</b>',
+      };
+      const serialized = safeJsonStringify(maliciousAttachment);
+      assert.strictEqual(serialized.includes('<'), false);
+      assert.strictEqual(serialized.includes('>'), false);
+      const parsed = JSON.parse(serialized);
+      assert.strictEqual(parsed.originalFileName, '</script><script>alert("hack")</script>.pdf');
+    });
+  });
+
+  // =========================================================================
+  // 7. Stage Reference Attachments & Storage Abstraction Invariants
+  // =========================================================================
+  describe('7. Stage Reference Documents & Storage Abstraction Invariants', () => {
+    const testStorageDir = path.resolve(process.cwd(), 'storage/test-stage-attachments');
+    const storageService = new TemplateStageAttachmentStorageService(testStorageDir);
+
+    it('saves a valid PDF file under an opaque generated storage key', async () => {
+      const stageId = 'stage-001';
+      const file = {
+        originalname: 'مخطط تسليح الأرضية.pdf',
+        mimetype: 'application/pdf',
+        size: 1024,
+        buffer: Buffer.from('%PDF-1.4 test content'),
+      };
+
+      const result = await storageService.saveFile(stageId, file);
+      assert.ok(result.storageKey.startsWith('production-template-stage/stage-001/'));
+      assert.ok(result.storageKey.endsWith('.pdf'));
+      assert.strictEqual(result.sizeBytes, 1024);
+      assert.strictEqual(result.mimeType, 'application/pdf');
+
+      // Verify file exists on disk at resolved path
+      const resolvedPath = storageService.resolveAbsolutePath(result.storageKey);
+      assert.strictEqual(fs.existsSync(resolvedPath), true);
+
+      // Clean up test file
+      fs.rmSync(testStorageDir, { recursive: true, force: true });
+    });
+
+    it('saves valid images (png, jpg, webp) under opaque keys', async () => {
+      const stageId = 'stage-002';
+      const imgFile = {
+        originalname: 'تفاصيل-الصب.PNG',
+        mimetype: 'image/png',
+        size: 2048,
+        buffer: Buffer.from('fake-png-data'),
+      };
+
+      const result = await storageService.saveFile(stageId, imgFile);
+      assert.ok(result.storageKey.endsWith('.png'));
+      assert.strictEqual(result.mimeType, 'image/png');
+
+      fs.rmSync(testStorageDir, { recursive: true, force: true });
+    });
+
+    it('rejects files larger than 20 MB with ATTACHMENT_FILE_TOO_LARGE', async () => {
+      const stageId = 'stage-003';
+      const oversizedFile = {
+        originalname: 'large.pdf',
+        mimetype: 'application/pdf',
+        size: 21 * 1024 * 1024, // 21 MB
+        buffer: Buffer.alloc(10),
+      };
+
+      await assert.rejects(
+        async () => storageService.saveFile(stageId, oversizedFile),
+        (err: BusinessRuleError) => {
+          assert.strictEqual(err.code, 'ATTACHMENT_FILE_TOO_LARGE');
+          return true;
+        }
+      );
+    });
+
+    it('rejects empty files with ATTACHMENT_FILE_EMPTY', async () => {
+      const stageId = 'stage-004';
+      const emptyFile = {
+        originalname: 'empty.pdf',
+        mimetype: 'application/pdf',
+        size: 0,
+        buffer: Buffer.alloc(0),
+      };
+
+      await assert.rejects(
+        async () => storageService.saveFile(stageId, emptyFile),
+        (err: BusinessRuleError) => {
+          assert.strictEqual(err.code, 'ATTACHMENT_FILE_EMPTY');
+          return true;
+        }
+      );
+    });
+
+    it('rejects unsupported MIME types with ATTACHMENT_UNSUPPORTED_MIME_TYPE', async () => {
+      const stageId = 'stage-005';
+      const forbiddenMimes = ['text/html', 'application/x-msdownload', 'image/svg+xml', 'application/javascript'];
+
+      for (const mime of forbiddenMimes) {
+        const file = {
+          originalname: 'file.pdf',
+          mimetype: mime,
+          size: 500,
+          buffer: Buffer.from('test'),
+        };
+        await assert.rejects(
+          async () => storageService.saveFile(stageId, file),
+          (err: BusinessRuleError) => {
+            assert.strictEqual(err.code, 'ATTACHMENT_UNSUPPORTED_MIME_TYPE');
+            return true;
+          }
+        );
+      }
+    });
+
+    it('rejects unsupported extensions with ATTACHMENT_UNSUPPORTED_EXTENSION', async () => {
+      const stageId = 'stage-006';
+      const forbiddenExts = ['test.exe', 'script.js', 'page.html', 'vector.svg', 'batch.bat', 'shell.ps1'];
+
+      for (const filename of forbiddenExts) {
+        const file = {
+          originalname: filename,
+          mimetype: 'application/pdf',
+          size: 500,
+          buffer: Buffer.from('test'),
+        };
+        await assert.rejects(
+          async () => storageService.saveFile(stageId, file),
+          (err: BusinessRuleError) => {
+            assert.strictEqual(err.code, 'ATTACHMENT_UNSUPPORTED_EXTENSION');
+            return true;
+          }
+        );
+      }
+    });
+
+    it('prevents path traversal attack in original filename from escaping storage root', async () => {
+      const stageId = 'stage-traversal';
+      const maliciousFile = {
+        originalname: '../../../../windows/system32/cmd.exe.pdf',
+        mimetype: 'application/pdf',
+        size: 100,
+        buffer: Buffer.from('safe test content'),
+      };
+
+      const result = await storageService.saveFile(stageId, maliciousFile);
+      // The storageKey must only contain generated uuid and safe extension, no ../
+      assert.strictEqual(result.storageKey.includes('..'), false);
+      assert.ok(result.storageKey.startsWith('production-template-stage/stage-traversal/'));
+
+      const absolutePath = storageService.resolveAbsolutePath(result.storageKey);
+      assert.ok(absolutePath.startsWith(testStorageDir));
+
+      fs.rmSync(testStorageDir, { recursive: true, force: true });
+    });
+
+    it('resolveAbsolutePath throws on path traversal attempts in storageKey', () => {
+      assert.throws(
+        () => storageService.resolveAbsolutePath('../escaped.pdf'),
+        (err: BusinessRuleError) => {
+          assert.strictEqual(err.code, 'ATTACHMENT_INVALID_KEY');
+          return true;
+        }
+      );
+      assert.throws(
+        () => storageService.resolveAbsolutePath('folder/\0/test.pdf'),
+        (err: BusinessRuleError) => {
+          assert.strictEqual(err.code, 'ATTACHMENT_INVALID_KEY');
+          return true;
+        }
+      );
+    });
+
+    it('toStageAttachmentDto strictly omits server filesystem paths and returns safe client DTO', () => {
+      const att = new ProductionTemplateStageAttachmentEntity();
+      att.id = 'att-uuid-001';
+      att.stageId = 'stage-uuid-001';
+      att.originalFileName = 'مخطط.pdf';
+      att.storageKey = 'production-template-stage/stage-uuid-001/random-uuid.pdf';
+      att.mimeType = 'application/pdf';
+      att.sizeBytes = 204800;
+      att.description = 'مخطط تفصيلي معتمد';
+      att.sortOrder = 1;
+      att.createdByUserId = 'user-001';
+      att.createdAt = new Date();
+      att.updatedAt = new Date();
+      att.deletedAt = null;
+
+      const dto = toStageAttachmentDto(att, 'tpl-001');
+
+      assert.strictEqual(dto.id, 'att-uuid-001');
+      assert.strictEqual(dto.originalFileName, 'مخطط.pdf');
+      assert.strictEqual(dto.downloadUrl, '/api/production/templates/tpl-001/stages/stage-uuid-001/attachments/att-uuid-001/file');
+      assert.strictEqual('storageKey' in (dto as Record<string, unknown>), false, 'storageKey must not be leaked');
+      assert.strictEqual('absolutePath' in (dto as Record<string, unknown>), false, 'absolutePath must not be leaked');
+      assert.strictEqual('serverRoot' in (dto as Record<string, unknown>), false, 'serverRoot must not be leaked');
+    });
+
+    it('ReorderStageAttachmentsDto enforces array of UUIDs and not empty', async () => {
+      const valid = plainToInstance(ReorderStageAttachmentsDto, {
+        attachmentIds: ['a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000002'],
+      });
+      const validErrors = await validate(valid);
+      assert.strictEqual(validErrors.length, 0);
+
+      const invalidEmpty = plainToInstance(ReorderStageAttachmentsDto, {
+        attachmentIds: [],
+      });
+      const emptyErrors = await validate(invalidEmpty);
+      assert.ok(emptyErrors.some((e) => e.property === 'attachmentIds'));
+
+      const invalidNonUuid = plainToInstance(ReorderStageAttachmentsDto, {
+        attachmentIds: ['not-a-uuid'],
+      });
+      const nonUuidErrors = await validate(invalidNonUuid);
+      assert.ok(nonUuidErrors.some((e) => e.property === 'attachmentIds'));
+    });
+  });
+
+  // =========================================================================
+  // 8. Material API Data Leakage Elimination Invariants
+  // =========================================================================
+  describe('8. Material API Data Leakage Elimination Invariants', () => {
+    it('toStageMaterialDto returns minimal DTO and strictly does not leak internal inventory fields', () => {
+      const mat = new ProductionTemplateStageMaterialEntity();
+      mat.id = 'mat-uuid-1';
+      mat.stageId = 'stage-uuid-1';
+      mat.productId = 'prod-uuid-1';
+      mat.productUnitId = 'unit-uuid-1';
+      mat.plannedQuantity = '15.5000';
+      mat.createdAt = new Date();
+      mat.updatedAt = new Date();
+
+      // Entity loaded with full product & unit relation including sensitive internals
+      const fullProduct = new InventoryProductEntity();
+      fullProduct.id = 'prod-uuid-1';
+      fullProduct.name = 'حديد تسليح 12 مم';
+      fullProduct.code = 'REBAR_12';
+      fullProduct.baseUnitId = 'unit-uuid-1';
+      (fullProduct as unknown as Record<string, unknown>).price = '2500.00';
+      (fullProduct as unknown as Record<string, unknown>).barcode = '6281000123456';
+      (fullProduct as unknown as Record<string, unknown>).locationName = 'مستودع أ - رف 3';
+      (fullProduct as unknown as Record<string, unknown>).specifications = { origin: 'Saudi Arabia', grade: 'Grade 60' };
+      mat.product = fullProduct;
+
+      const fullUnit = new InventoryProductUnitEntity();
+      fullUnit.id = 'unit-uuid-1';
+      fullUnit.productId = 'prod-uuid-1';
+      fullUnit.name = 'طن';
+      (fullUnit as unknown as Record<string, unknown>).conversionQuantity = '1.0000';
+      (fullUnit as unknown as Record<string, unknown>).barcode = '6281000123457';
+      mat.productUnit = fullUnit;
+
+      const dto = toStageMaterialDto(mat);
+
+      // Verify minimal contract
+      assert.strictEqual(dto.id, 'mat-uuid-1');
+      assert.strictEqual(dto.stageId, 'stage-uuid-1');
+      assert.strictEqual(dto.plannedQuantity, '15.5000');
+      assert.deepStrictEqual(dto.product, {
+        id: 'prod-uuid-1',
+        name: 'حديد تسليح 12 مم',
+        code: 'REBAR_12',
+      });
+      assert.deepStrictEqual(dto.productUnit, {
+        id: 'unit-uuid-1',
+        name: 'طن',
+        isBase: true,
+      });
+
+      // Assert data leakage elimination
+      const rawDto = dto as unknown as Record<string, unknown>;
+      const rawProd = (dto.product || {}) as Record<string, unknown>;
+      const rawUnit = (dto.productUnit || {}) as Record<string, unknown>;
+
+      assert.strictEqual('price' in rawDto, false, 'Root DTO must not have price');
+      assert.strictEqual('barcode' in rawDto, false, 'Root DTO must not have barcode');
+      assert.strictEqual('locationName' in rawDto, false, 'Root DTO must not have locationName');
+      assert.strictEqual('price' in rawProd, false, 'Product in DTO must not have price');
+      assert.strictEqual('barcode' in rawProd, false, 'Product in DTO must not have barcode');
+      assert.strictEqual('locationName' in rawProd, false, 'Product in DTO must not have locationName');
+      assert.strictEqual('specifications' in rawProd, false, 'Product in DTO must not have specifications');
+      assert.strictEqual('conversionQuantity' in rawUnit, false, 'ProductUnit in DTO must not have conversionQuantity');
+      assert.strictEqual('barcode' in rawUnit, false, 'ProductUnit in DTO must not have barcode');
+    });
+  });
+
+  // =========================================================================
+  // 9. Catalog Product Reference Search & Pagination Beyond 100 Invariants
+  // =========================================================================
+  describe('9. Catalog Product Reference Search & Pagination Beyond 100 Invariants', () => {
+    // Generate 150 mock products
+    const mockProducts: InventoryProductEntity[] = [];
+    for (let i = 1; i <= 150; i++) {
+      const p = new InventoryProductEntity();
+      p.id = `prod-${String(i).padStart(3, '0')}`;
+      p.name = `منتج تصنيعي رقم ${i}`;
+      p.code = `PRD-${String(i).padStart(3, '0')}`;
+      p.isActive = true;
+      p.deletedAt = null;
+      mockProducts.push(p);
+    }
+
+    const mockRepo = {
+      createQueryBuilder: (_alias: string) => {
+        let filtered = [...mockProducts];
+        let skipVal = 0;
+        let takeVal = 20;
+
+        const qb = {
+          where: () => qb,
+          andWhere: (_condition: string, params?: { term?: string }) => {
+            if (params?.term) {
+              const term = params.term.replace(/%/g, '').toLowerCase();
+              filtered = filtered.filter(
+                (p) => p.name.toLowerCase().includes(term) || p.code.toLowerCase().includes(term)
+              );
+            }
+            return qb;
+          },
+          select: () => qb,
+          orderBy: () => qb,
+          skip: (s: number) => {
+            skipVal = s;
+            return qb;
+          },
+          take: (t: number) => {
+            takeVal = t;
+            return qb;
+          },
+          getCount: async () => filtered.length,
+          getMany: async () => filtered.slice(skipVal, skipVal + takeVal),
+        };
+        return qb;
+      },
+    } as unknown as Repository<InventoryProductEntity>;
+
+    const refService = new InventoryProductReferenceService(
+      {} as any,
+      mockRepo,
+      {} as unknown as Repository<InventoryProductUnitEntity>
+    );
+
+    it('paginates correctly on page 1 with limit 20 (total 150, totalPages 8)', async () => {
+      const result = await refService.searchProductReferences(undefined, 1, 20);
+      assert.strictEqual(result.items.length, 20);
+      assert.strictEqual(result.total, 150);
+      assert.strictEqual(result.page, 1);
+      assert.strictEqual(result.limit, 20);
+      assert.strictEqual(result.totalPages, 8);
+      assert.strictEqual(result.items[0].code, 'PRD-001');
+      assert.strictEqual(result.items[19].code, 'PRD-020');
+    });
+
+    it('allows reaching products beyond the first 100 on page 6 (items 101 to 120)', async () => {
+      const result = await refService.searchProductReferences(undefined, 6, 20);
+      assert.strictEqual(result.items.length, 20);
+      assert.strictEqual(result.page, 6);
+      assert.strictEqual(result.items[0].code, 'PRD-101');
+      assert.strictEqual(result.items[19].code, 'PRD-120');
+    });
+
+    it('allows reaching the last page 8 (items 141 to 150)', async () => {
+      const result = await refService.searchProductReferences(undefined, 8, 20);
+      assert.strictEqual(result.items.length, 10);
+      assert.strictEqual(result.page, 8);
+      assert.strictEqual(result.items[0].code, 'PRD-141');
+      assert.strictEqual(result.items[9].code, 'PRD-150');
+    });
+
+    it('clamps limit above 100 down to 100', async () => {
+      const result = await refService.searchProductReferences(undefined, 1, 500);
+      assert.strictEqual(result.limit, 100);
+      assert.strictEqual(result.items.length, 100);
+    });
   });
 });
+
