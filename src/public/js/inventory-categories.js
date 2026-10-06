@@ -234,9 +234,82 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- Category Tree Logic ---
 
   /**
-   * Builds a single Category Node DOM element.
+   * Loads children for a given category into its children container.
    */
-  function createCategoryNodeElement(category, level = 0) {
+  async function loadCategoryChildren(categoryId, childrenContainer, toggleBtn, level, autoExpandChildren = true) {
+    if (!childrenContainer) return;
+    if (toggleBtn) toggleBtn.disabled = true;
+
+    // Inline loading indicator
+    const spinner = document.createElement('div');
+    spinner.className = 'text-muted small py-1 px-3 d-flex align-items-center gap-2';
+    const spinIcon = document.createElement('div');
+    spinIcon.className = 'spinner-border spinner-border-sm text-success';
+    spinner.appendChild(spinIcon);
+    const spinText = document.createElement('span');
+    spinText.textContent = 'جاري التحميل...';
+    spinner.appendChild(spinText);
+    childrenContainer.appendChild(spinner);
+
+    let childPage = 1;
+    const childLimit = 50;
+
+    async function fetchChildrenPage(page) {
+      try {
+        const res = await fetch(`/api/inventory/categories/${encodeURIComponent(categoryId)}/children?page=${page}&limit=${childLimit}`);
+        const json = await res.json();
+
+        if (spinner && spinner.parentNode === childrenContainer) {
+          spinner.remove();
+        }
+
+        if (json.success && json.data) {
+          if (page === 1) {
+            childrenContainer.textContent = '';
+          }
+          // Remove old load more button if exists
+          const oldBtn = childrenContainer.querySelector('.btn-load-more-children');
+          if (oldBtn) oldBtn.remove();
+
+          json.data.items.forEach((child) => {
+            childrenContainer.appendChild(createCategoryNodeElement(child, level, autoExpandChildren));
+          });
+
+          if (json.data.page < json.data.totalPages) {
+            const loadMoreBtn = document.createElement('button');
+            loadMoreBtn.type = 'button';
+            loadMoreBtn.className = 'btn btn-sm btn-link text-decoration-none text-muted my-1 ps-4 btn-load-more-children';
+            loadMoreBtn.textContent = `تحميل المزيد (${json.data.total - page * childLimit} متبقية)...`;
+            loadMoreBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              childPage++;
+              fetchChildrenPage(childPage);
+            });
+            childrenContainer.appendChild(loadMoreBtn);
+          }
+
+          if (toggleBtn) toggleBtn.dataset.loaded = 'true';
+        } else {
+          showAlert(json.message || 'فشل في تحميل الفئات الفرعية');
+        }
+      } catch (err) {
+        if (spinner && spinner.parentNode === childrenContainer) {
+          spinner.remove();
+        }
+        showAlert('حدث خطأ أثناء تحميل الفئات الفرعية');
+      } finally {
+        if (toggleBtn) toggleBtn.disabled = false;
+      }
+    }
+
+    await fetchChildrenPage(1);
+  }
+
+  /**
+   * Builds a single Category Node DOM element.
+   * By default, nodes with children are created in expanded state.
+   */
+  function createCategoryNodeElement(category, level = 0, autoExpand = true) {
     const nodeWrapper = document.createElement('div');
     nodeWrapper.className = 'tree-node-wrapper';
     nodeWrapper.dataset.categoryId = category.id;
@@ -248,14 +321,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const leftDiv = document.createElement('div');
     leftDiv.className = 'd-flex align-items-center gap-2';
 
+    let toggleBtn = null;
+
     // Toggle button or spacer
     if (category.hasChildren) {
-      const toggleBtn = document.createElement('button');
+      toggleBtn = document.createElement('button');
       toggleBtn.type = 'button';
-      toggleBtn.className = 'tree-toggle-btn';
+      toggleBtn.className = autoExpand ? 'tree-toggle-btn expanded' : 'tree-toggle-btn';
       toggleBtn.dataset.categoryId = category.id;
       toggleBtn.dataset.loaded = 'false';
-      toggleBtn.dataset.expanded = 'false';
+      toggleBtn.dataset.expanded = autoExpand ? 'true' : 'false';
 
       const icon = document.createElement('i');
       icon.className = 'fa-solid fa-chevron-left';
@@ -350,8 +425,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Container for children
     if (category.hasChildren) {
       const childrenContainer = document.createElement('div');
-      childrenContainer.className = 'tree-children-container d-none';
+      childrenContainer.className = autoExpand ? 'tree-children-container' : 'tree-children-container d-none';
       nodeWrapper.appendChild(childrenContainer);
+
+      if (autoExpand) {
+        loadCategoryChildren(category.id, childrenContainer, toggleBtn, level + 1, true);
+      }
     }
 
     return nodeWrapper;
@@ -375,57 +454,13 @@ document.addEventListener('DOMContentLoaded', () => {
       toggleBtn.dataset.expanded = 'false';
     } else {
       // Expand
-      if (!isLoaded) {
-        toggleBtn.disabled = true;
-        let childPage = 1;
-        const childLimit = 50;
-
-        async function fetchChildrenPage(page) {
-          try {
-            const res = await fetch(`/api/inventory/categories/${encodeURIComponent(categoryId)}/children?page=${page}&limit=${childLimit}`);
-            const json = await res.json();
-
-            if (json.success && json.data) {
-              if (page === 1) {
-                childrenContainer.textContent = '';
-              }
-              // Remove old load more button if exists
-              const oldBtn = childrenContainer.querySelector('.btn-load-more-children');
-              if (oldBtn) oldBtn.remove();
-
-              json.data.items.forEach((child) => {
-                childrenContainer.appendChild(createCategoryNodeElement(child, level));
-              });
-
-              if (json.data.page < json.data.totalPages) {
-                const loadMoreBtn = document.createElement('button');
-                loadMoreBtn.type = 'button';
-                loadMoreBtn.className = 'btn btn-sm btn-link text-decoration-none text-muted my-1 ps-4 btn-load-more-children';
-                loadMoreBtn.textContent = `تحميل المزيد (${json.data.total - page * childLimit} متبقية)...`;
-                loadMoreBtn.addEventListener('click', () => {
-                  childPage++;
-                  fetchChildrenPage(childPage);
-                });
-                childrenContainer.appendChild(loadMoreBtn);
-              }
-
-              toggleBtn.dataset.loaded = 'true';
-            } else {
-              showAlert(json.message || 'فشل في تحميل الفئات الفرعية');
-            }
-          } catch (err) {
-            showAlert('حدث خطأ أثناء تحميل الفئات الفرعية');
-          } finally {
-            toggleBtn.disabled = false;
-          }
-        }
-
-        await fetchChildrenPage(1);
-      }
-
       childrenContainer.classList.remove('d-none');
       toggleBtn.classList.add('expanded');
       toggleBtn.dataset.expanded = 'true';
+
+      if (!isLoaded) {
+        await loadCategoryChildren(categoryId, childrenContainer, toggleBtn, level, true);
+      }
     }
   }
 
@@ -476,7 +511,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
 
           roots.forEach((root) => {
-            treeContainer.appendChild(createCategoryNodeElement(root, 0));
+            treeContainer.appendChild(createCategoryNodeElement(root, 0, true));
           });
 
           if (json.data.page < json.data.totalPages) {

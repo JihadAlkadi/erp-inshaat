@@ -140,7 +140,7 @@
 }
 
 .category-tree-toggle-btn.expanded i {
-  transform: rotate(90deg);
+  transform: rotate(-90deg);
 }
 
 .category-tree-children {

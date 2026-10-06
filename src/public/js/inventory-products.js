@@ -338,6 +338,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const productsPagination = document.getElementById('productsPagination');
   const paginationInfo = document.getElementById('paginationInfo');
 
+  // Category Tree DOM Elements
+  const desktopCategoryTreeContainer = document.getElementById('desktopCategoryTreeContainer');
+  const desktopCategoryTreeSearch = document.getElementById('desktopCategoryTreeSearch');
+  const desktopAllProductsBtn = document.getElementById('desktopAllProductsBtn');
+  const desktopTreeCountBadge = document.getElementById('desktopTreeCountBadge');
+
+  const mobileCategoryTreeContainer = document.getElementById('mobileCategoryTreeContainer');
+  const mobileCategoryTreeSearch = document.getElementById('mobileCategoryTreeSearch');
+  const mobileAllProductsBtn = document.getElementById('mobileAllProductsBtn');
+  const categoryOffcanvasEl = document.getElementById('categoryOffcanvas');
+
+  const activeCategoryBanner = document.getElementById('activeCategoryBanner');
+  const activeCategoryName = document.getElementById('activeCategoryName');
+  const btnClearCategoryFilter = document.getElementById('btnClearCategoryFilter');
+
+  let selectedCategoryId = null;
+  let selectedCategoryName = null;
+  let categoryTreeData = [];
+
   let currentPage = 1;
   const pageLimit = 20;
   let listSearchTimeout = null;
@@ -362,7 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
     productsTableBody.appendChild(loadingRow);
 
     const search = productSearchInput ? productSearchInput.value.trim() : '';
-    const categoryId = categoryFilterSelect ? categoryFilterSelect.value : '';
+    const categoryId = selectedCategoryId || (categoryFilterSelect ? categoryFilterSelect.value : '');
     const status = statusFilterSelect ? statusFilterSelect.value : 'active';
 
     const params = new URLSearchParams({
@@ -639,8 +658,292 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // --- Product Category Tree Logic ---
+
+  /**
+   * Loads the full category hierarchy for product filtering (fail-closed, all-or-nothing).
+   */
+  async function loadProductCategoryTree() {
+    if (!desktopCategoryTreeContainer && !mobileCategoryTreeContainer) return;
+
+    try {
+      const rootsRes = await fetch('/api/inventory/categories/roots?page=1&limit=100');
+      if (!rootsRes.ok) throw new Error('فشل في تحميل الفئات الرئيسية');
+      const rootsJson = await rootsRes.json();
+      if (!rootsJson.success || !rootsJson.data) throw new Error(rootsJson.message || 'استجابة غير صالحة');
+
+      const roots = rootsJson.data.items;
+
+      async function populateChildrenRecursively(node) {
+        if (!node.hasChildren) {
+          node.children = [];
+          return;
+        }
+        const childRes = await fetch(`/api/inventory/categories/${encodeURIComponent(node.id)}/children?page=1&limit=100`);
+        if (!childRes.ok) throw new Error(`فشل في تحميل الفئات الفرعية لـ ${node.name}`);
+        const childJson = await childRes.json();
+        if (!childJson.success || !childJson.data) throw new Error(`استجابة غير صالحة لـ ${node.name}`);
+        node.children = childJson.data.items;
+        await Promise.all(node.children.map((child) => populateChildrenRecursively(child)));
+      }
+
+      await Promise.all(roots.map((root) => populateChildrenRecursively(root)));
+
+      categoryTreeData = roots;
+      if (desktopTreeCountBadge) desktopTreeCountBadge.textContent = String(roots.length);
+
+      renderCategoryTreePanel(desktopCategoryTreeContainer, false);
+      renderCategoryTreePanel(mobileCategoryTreeContainer, true);
+    } catch (err) {
+      console.error('Failed to load category tree:', err);
+      const errorMsg = 'تعذر تحميل شجرة الفئات';
+      if (desktopCategoryTreeContainer) {
+        desktopCategoryTreeContainer.textContent = '';
+        const errDiv = document.createElement('div');
+        errDiv.className = 'text-center py-4 text-danger small';
+        errDiv.textContent = errorMsg;
+        desktopCategoryTreeContainer.appendChild(errDiv);
+      }
+      if (mobileCategoryTreeContainer) {
+        mobileCategoryTreeContainer.textContent = '';
+        const errDiv = document.createElement('div');
+        errDiv.className = 'text-center py-4 text-danger small';
+        errDiv.textContent = errorMsg;
+        mobileCategoryTreeContainer.appendChild(errDiv);
+      }
+    }
+  }
+
+  function renderCategoryTreePanel(container, isMobile) {
+    if (!container) return;
+    container.textContent = '';
+
+    if (categoryTreeData.length === 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'text-center py-4 text-muted small';
+      emptyDiv.textContent = 'لا توجد فئات بعد';
+      container.appendChild(emptyDiv);
+      return;
+    }
+
+    const ul = document.createElement('ul');
+    ul.className = 'p-0 m-0 list-unstyled category-tree-root-list';
+
+    categoryTreeData.forEach((cat) => {
+      ul.appendChild(createCategoryTreeItemElement(cat, isMobile));
+    });
+
+    container.appendChild(ul);
+  }
+
+  function createCategoryTreeItemElement(cat, isMobile) {
+    const li = document.createElement('li');
+    li.className = 'category-tree-li mb-1';
+    li.dataset.categoryId = cat.id;
+    li.dataset.categoryName = (cat.name || '').toLowerCase();
+    li.dataset.categoryCode = (cat.code || '').toLowerCase();
+
+    const nodeItem = document.createElement('div');
+    nodeItem.className = `category-tree-node-item ${selectedCategoryId === cat.id ? 'active' : ''}`;
+    nodeItem.dataset.categoryId = cat.id;
+    nodeItem.setAttribute('role', 'button');
+    nodeItem.setAttribute('tabindex', '0');
+
+    // Title & folder
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'category-tree-node-title';
+
+    // Toggle button if has children
+    let childrenUl = null;
+
+    if (cat.hasChildren && cat.children && cat.children.length > 0) {
+      const toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'category-tree-toggle-btn expanded';
+      toggleBtn.dataset.expanded = 'true';
+      const toggleIcon = document.createElement('i');
+      toggleIcon.className = 'fa-solid fa-chevron-left';
+      toggleBtn.appendChild(toggleIcon);
+
+      toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isExp = toggleBtn.dataset.expanded === 'true';
+        if (isExp) {
+          if (childrenUl) childrenUl.classList.add('d-none');
+          toggleBtn.classList.remove('expanded');
+          toggleBtn.dataset.expanded = 'false';
+        } else {
+          if (childrenUl) childrenUl.classList.remove('d-none');
+          toggleBtn.classList.add('expanded');
+          toggleBtn.dataset.expanded = 'true';
+        }
+      });
+
+      titleDiv.appendChild(toggleBtn);
+    } else {
+      const spacer = document.createElement('span');
+      spacer.style.width = '20px';
+      spacer.style.display = 'inline-block';
+      titleDiv.appendChild(spacer);
+    }
+
+    // Folder icon
+    const folderIcon = document.createElement('i');
+    folderIcon.className = cat.hasChildren ? 'fa-solid fa-folder text-warning' : 'fa-regular fa-folder text-muted';
+    titleDiv.appendChild(folderIcon);
+
+    // Name text
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = cat.name;
+    titleDiv.appendChild(nameSpan);
+
+    nodeItem.appendChild(titleDiv);
+
+    // Product count badge if > 0
+    if (cat.productCount > 0) {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-light text-muted border font-monospace ms-1';
+      badge.textContent = String(cat.productCount);
+      nodeItem.appendChild(badge);
+    }
+
+    // Click handler to select category
+    nodeItem.addEventListener('click', () => {
+      selectCategory(cat.id, cat.name, isMobile);
+    });
+
+    li.appendChild(nodeItem);
+
+    // Children container (EXPANDED by default)
+    if (cat.hasChildren && cat.children && cat.children.length > 0) {
+      childrenUl = document.createElement('ul');
+      childrenUl.className = 'category-tree-children p-0 m-0';
+      cat.children.forEach((child) => {
+        childrenUl.appendChild(createCategoryTreeItemElement(child, isMobile));
+      });
+      li.appendChild(childrenUl);
+    }
+
+    return li;
+  }
+
+  function selectCategory(categoryId, categoryName, isMobile = false) {
+    selectedCategoryId = categoryId;
+    selectedCategoryName = categoryName;
+
+    updateCategorySelectionUI();
+
+    if (isMobile && categoryOffcanvasEl && typeof bootstrap !== 'undefined') {
+      const offcanvasInstance = bootstrap.Offcanvas.getInstance(categoryOffcanvasEl);
+      if (offcanvasInstance) {
+        offcanvasInstance.hide();
+      }
+    }
+
+    // Reset to page 1 and load products
+    loadProducts(1);
+  }
+
+  function selectAllProducts(isMobile = false) {
+    selectedCategoryId = null;
+    selectedCategoryName = null;
+
+    updateCategorySelectionUI();
+
+    if (isMobile && categoryOffcanvasEl && typeof bootstrap !== 'undefined') {
+      const offcanvasInstance = bootstrap.Offcanvas.getInstance(categoryOffcanvasEl);
+      if (offcanvasInstance) {
+        offcanvasInstance.hide();
+      }
+    }
+
+    // Reset to page 1 and load products
+    loadProducts(1);
+  }
+
+  function updateCategorySelectionUI() {
+    if (desktopAllProductsBtn) {
+      if (!selectedCategoryId) {
+        desktopAllProductsBtn.classList.add('active');
+      } else {
+        desktopAllProductsBtn.classList.remove('active');
+      }
+    }
+    if (mobileAllProductsBtn) {
+      if (!selectedCategoryId) {
+        mobileAllProductsBtn.classList.add('active');
+      } else {
+        mobileAllProductsBtn.classList.remove('active');
+      }
+    }
+
+    const allNodeItems = document.querySelectorAll('.category-tree-node-item[data-category-id]');
+    allNodeItems.forEach((item) => {
+      if (item.dataset.categoryId === selectedCategoryId) {
+        item.classList.add('active');
+      } else {
+        item.classList.remove('active');
+      }
+    });
+
+    if (activeCategoryBanner && activeCategoryName) {
+      if (selectedCategoryId && selectedCategoryName) {
+        activeCategoryName.textContent = selectedCategoryName;
+        activeCategoryBanner.classList.remove('d-none');
+        activeCategoryBanner.classList.add('d-flex');
+      } else {
+        activeCategoryName.textContent = '';
+        activeCategoryBanner.classList.add('d-none');
+        activeCategoryBanner.classList.remove('d-flex');
+      }
+    }
+  }
+
+  function filterCategoryTree(searchTerm, container) {
+    if (!container) return;
+    const term = (searchTerm || '').trim().toLowerCase();
+
+    const allLis = container.querySelectorAll('.category-tree-li');
+    if (!term) {
+      allLis.forEach((li) => {
+        li.classList.remove('d-none');
+      });
+      return;
+    }
+
+    allLis.forEach((li) => {
+      const name = li.dataset.categoryName || '';
+      const code = li.dataset.categoryCode || '';
+      const isMatch = name.includes(term) || code.includes(term);
+
+      if (isMatch) {
+        li.classList.remove('d-none');
+        let parent = li.parentElement;
+        while (parent && parent !== container) {
+          if (parent.classList.contains('category-tree-li')) {
+            parent.classList.remove('d-none');
+          }
+          if (parent.classList.contains('category-tree-children')) {
+            parent.classList.remove('d-none');
+          }
+          parent = parent.parentElement;
+        }
+      } else {
+        const matchingDescendant = li.querySelector(`.category-tree-li[data-category-name*="${term}"]`);
+        if (!matchingDescendant) {
+          li.classList.add('d-none');
+        } else {
+          li.classList.remove('d-none');
+        }
+      }
+    });
+  }
+
   if (productsTableBody) {
-    loadCategoryOptionsForProduct(categoryFilterSelect);
+    if (categoryFilterSelect) {
+      loadCategoryOptionsForProduct(categoryFilterSelect);
+    }
+    loadProductCategoryTree();
     loadProducts(1);
 
     if (productSearchInput) {
@@ -660,6 +963,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnRefreshProducts) {
       btnRefreshProducts.addEventListener('click', () => loadProducts(currentPage));
+    }
+
+    if (desktopCategoryTreeSearch && desktopCategoryTreeContainer) {
+      desktopCategoryTreeSearch.addEventListener('input', (e) => {
+        filterCategoryTree(e.target.value, desktopCategoryTreeContainer);
+      });
+    }
+
+    if (mobileCategoryTreeSearch && mobileCategoryTreeContainer) {
+      mobileCategoryTreeSearch.addEventListener('input', (e) => {
+        filterCategoryTree(e.target.value, mobileCategoryTreeContainer);
+      });
+    }
+
+    if (desktopAllProductsBtn) {
+      desktopAllProductsBtn.addEventListener('click', () => selectAllProducts(false));
+    }
+
+    if (mobileAllProductsBtn) {
+      mobileAllProductsBtn.addEventListener('click', () => selectAllProducts(true));
+    }
+
+    if (btnClearCategoryFilter) {
+      btnClearCategoryFilter.addEventListener('click', () => selectAllProducts(false));
     }
   }
 

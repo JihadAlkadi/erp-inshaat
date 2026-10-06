@@ -40,6 +40,16 @@
     - صلاحيات النظام: `inventory.category.view/create/update/delete` و `inventory.product.view/create/update/delete`، وتخضع لنطاق الوصول الشامل `ALL`.
     - مسارات آمنة عبر `window.erpFetch` لكافة العمليات التعديلية مع التحقق المركزي من CSRF ومصادقة الجلسة.
     - واجهات Bootstrap متجاوبة وثيم المستودعات الأخضر `#10AC84`، مع منع حقن النصوص واستخدام Native DOM APIs لحظر ثغرات XSS.
+    - **شجرة الفئات (Hierarchical Category Tree)** (`/inventory/categories`): شجرة فئات هرمية مبنية بالكامل في الواجهة، وحالتها الافتراضية مفتوحة بالكامل (`Default State: Fully Expanded`) عند تحميل الصفحة وعند الضغط على زر "تحديث الشجرة"، مع دعم الطي والتوسيع اليدوي، والحفاظ على الشجرة وتوسعها عند البحث وإلغاء البحث.
+    - **لوحة المنتجات وشجرة الفئات الجانبية (Products Listing with Category Tree Filter)** (`/inventory/products`):
+      - عرض شجرة الفئات في لوحة جانبية على الشاشات الكبيرة بجانب جدول المنتجات، مفتوحة بالكامل افتراضياً (`Expanded`).
+      - خيار "جميع المنتجات" في أعلى الشجرة لإلغاء التصفية (`selectedCategoryId = null`).
+      - تصفية المنتجات مباشرة بالضغط على أي فئة مع إعادة تعيين الصفحة تلقائياً إلى 1 (`page = 1`).
+      - إزالة القائمة المنسدلة `categoryFilterSelect` من صفحة Listing فقط، مع الحفاظ عليها في شاشات الإنشاء والتعديل.
+      - تكامل فلاتر البحث النصي، وفلتر الحالة، والترقيم Pagination مع الفئة المحددة دون تعارض.
+      - بحث محلي داخل شجرة الفئات (`بحث في الفئات...`) يفلتر عناصر الشجرة مباشرة دون التأثير على بحث المنتجات.
+      - التجاوب مع الهواتف والشاشات الصغيرة: تحويل الشجرة الجانبية إلى Bootstrap Offcanvas منبثق عبر زر "الفئات"، ويتم إغلاقه تلقائياً عند اختيار الفئة مع إظهار شريط الفئة المحددة أعلى الجدول.
+    - **صفحة تفاصيل المنتج (Product Detail Page)** (`/inventory/products/:id` عبر `src/views/dashboard/inventory/products/show.ejs`): موجودة ومعتمدة بتصميم تفاعلي يبرز الوحدة الأساسية والوحدات الإضافية وسلسلة التحويل والمواصفات الفنية.
 
 - **حماية CSRF المرتبطة بالجلسة (Session-Bound CSRF Protection)** (`src/modules/system/auth/csrf.service.ts`, `src/modules/system/auth/csrf.middleware.ts`, `src/modules/system/auth/auth.middleware.ts`):
   - **نموذج أمني مشتق من الجلسة (Session-Bound HMAC Token)**:
@@ -144,6 +154,12 @@
     - فصل واضح في شاشة المستخدم بين الصلاحيات الموروثة من الدور والصلاحيات المباشرة والنتيجة الفعالة.
   - **إلغاء مسار التعديل القديم غير الآمن (Legacy Removal)**:
     - إزالة مسارات وخدمات `/global-permissions` و `setRoleGlobalPermissions` و `setUserGlobalPermissions` واستبدالها بنظام إدارة الصلاحيات وقواعد الوصول الدقيق الجديد.
+  - **مطابقة وتسوية الصلاحيات التشغيلية وقت التشغيل (Runtime Permission Reconciliation & System Registry)**:
+    - اعتماد السجل المركزي الموحد للصلاحيات في `src/modules/system/permission/constants/system-permission.registry.ts` كمرجع أحادي وموثوق (Single Source of Truth) لكافة الصلاحيات وقدرات النطاقات في النظام.
+    - خدمة المطابقة التلقائية `PermissionReconciliationService` في `src/modules/system/permission/services/permission-reconciliation.service.ts`.
+    - التسوية التلقائية أثناء إقلاع الخادم (Runtime reconciliation in server startup / `src/server.ts` عبر `reconcileSystemPermissions`): مقارنة السجل مع قاعدة البيانات وإدراج أي صلاحيات جديدة تلقائياً عند التشغيل.
+    - لم تعد الصلاحيات تعتمد حصراً على الـ Seed الأولي؛ أي صلاحية جديدة تُضاف إلى الـ Registry تصبح فوراً جزءاً من النظام الفعلي دون الحاجة لإعادة تشغيل الـ Seed أو المساس بالبيانات القائمة.
+    - منح دور مدير النظام `SYSTEM_ADMIN` الصلاحيات الفعالة وقواعد الوصول الشامل `ALLOW ALL` تلقائياً لكل صلاحية نظام مستجدة ضمن عملية المطابقة لضمان استمرارية الإدارة وصلاحية الوصول.
 
 - **نطاقات الوصول الديناميكية والصلاحيات على مستوى الصفوف (Dynamic Production Access Scopes & Row-Level Authorization Core)** (`src/modules/production/authorization/`):
   - **فصل المسؤوليات المعماري**:
