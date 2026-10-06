@@ -163,3 +163,99 @@
 .spec-row:hover {
   background-color: #F9FAFB;
 }
+
+/* Template Builder Workspace Navigation */
+.template-builder-nav {
+  position: sticky;
+  top: 70px;
+  z-index: 1020;
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.95) !important;
+  border-bottom: 2px solid #E5E7EB;
+  transition: all 0.2s ease;
+}
+
+.template-builder-nav .nav-link-anchor {
+  color: #4B5563;
+  font-size: 0.92rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.template-builder-nav .nav-link-anchor:hover {
+  color: #0984E3;
+  background-color: #EBF8FF;
+}
+
+/* Stage Drawer (Offcanvas) */
+.stage-drawer {
+  width: 660px !important;
+  max-width: 95vw !important;
+  box-shadow: -4px 0 25px rgba(0, 0, 0, 0.15);
+}
+
+.stage-drawer .offcanvas-header {
+  border-bottom: 1px solid #E5E7EB;
+  background-color: #F9FAFB;
+}
+
+.stage-drawer .nav-tabs .nav-link {
+  font-weight: 600;
+  color: #6B7280;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.75rem 1rem;
+}
+
+.stage-drawer .nav-tabs .nav-link.active {
+  color: #0984E3;
+  border-bottom: 2px solid #0984E3;
+  background: transparent;
+}
+
+/* Catalog Product Search Picker */
+.catalog-search-results-box {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  background-color: #FFF;
+}
+
+.catalog-search-item {
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid #F3F4F6;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.15s ease;
+}
+
+.catalog-search-item:last-child {
+  border-bottom: none;
+}
+
+.catalog-search-item:hover {
+  background-color: #EBF8FF;
+}
+
+.catalog-search-item.is-selected {
+  background-color: #DBEAFE;
+  border-right: 3px solid #0984E3;
+}
+
+/* Reference Documents List */
+.attachment-item-card {
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background-color: #FFF;
+  transition: all 0.15s ease;
+}
+
+.attachment-item-card:hover {
+  border-color: #CBD5E1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
