@@ -17,6 +17,7 @@ import { ProductionTemplateEntity } from '../modules/production/template/product
 import { ProductionTemplateSpecificationEntity } from '../modules/production/template-specification/production-template-specification.entity.js';
 import { ProductionTemplateStageEntity } from '../modules/production/template-stage/production-template-stage.entity.js';
 import { ProductionTemplateStageMaterialEntity } from '../modules/production/template-stage-material/production-template-stage-material.entity.js';
+import { ProductionTemplateStageAttachmentEntity } from '../modules/production/template-stage-attachment/production-template-stage-attachment.entity.js';
 import { CreateSystemCoreTables1710000000000 } from '../database/migrations/1710000000000-CreateSystemCoreTables.js';
 import { CreateSystemSessionTable1710000000001 } from '../database/migrations/1710000000001-CreateSystemSessionTable.js';
 import { CreateProductionDepartmentsAndYards1710000000002 } from '../database/migrations/1710000000002-CreateProductionDepartmentsAndYards.js';
@@ -26,6 +27,7 @@ import { CreateInventoryProductsAndUnits1710000000005 } from '../database/migrat
 import { HardenInventoryCatalogConstraints1710000000006 } from '../database/migrations/1710000000006-HardenInventoryCatalogConstraints.js';
 import { CreateStudiesTemplateCoreTables1710000000007 } from '../database/migrations/1710000000007-CreateStudiesTemplateCoreTables.js';
 import { MigrateStudiesToProductionTemplateTables1710000000008 } from '../database/migrations/1710000000008-MigrateStudiesToProductionTemplateTables.js';
+import { HardenProductionTemplateCoreAndStageAttachments1710000000009 } from '../database/migrations/1710000000009-HardenProductionTemplateCoreAndStageAttachments.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -54,6 +56,7 @@ export const databaseConfig: DataSourceOptions = {
     ProductionTemplateSpecificationEntity,
     ProductionTemplateStageEntity,
     ProductionTemplateStageMaterialEntity,
+    ProductionTemplateStageAttachmentEntity,
   ],
   migrations: [
     CreateSystemCoreTables1710000000000,
@@ -65,6 +68,7 @@ export const databaseConfig: DataSourceOptions = {
     HardenInventoryCatalogConstraints1710000000006,
     CreateStudiesTemplateCoreTables1710000000007,
     MigrateStudiesToProductionTemplateTables1710000000008,
+    HardenProductionTemplateCoreAndStageAttachments1710000000009,
   ],
   subscribers: [],
 };
