@@ -6,12 +6,14 @@
         <h3 class="fw-bold mb-1" style="color: #1F2937;">تعديل فئة المنتجات <i class="fa-solid fa-pen-to-square text-muted fs-5 ms-2"></i></h3>
         <p class="text-muted mb-0 small">تحديث بيانات الفئة وموقعها ضمن الهيكل الهرمي للمستودعات</p>
       </div>
-      <a href="/inventory/categories" class="btn btn-outline-secondary">
-        <i class="fa-solid fa-arrow-left ms-1"></i> العودة للشجرة
+      <a href="/inventory/categories" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2" style="border-radius: 8px;">
+        <i class="fa-solid fa-arrow-right"></i>
+        <span>العودة للشجرة</span>
       </a>
     </div>
 
     <!-- Alert Container -->
+    <div id="formAlert" class="alert alert-danger d-none mb-4" role="alert"></div>
     <div id="categoryFormAlertContainer"></div>
 
     <!-- Form Card -->
@@ -21,7 +23,7 @@
         <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-1 font-monospace" id="categoryCodeBadge"></span>
       </div>
       <div class="card-body p-4 p-md-5">
-        <form id="editCategoryForm" data-category-id="<%= typeof categoryId !== 'undefined' ? categoryId : '' %>" novalidate>
+        <form id="editCategoryForm" class="needs-validation" data-category-id="<%= typeof categoryId !== 'undefined' ? categoryId : '' %>" novalidate>
           <!-- Code (Read-Only) -->
           <div class="mb-4">
             <label for="categoryCodeReadOnly" class="form-label fw-bold text-muted">رمز الفئة (ثابت)</label>
@@ -35,9 +37,10 @@
           <!-- Name -->
           <div class="mb-4">
             <label for="categoryName" class="form-label fw-bold text-dark">اسم الفئة <span class="text-danger">*</span></label>
-            <div class="input-group">
+            <div class="input-group has-validation">
               <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-tag"></i></span>
               <input type="text" class="form-control" id="categoryName" name="name" required maxlength="100">
+              <div class="invalid-feedback">يرجى إدخال اسم الفئة.</div>
             </div>
           </div>
 

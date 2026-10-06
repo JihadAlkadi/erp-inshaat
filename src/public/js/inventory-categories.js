@@ -26,6 +26,86 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   /**
+   * Helper to extract and format Arabic error messages from API response
+   */
+  function extractApiErrorMessage(responseBody, fallback) {
+    if (!responseBody) return fallback || 'حدث خطأ غير متوقع';
+
+    const errorMessages = [];
+
+    if (responseBody.errors && typeof responseBody.errors === 'object' && !Array.isArray(responseBody.errors)) {
+      Object.keys(responseBody.errors).forEach((key) => {
+        const val = responseBody.errors[key];
+        if (Array.isArray(val)) {
+          val.forEach((msg) => {
+            if (typeof msg === 'string' && msg.trim() !== '') {
+              errorMessages.push(msg.trim());
+            }
+          });
+        } else if (typeof val === 'string' && val.trim() !== '') {
+          errorMessages.push(val.trim());
+        }
+      });
+    } else if (Array.isArray(responseBody.errors)) {
+      responseBody.errors.forEach((msg) => {
+        if (typeof msg === 'string' && msg.trim() !== '') {
+          errorMessages.push(msg.trim());
+        }
+      });
+    }
+
+    if (errorMessages.length === 0 && responseBody.message && typeof responseBody.message === 'string') {
+      errorMessages.push(responseBody.message);
+    }
+
+    const uniqueMessages = [];
+    errorMessages.forEach((msg) => {
+      if (uniqueMessages.indexOf(msg) === -1) {
+        uniqueMessages.push(msg);
+      }
+    });
+
+    if (uniqueMessages.length > 0) {
+      return uniqueMessages.join('، ');
+    }
+
+    return fallback || 'حدث خطأ أثناء معالجة الطلب';
+  }
+
+  /**
+   * Helper to show form error in #formAlert or SweetAlert2
+   */
+  function showFormError(message) {
+    const alertEl = document.getElementById('formAlert');
+    if (alertEl) {
+      alertEl.textContent = message;
+      alertEl.classList.remove('d-none');
+      alertEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else if (typeof Swal !== 'undefined') {
+      Swal.fire({
+        icon: 'error',
+        title: 'خطأ',
+        text: message,
+        confirmButtonText: 'حسناً',
+        confirmButtonColor: '#10AC84',
+      });
+    } else {
+      showAlert(message, 'danger');
+    }
+  }
+
+  /**
+   * Helper to clear form error alert
+   */
+  function clearFormError() {
+    const alertEl = document.getElementById('formAlert');
+    if (alertEl) {
+      alertEl.textContent = '';
+      alertEl.classList.add('d-none');
+    }
+  }
+
+  /**
    * Helper to show Bootstrap alert safely without innerHTML XSS.
    */
   function showAlert(message, type = 'danger') {
@@ -225,13 +305,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Right Actions section
     const rightDiv = document.createElement('div');
-    rightDiv.className = 'd-flex gap-1 align-items-center';
+    rightDiv.className = 'd-inline-flex gap-1 align-items-center';
 
     // Add subcategory button
     if (permissions.canCreateCategory) {
       const addSubBtn = document.createElement('a');
       addSubBtn.href = `/inventory/categories/create?parentId=${encodeURIComponent(category.id)}`;
-      addSubBtn.className = 'btn btn-sm btn-outline-success border-0';
+      addSubBtn.className = 'btn btn-sm btn-outline-success';
       addSubBtn.title = 'إضافة فئة فرعية';
       const addIcon = document.createElement('i');
       addIcon.className = 'fa-solid fa-plus';
@@ -243,10 +323,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (permissions.canUpdateCategory) {
       const editBtn = document.createElement('a');
       editBtn.href = `/inventory/categories/${encodeURIComponent(category.id)}/edit`;
-      editBtn.className = 'btn btn-sm btn-outline-primary border-0';
+      editBtn.className = 'btn btn-sm btn-outline-primary';
       editBtn.title = 'تعديل الفئة';
       const editIcon = document.createElement('i');
-      editIcon.className = 'fa-solid fa-pen';
+      editIcon.className = 'fa-solid fa-pen-to-square';
       editBtn.appendChild(editIcon);
       rightDiv.appendChild(editBtn);
     }
@@ -255,10 +335,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (permissions.canDeleteCategory) {
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
-      deleteBtn.className = 'btn btn-sm btn-outline-danger border-0';
+      deleteBtn.className = 'btn btn-sm btn-outline-danger';
       deleteBtn.title = 'أرشفة الفئة';
       const delIcon = document.createElement('i');
-      delIcon.className = 'fa-solid fa-box-archive';
+      delIcon.className = 'fa-solid fa-trash-can';
       deleteBtn.appendChild(delIcon);
       deleteBtn.addEventListener('click', () => handleDeleteCategory(category));
       rightDiv.appendChild(deleteBtn);
@@ -425,13 +505,35 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Handles soft delete (archive) of a category.
+   * Handles soft delete (archive) of a category using SweetAlert2 confirmation.
    */
   async function handleDeleteCategory(category) {
-    if (!confirm(`هل أنت متأكد من أرشفة فئة "${category.name}"؟`)) {
-      return;
-    }
+    const actionTitle = 'أرشفة الفئة';
+    const actionText = `هل أنت متأكد من رغبتك في أرشفة فئة "${category.name}"؟ لن تظهر في الخيارات الجديدة.`;
 
+    if (typeof Swal !== 'undefined') {
+      Swal.fire({
+        title: actionTitle,
+        text: actionText,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#EE5253',
+        cancelButtonColor: '#6B7280',
+        confirmButtonText: 'نعم، أرشفة الفئة',
+        cancelButtonText: 'إلغاء',
+      }).then(async (result) => {
+        if (result.isConfirmed) {
+          await executeDeleteCategory(category);
+        }
+      });
+    } else {
+      if (confirm(actionText)) {
+        await executeDeleteCategory(category);
+      }
+    }
+  }
+
+  async function executeDeleteCategory(category) {
     try {
       const res = await window.erpFetch(`/api/inventory/categories/${encodeURIComponent(category.id)}`, {
         method: 'DELETE',
@@ -439,13 +541,45 @@ document.addEventListener('DOMContentLoaded', () => {
       const json = await res.json();
 
       if (json.success) {
-        showAlert(json.message || 'تمت أرشفة الفئة بنجاح', 'success');
+        if (typeof Swal !== 'undefined') {
+          const Toast = Swal.mixin({
+            toast: true,
+            position: 'top-start',
+            showConfirmButton: false,
+            timer: 3000,
+            timerProgressBar: true,
+          });
+          Toast.fire({ icon: 'success', title: json.message || 'تمت أرشفة الفئة بنجاح' });
+        } else {
+          showAlert(json.message || 'تمت أرشفة الفئة بنجاح', 'success');
+        }
         loadRootCategories();
       } else {
-        showAlert(json.message || 'فشل في أرشفة الفئة');
+        const errorMsg = extractApiErrorMessage(json, 'فشل في أرشفة الفئة');
+        if (typeof Swal !== 'undefined') {
+          Swal.fire({
+            icon: 'error',
+            title: 'تعذر أرشفة الفئة',
+            text: errorMsg,
+            confirmButtonText: 'حسناً',
+            confirmButtonColor: '#10AC84',
+          });
+        } else {
+          showAlert(errorMsg, 'danger');
+        }
       }
     } catch (err) {
-      showAlert('حدث خطأ أثناء تنفيذ عملية الأرشفة');
+      if (typeof Swal !== 'undefined') {
+        Swal.fire({
+          icon: 'error',
+          title: 'خطأ في الاتصال',
+          text: 'تعذر الاتصال بالخادم أثناء أرشفة الفئة',
+          confirmButtonText: 'حسناً',
+          confirmButtonColor: '#10AC84',
+        });
+      } else {
+        showAlert('حدث خطأ أثناء تنفيذ عملية الأرشفة', 'danger');
+      }
     }
   }
 
@@ -555,23 +689,33 @@ document.addEventListener('DOMContentLoaded', () => {
           // Actions
           const tdActions = document.createElement('td');
           tdActions.className = 'text-end';
+          const actionGroup = document.createElement('div');
+          actionGroup.className = 'd-inline-flex gap-1';
 
           if (permissions.canUpdateCategory) {
             const editLink = document.createElement('a');
             editLink.href = `/inventory/categories/${encodeURIComponent(cat.id)}/edit`;
-            editLink.className = 'btn btn-sm btn-outline-primary me-1';
-            editLink.textContent = 'تعديل';
-            tdActions.appendChild(editLink);
+            editLink.className = 'btn btn-sm btn-outline-primary';
+            editLink.title = 'تعديل الفئة';
+            const editIcon = document.createElement('i');
+            editIcon.className = 'fa-solid fa-pen-to-square';
+            editLink.appendChild(editIcon);
+            actionGroup.appendChild(editLink);
           }
 
           if (permissions.canDeleteCategory) {
             const delBtn = document.createElement('button');
             delBtn.type = 'button';
             delBtn.className = 'btn btn-sm btn-outline-danger';
-            delBtn.textContent = 'أرشفة';
+            delBtn.title = 'أرشفة الفئة';
+            const delIcon = document.createElement('i');
+            delIcon.className = 'fa-solid fa-trash-can';
+            delBtn.appendChild(delIcon);
             delBtn.addEventListener('click', () => handleDeleteCategory(cat));
-            tdActions.appendChild(delBtn);
+            actionGroup.appendChild(delBtn);
           }
+
+          tdActions.appendChild(actionGroup);
 
           tr.appendChild(tdActions);
           searchResultsTableBody.appendChild(tr);
@@ -591,6 +735,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     createCategoryForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      clearFormError();
 
       const nameInput = document.getElementById('categoryName');
       const codeInput = document.getElementById('categoryCode');
@@ -606,12 +751,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const parentId = parentSelect && parentSelect.value ? parentSelect.value : null;
       const isActive = activeCheckbox ? activeCheckbox.checked : true;
 
+      if (!createCategoryForm.checkValidity()) {
+        e.stopPropagation();
+        createCategoryForm.classList.add('was-validated');
+        showFormError('يرجى التحقق من ملء جميع الحقول المطلوبة بشكل صحيح.');
+        return;
+      }
+
       if (!name) {
-        showAlert('اسم الفئة مطلوب');
+        showFormError('اسم الفئة مطلوب');
         return;
       }
       if (!code) {
-        showAlert('رمز الفئة (الكود) مطلوب');
+        showFormError('رمز الفئة (الكود) مطلوب');
         return;
       }
 
@@ -628,12 +780,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const json = await res.json();
 
         if (json.success) {
+          sessionStorage.setItem('pendingToast', 'تم إنشاء الفئة بنجاح');
           window.location.href = '/inventory/categories';
         } else {
-          showAlert(json.message || 'فشل في إنشاء الفئة');
+          const errorMsg = extractApiErrorMessage(json, 'فشل في إنشاء الفئة');
+          showFormError(errorMsg);
         }
       } catch (err) {
-        showAlert('حدث خطأ أثناء إرسال البيانات إلى الخادم');
+        showFormError('حدث خطأ أثناء إرسال البيانات إلى الخادم');
       } finally {
         if (submitBtn) submitBtn.disabled = false;
         if (spinner) spinner.classList.add('d-none');
@@ -665,10 +819,10 @@ document.addEventListener('DOMContentLoaded', () => {
           if (activeCheckbox) activeCheckbox.checked = cat.isActive;
           await loadCategoryOptions(cat.parentId || '', cat.parent ? cat.parent.name : '');
         } else {
-          showAlert(json.message || 'فشل في تحميل بيانات الفئة');
+          showFormError(json.message || 'فشل في تحميل بيانات الفئة');
         }
       } catch (err) {
-        showAlert('حدث خطأ أثناء تحميل بيانات الفئة');
+        showFormError('حدث خطأ أثناء تحميل بيانات الفئة');
       }
     }
 
@@ -676,6 +830,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     editCategoryForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      clearFormError();
 
       const nameInput = document.getElementById('categoryName');
       const descInput = document.getElementById('categoryDescription');
@@ -689,8 +844,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const parentId = parentSelect && parentSelect.value ? parentSelect.value : null;
       const isActive = activeCheckbox ? activeCheckbox.checked : true;
 
+      if (!editCategoryForm.checkValidity()) {
+        e.stopPropagation();
+        editCategoryForm.classList.add('was-validated');
+        showFormError('يرجى التحقق من ملء جميع الحقول المطلوبة بشكل صحيح.');
+        return;
+      }
+
       if (!name) {
-        showAlert('اسم الفئة مطلوب');
+        showFormError('اسم الفئة مطلوب');
         return;
       }
 
@@ -707,12 +869,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const json = await res.json();
 
         if (json.success) {
+          sessionStorage.setItem('pendingToast', 'تم حفظ تعديلات الفئة بنجاح');
           window.location.href = '/inventory/categories';
         } else {
-          showAlert(json.message || 'فشل في حفظ تعديلات الفئة');
+          const errorMsg = extractApiErrorMessage(json, 'فشل في حفظ تعديلات الفئة');
+          showFormError(errorMsg);
         }
       } catch (err) {
-        showAlert('حدث خطأ أثناء إرسال التعديلات إلى الخادم');
+        showFormError('حدث خطأ أثناء إرسال التعديلات إلى الخادم');
       } finally {
         if (submitBtn) submitBtn.disabled = false;
         if (spinner) spinner.classList.add('d-none');

@@ -293,6 +293,15 @@ webRouter.get(
   inventoryProductWebController.renderProductCreate
 );
 
+// GET /inventory/products/:id - Product Detail Page (Protected)
+webRouter.get(
+  '/inventory/products/:id',
+  requireWebAuth,
+  requirePermission(SystemPermission.INVENTORY_PRODUCT_VIEW),
+  validateUuidParam('id'),
+  inventoryProductWebController.renderProductShow
+);
+
 // GET /inventory/products/:id/edit - Edit Product Page (Protected)
 webRouter.get(
   '/inventory/products/:id/edit',

@@ -561,9 +561,8 @@ export class InventoryProductService {
     const total = await qb.getCount();
 
     const units = await qb
-      .addOrderBy(`CASE WHEN u.id = :baseUnitId THEN 0 ELSE 1 END`, 'ASC')
-      .addOrderBy('u.created_at', 'ASC')
-      .setParameter('baseUnitId', product.baseUnitId || '')
+      .orderBy('u.equivalentToUnitId', 'ASC')
+      .addOrderBy('u.createdAt', 'ASC')
       .skip(skip)
       .take(limit)
       .getMany();

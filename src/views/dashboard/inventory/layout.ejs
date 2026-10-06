@@ -6,4 +6,4 @@
     locals.hasSidebar = true;
 %>
 
-<%- include('../layout') %>
+<%- include('../layout', { ...locals, hasSidebar: true, sidebarPath: 'inventory/partials/sidebar', appName: 'إدارة المستودعات', themeColor: '#10AC84' }) %>

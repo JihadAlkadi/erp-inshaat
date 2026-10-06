@@ -14,6 +14,86 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   /**
+   * Helper to extract and format Arabic error messages from API response
+   */
+  function extractApiErrorMessage(responseBody, fallback) {
+    if (!responseBody) return fallback || 'حدث خطأ غير متوقع';
+
+    const errorMessages = [];
+
+    if (responseBody.errors && typeof responseBody.errors === 'object' && !Array.isArray(responseBody.errors)) {
+      Object.keys(responseBody.errors).forEach((key) => {
+        const val = responseBody.errors[key];
+        if (Array.isArray(val)) {
+          val.forEach((msg) => {
+            if (typeof msg === 'string' && msg.trim() !== '') {
+              errorMessages.push(msg.trim());
+            }
+          });
+        } else if (typeof val === 'string' && val.trim() !== '') {
+          errorMessages.push(val.trim());
+        }
+      });
+    } else if (Array.isArray(responseBody.errors)) {
+      responseBody.errors.forEach((msg) => {
+        if (typeof msg === 'string' && msg.trim() !== '') {
+          errorMessages.push(msg.trim());
+        }
+      });
+    }
+
+    if (errorMessages.length === 0 && responseBody.message && typeof responseBody.message === 'string') {
+      errorMessages.push(responseBody.message);
+    }
+
+    const uniqueMessages = [];
+    errorMessages.forEach((msg) => {
+      if (uniqueMessages.indexOf(msg) === -1) {
+        uniqueMessages.push(msg);
+      }
+    });
+
+    if (uniqueMessages.length > 0) {
+      return uniqueMessages.join('، ');
+    }
+
+    return fallback || 'حدث خطأ أثناء معالجة الطلب';
+  }
+
+  /**
+   * Helper to show form error in #formAlert or SweetAlert2
+   */
+  function showFormError(message, containerId = 'formAlert') {
+    const alertEl = document.getElementById(containerId);
+    if (alertEl) {
+      alertEl.textContent = message;
+      alertEl.classList.remove('d-none');
+      alertEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else if (typeof Swal !== 'undefined') {
+      Swal.fire({
+        icon: 'error',
+        title: 'خطأ',
+        text: message,
+        confirmButtonText: 'حسناً',
+        confirmButtonColor: '#10AC84',
+      });
+    } else {
+      showAlert(message, 'danger');
+    }
+  }
+
+  /**
+   * Helper to clear form error alert
+   */
+  function clearFormError(containerId = 'formAlert') {
+    const alertEl = document.getElementById(containerId);
+    if (alertEl) {
+      alertEl.textContent = '';
+      alertEl.classList.add('d-none');
+    }
+  }
+
+  /**
    * Helper to show Bootstrap alert safely without innerHTML XSS.
    */
   function showAlert(message, type = 'danger', targetContainer = null) {
@@ -327,7 +407,11 @@ document.addEventListener('DOMContentLoaded', () => {
           // Name
           const tdName = document.createElement('td');
           tdName.className = 'ps-4 fw-bold';
-          tdName.textContent = p.name;
+          const nameLink = document.createElement('a');
+          nameLink.href = `/inventory/products/${encodeURIComponent(p.id)}`;
+          nameLink.className = 'text-decoration-none text-dark fw-bold';
+          nameLink.textContent = p.name;
+          tdName.appendChild(nameLink);
           tr.appendChild(tdName);
 
           // Code
@@ -374,23 +458,43 @@ document.addEventListener('DOMContentLoaded', () => {
           // Actions
           const tdActions = document.createElement('td');
           tdActions.className = 'text-end pe-4';
+          const actionGroup = document.createElement('div');
+          actionGroup.className = 'd-inline-flex gap-1';
+
+          // View Details Button
+          const viewBtn = document.createElement('a');
+          viewBtn.href = `/inventory/products/${encodeURIComponent(p.id)}`;
+          viewBtn.className = 'btn btn-sm btn-outline-info';
+          viewBtn.title = 'عرض تفاصيل المنتج';
+          const viewIcon = document.createElement('i');
+          viewIcon.className = 'fa-solid fa-eye';
+          viewBtn.appendChild(viewIcon);
+          actionGroup.appendChild(viewBtn);
 
           if (permissions.canUpdateProduct) {
             const editBtn = document.createElement('a');
             editBtn.href = `/inventory/products/${encodeURIComponent(p.id)}/edit`;
-            editBtn.className = 'btn btn-sm btn-outline-primary rounded-pill px-3 me-1';
-            editBtn.textContent = 'تعديل';
-            tdActions.appendChild(editBtn);
+            editBtn.className = 'btn btn-sm btn-outline-primary';
+            editBtn.title = 'تعديل المنتج';
+            const editIcon = document.createElement('i');
+            editIcon.className = 'fa-solid fa-pen-to-square';
+            editBtn.appendChild(editIcon);
+            actionGroup.appendChild(editBtn);
           }
 
           if (permissions.canDeleteProduct) {
             const delBtn = document.createElement('button');
             delBtn.type = 'button';
-            delBtn.className = 'btn btn-sm btn-outline-danger rounded-pill px-3';
-            delBtn.textContent = 'أرشفة';
+            delBtn.className = 'btn btn-sm btn-outline-danger';
+            delBtn.title = 'أرشفة المنتج';
+            const delIcon = document.createElement('i');
+            delIcon.className = 'fa-solid fa-trash-can';
+            delBtn.appendChild(delIcon);
             delBtn.addEventListener('click', () => handleDeleteProduct(p));
-            tdActions.appendChild(delBtn);
+            actionGroup.appendChild(delBtn);
           }
+
+          tdActions.appendChild(actionGroup);
 
           tr.appendChild(tdActions);
           productsTableBody.appendChild(tr);
@@ -460,10 +564,32 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function handleDeleteProduct(product) {
-    if (!confirm(`هل أنت متأكد من أرشفة منتج "${product.name}"؟`)) {
-      return;
-    }
+    const actionTitle = 'أرشفة المنتج';
+    const actionText = `هل أنت متأكد من رغبتك في أرشفة منتج "${product.name}"؟ لن يظهر في القوائم النشطة.`;
 
+    if (typeof Swal !== 'undefined') {
+      Swal.fire({
+        title: actionTitle,
+        text: actionText,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#EE5253',
+        cancelButtonColor: '#6B7280',
+        confirmButtonText: 'نعم، أرشفة المنتج',
+        cancelButtonText: 'إلغاء',
+      }).then(async (result) => {
+        if (result.isConfirmed) {
+          await executeDeleteProduct(product);
+        }
+      });
+    } else {
+      if (confirm(actionText)) {
+        await executeDeleteProduct(product);
+      }
+    }
+  }
+
+  async function executeDeleteProduct(product) {
     try {
       const res = await window.erpFetch(`/api/inventory/products/${encodeURIComponent(product.id)}`, {
         method: 'DELETE',
@@ -471,13 +597,45 @@ document.addEventListener('DOMContentLoaded', () => {
       const json = await res.json();
 
       if (json.success) {
-        showAlert(json.message || 'تمت أرشفة المنتج بنجاح', 'success');
+        if (typeof Swal !== 'undefined') {
+          const Toast = Swal.mixin({
+            toast: true,
+            position: 'top-start',
+            showConfirmButton: false,
+            timer: 3000,
+            timerProgressBar: true,
+          });
+          Toast.fire({ icon: 'success', title: json.message || 'تمت أرشفة المنتج بنجاح' });
+        } else {
+          showAlert(json.message || 'تمت أرشفة المنتج بنجاح', 'success');
+        }
         loadProducts(currentPage);
       } else {
-        showAlert(json.message || 'فشل في أرشفة المنتج');
+        const errorMsg = extractApiErrorMessage(json, 'فشل في أرشفة المنتج');
+        if (typeof Swal !== 'undefined') {
+          Swal.fire({
+            icon: 'error',
+            title: 'تعذر أرشفة المنتج',
+            text: errorMsg,
+            confirmButtonText: 'حسناً',
+            confirmButtonColor: '#10AC84',
+          });
+        } else {
+          showAlert(errorMsg, 'danger');
+        }
       }
     } catch (err) {
-      showAlert('حدث خطأ أثناء تنفيذ عملية أرشفة المنتج');
+      if (typeof Swal !== 'undefined') {
+        Swal.fire({
+          icon: 'error',
+          title: 'خطأ في الاتصال',
+          text: 'تعذر الاتصال بالخادم أثناء أرشفة المنتج',
+          confirmButtonText: 'حسناً',
+          confirmButtonColor: '#10AC84',
+        });
+      } else {
+        showAlert('حدث خطأ أثناء تنفيذ عملية أرشفة المنتج', 'danger');
+      }
     }
   }
 
@@ -513,6 +671,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const baseSpecsContainer = document.getElementById('baseSpecsContainer');
   const btnAddBaseSpec = document.getElementById('btnAddBaseSpec');
   const productCategorySelect = document.getElementById('productCategoryId');
+  const additionalUnitsContainer = document.getElementById('additionalUnitsContainer');
+  const emptyAdditionalUnitsNotice = document.getElementById('emptyAdditionalUnitsNotice');
+  const btnAddAdditionalUnit = document.getElementById('btnAddAdditionalUnit');
+  const baseNameInput = document.getElementById('baseUnitName');
 
   if (createProductForm) {
     loadCategoryOptionsForProduct(productCategorySelect);
@@ -523,8 +685,397 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    // Dynamic Additional Units State
+    let additionalUnits = [];
+
+    function updateFormulaPreview(unit, cardElement) {
+      const previewText = cardElement.querySelector('.formula-preview-text');
+      if (!previewText) return;
+
+      const unitName = unit.name || '[الوحدة]';
+      const factor = unit.conversionQuantity || '?';
+      let targetName = baseNameInput ? baseNameInput.value.trim() || 'الوحدة الأساسية' : 'الوحدة الأساسية';
+
+      if (unit.equivalentToTarget !== '__BASE__') {
+        const targetUnit = additionalUnits.find((u) => u.id === unit.equivalentToTarget);
+        if (targetUnit && targetUnit.name) {
+          targetName = targetUnit.name;
+        } else {
+          targetName = 'وحدة سابقة';
+        }
+      }
+
+      previewText.textContent = `1 ${unitName} = ${factor} × ${targetName}`;
+    }
+
+    function refreshTargetSelectOptions() {
+      if (!additionalUnitsContainer) return;
+
+      const cards = additionalUnitsContainer.querySelectorAll('.additional-unit-card');
+      cards.forEach((card, idx) => {
+        const select = card.querySelector('.unit-target-select');
+        if (!select) return;
+
+        const currentVal = additionalUnits[idx].equivalentToTarget;
+        select.textContent = ''; // clear
+
+        // Option 1: Base Unit
+        const baseOpt = document.createElement('option');
+        baseOpt.value = '__BASE__';
+        const bName = baseNameInput ? baseNameInput.value.trim() : '';
+        baseOpt.textContent = `الوحدة الأساسية: ${bName || 'الوحدة الأساسية'}`;
+        select.appendChild(baseOpt);
+
+        // Options: Preceding units only (Strict DAG / acyclic invariant)
+        for (let p = 0; p < idx; p++) {
+          const prevUnit = additionalUnits[p];
+          const prevOpt = document.createElement('option');
+          prevOpt.value = prevUnit.id;
+          prevOpt.textContent = `الوحدة #${p + 1}: ${prevUnit.name || 'وحدة غير مسماة'}`;
+          select.appendChild(prevOpt);
+        }
+
+        // Restore value if valid, else fallback to __BASE__
+        const validValues = ['__BASE__', ...additionalUnits.slice(0, idx).map((u) => u.id)];
+        if (validValues.includes(currentVal)) {
+          select.value = currentVal;
+        } else {
+          select.value = '__BASE__';
+          additionalUnits[idx].equivalentToTarget = '__BASE__';
+        }
+
+        updateFormulaPreview(additionalUnits[idx], card);
+      });
+    }
+
+    function renderAdditionalUnits() {
+      if (!additionalUnitsContainer || !emptyAdditionalUnitsNotice) return;
+
+      if (additionalUnits.length === 0) {
+        emptyAdditionalUnitsNotice.classList.remove('d-none');
+        additionalUnitsContainer.textContent = '';
+        return;
+      }
+
+      emptyAdditionalUnitsNotice.classList.add('d-none');
+      additionalUnitsContainer.textContent = '';
+
+      additionalUnits.forEach((unit, idx) => {
+        const card = document.createElement('div');
+        card.className = 'card border border-light-subtle shadow-sm additional-unit-card';
+        card.style.borderRadius = '10px';
+        card.dataset.unitId = unit.id;
+
+        // Card Header
+        const header = document.createElement('div');
+        header.className = 'card-header bg-light py-2 px-3 d-flex justify-content-between align-items-center';
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'd-flex align-items-center gap-2';
+
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary font-monospace';
+        badge.textContent = `الوحدة الإضافية #${idx + 1}`;
+        titleDiv.appendChild(badge);
+
+        const nameHeading = document.createElement('span');
+        nameHeading.className = 'fw-bold text-dark unit-name-heading small';
+        nameHeading.textContent = unit.name ? unit.name : 'وحدة جديدة';
+        titleDiv.appendChild(nameHeading);
+        header.appendChild(titleDiv);
+
+        // Delete button
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'btn btn-sm btn-outline-danger py-1 px-2 d-inline-flex align-items-center gap-1';
+        delBtn.style.borderRadius = '6px';
+        delBtn.title = 'حذف هذه الوحدة';
+
+        const delIcon = document.createElement('i');
+        delIcon.className = 'fa-solid fa-trash';
+        delBtn.appendChild(delIcon);
+
+        const delText = document.createElement('span');
+        delText.className = 'small';
+        delText.textContent = 'حذف الوحدة';
+        delBtn.appendChild(delText);
+
+        delBtn.addEventListener('click', () => {
+          const removedId = unit.id;
+          additionalUnits.splice(idx, 1);
+          additionalUnits.forEach((u) => {
+            if (u.equivalentToTarget === removedId) {
+              u.equivalentToTarget = '__BASE__';
+            }
+          });
+          renderAdditionalUnits();
+        });
+        header.appendChild(delBtn);
+        card.appendChild(header);
+
+        // Card Body
+        const body = document.createElement('div');
+        body.className = 'card-body p-3';
+
+        // Row 1: Name, ConversionQuantity, Target Select
+        const row1 = document.createElement('div');
+        row1.className = 'row g-3 mb-3';
+
+        // Name
+        const colName = document.createElement('div');
+        colName.className = 'col-12 col-md-4';
+        const labelName = document.createElement('label');
+        labelName.className = 'form-label fw-bold text-dark small mb-1';
+        labelName.textContent = 'اسم الوحدة ';
+        const reqStar1 = document.createElement('span');
+        reqStar1.className = 'text-danger';
+        reqStar1.textContent = '*';
+        labelName.appendChild(reqStar1);
+        colName.appendChild(labelName);
+
+        const igName = document.createElement('div');
+        igName.className = 'input-group input-group-sm has-validation';
+        const igNameSpan = document.createElement('span');
+        igNameSpan.className = 'input-group-text bg-light text-muted';
+        const igNameIcon = document.createElement('i');
+        igNameIcon.className = 'fa-solid fa-tag';
+        igNameSpan.appendChild(igNameIcon);
+        igName.appendChild(igNameSpan);
+
+        const inputName = document.createElement('input');
+        inputName.type = 'text';
+        inputName.className = 'form-control unit-name-input';
+        inputName.required = true;
+        inputName.maxLength = 100;
+        inputName.placeholder = 'مثال: كرتونة، طرد، دزينة';
+        inputName.value = unit.name;
+        igName.appendChild(inputName);
+
+        const fbName = document.createElement('div');
+        fbName.className = 'invalid-feedback';
+        fbName.textContent = 'يرجى إدخال اسم الوحدة.';
+        igName.appendChild(fbName);
+        colName.appendChild(igName);
+        row1.appendChild(colName);
+
+        // Conversion Quantity
+        const colConv = document.createElement('div');
+        colConv.className = 'col-12 col-md-4';
+        const labelConv = document.createElement('label');
+        labelConv.className = 'form-label fw-bold text-dark small mb-1';
+        labelConv.textContent = 'معامل التحويل (الكمية) ';
+        const reqStar2 = document.createElement('span');
+        reqStar2.className = 'text-danger';
+        reqStar2.textContent = '*';
+        labelConv.appendChild(reqStar2);
+        colConv.appendChild(labelConv);
+
+        const igConv = document.createElement('div');
+        igConv.className = 'input-group input-group-sm has-validation';
+        const igConvSpan = document.createElement('span');
+        igConvSpan.className = 'input-group-text bg-light text-muted';
+        const igConvIcon = document.createElement('i');
+        igConvIcon.className = 'fa-solid fa-calculator';
+        igConvSpan.appendChild(igConvIcon);
+        igConv.appendChild(igConvSpan);
+
+        const inputConv = document.createElement('input');
+        inputConv.type = 'number';
+        inputConv.step = 'any';
+        inputConv.min = '0.000001';
+        inputConv.className = 'form-control font-monospace unit-conv-input';
+        inputConv.required = true;
+        inputConv.placeholder = 'مثال: 24';
+        inputConv.value = unit.conversionQuantity;
+        igConv.appendChild(inputConv);
+
+        const fbConv = document.createElement('div');
+        fbConv.className = 'invalid-feedback';
+        fbConv.textContent = 'يرجى إدخال معامل تحويل صالح (أكبر من 0).';
+        igConv.appendChild(fbConv);
+        colConv.appendChild(igConv);
+        row1.appendChild(colConv);
+
+        // Target Unit Select
+        const colTarget = document.createElement('div');
+        colTarget.className = 'col-12 col-md-4';
+        const labelTarget = document.createElement('label');
+        labelTarget.className = 'form-label fw-bold text-dark small mb-1';
+        labelTarget.textContent = 'تعادل الوحدة (الوحدة المقابلة) ';
+        const reqStar3 = document.createElement('span');
+        reqStar3.className = 'text-danger';
+        reqStar3.textContent = '*';
+        labelTarget.appendChild(reqStar3);
+        colTarget.appendChild(labelTarget);
+
+        const igTarget = document.createElement('div');
+        igTarget.className = 'input-group input-group-sm has-validation';
+        const igTargetSpan = document.createElement('span');
+        igTargetSpan.className = 'input-group-text bg-light text-muted';
+        const igTargetIcon = document.createElement('i');
+        igTargetIcon.className = 'fa-solid fa-link';
+        igTargetSpan.appendChild(igTargetIcon);
+        igTarget.appendChild(igTargetSpan);
+
+        const selectTarget = document.createElement('select');
+        selectTarget.className = 'form-select unit-target-select';
+        selectTarget.required = true;
+        igTarget.appendChild(selectTarget);
+
+        const fbTarget = document.createElement('div');
+        fbTarget.className = 'invalid-feedback';
+        fbTarget.textContent = 'يرجى اختيار الوحدة المقابلة.';
+        igTarget.appendChild(fbTarget);
+        colTarget.appendChild(igTarget);
+        row1.appendChild(colTarget);
+        body.appendChild(row1);
+
+        // Row 2: Price & Barcode
+        const row2 = document.createElement('div');
+        row2.className = 'row g-3 mb-3';
+
+        // Price
+        const colPrice = document.createElement('div');
+        colPrice.className = 'col-12 col-md-6';
+        const labelPrice = document.createElement('label');
+        labelPrice.className = 'form-label fw-bold text-dark small mb-1';
+        labelPrice.textContent = 'السعر المرجعي للوحدة ';
+        const reqStar4 = document.createElement('span');
+        reqStar4.className = 'text-danger';
+        reqStar4.textContent = '*';
+        labelPrice.appendChild(reqStar4);
+        colPrice.appendChild(labelPrice);
+
+        const igPrice = document.createElement('div');
+        igPrice.className = 'input-group input-group-sm has-validation';
+        const igPriceSpan = document.createElement('span');
+        igPriceSpan.className = 'input-group-text bg-light text-muted';
+        const igPriceIcon = document.createElement('i');
+        igPriceIcon.className = 'fa-solid fa-money-bill-wave';
+        igPriceSpan.appendChild(igPriceIcon);
+        igPrice.appendChild(igPriceSpan);
+
+        const inputPrice = document.createElement('input');
+        inputPrice.type = 'number';
+        inputPrice.step = '0.0001';
+        inputPrice.min = '0';
+        inputPrice.className = 'form-control font-monospace unit-price-input';
+        inputPrice.required = true;
+        inputPrice.placeholder = '0.00';
+        inputPrice.value = unit.price;
+        igPrice.appendChild(inputPrice);
+
+        const fbPrice = document.createElement('div');
+        fbPrice.className = 'invalid-feedback';
+        fbPrice.textContent = 'يرجى إدخال سعر صالح (0 أو أكبر).';
+        igPrice.appendChild(fbPrice);
+        colPrice.appendChild(igPrice);
+        row2.appendChild(colPrice);
+
+        // Barcode
+        const colBarcode = document.createElement('div');
+        colBarcode.className = 'col-12 col-md-6';
+        const labelBarcode = document.createElement('label');
+        labelBarcode.className = 'form-label fw-bold text-dark small mb-1';
+        labelBarcode.textContent = 'الباركود (اختياري)';
+        colBarcode.appendChild(labelBarcode);
+
+        const igBarcode = document.createElement('div');
+        igBarcode.className = 'input-group input-group-sm';
+        const igBarcodeSpan = document.createElement('span');
+        igBarcodeSpan.className = 'input-group-text bg-light text-muted';
+        const igBarcodeIcon = document.createElement('i');
+        igBarcodeIcon.className = 'fa-solid fa-barcode';
+        igBarcodeSpan.appendChild(igBarcodeIcon);
+        igBarcode.appendChild(igBarcodeSpan);
+
+        const inputBarcode = document.createElement('input');
+        inputBarcode.type = 'text';
+        inputBarcode.className = 'form-control font-monospace unit-barcode-input';
+        inputBarcode.maxLength = 100;
+        inputBarcode.placeholder = 'مثال: 628100099999';
+        inputBarcode.value = unit.barcode;
+        igBarcode.appendChild(inputBarcode);
+        colBarcode.appendChild(igBarcode);
+        row2.appendChild(colBarcode);
+        body.appendChild(row2);
+
+        // Row 3: Formula Preview
+        const previewAlert = document.createElement('div');
+        previewAlert.className = 'alert alert-light border py-2 px-3 mb-0 small text-primary fw-bold';
+        previewAlert.style.borderRadius = '6px';
+        const previewIcon = document.createElement('i');
+        previewIcon.className = 'fa-solid fa-calculator me-1';
+        previewAlert.appendChild(previewIcon);
+        const previewSpan = document.createElement('span');
+        previewSpan.className = 'formula-preview-text';
+        previewAlert.appendChild(previewSpan);
+        body.appendChild(previewAlert);
+
+        card.appendChild(body);
+        additionalUnitsContainer.appendChild(card);
+
+        // Event Listeners
+        inputName.addEventListener('input', () => {
+          unit.name = inputName.value.trim();
+          nameHeading.textContent = unit.name ? unit.name : 'وحدة جديدة';
+          refreshTargetSelectOptions();
+        });
+
+        inputConv.addEventListener('input', () => {
+          unit.conversionQuantity = inputConv.value.trim();
+          updateFormulaPreview(unit, card);
+        });
+
+        selectTarget.addEventListener('change', () => {
+          unit.equivalentToTarget = selectTarget.value;
+          updateFormulaPreview(unit, card);
+        });
+
+        inputPrice.addEventListener('input', () => {
+          unit.price = inputPrice.value.trim();
+        });
+
+        inputBarcode.addEventListener('input', () => {
+          unit.barcode = inputBarcode.value.trim();
+        });
+      });
+
+      refreshTargetSelectOptions();
+    }
+
+    if (btnAddAdditionalUnit) {
+      btnAddAdditionalUnit.addEventListener('click', () => {
+        const newUnit = {
+          id: 'unit_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+          name: '',
+          conversionQuantity: '',
+          equivalentToTarget: additionalUnits.length === 0 ? '__BASE__' : additionalUnits[additionalUnits.length - 1].id,
+          price: '',
+          barcode: '',
+          specifications: [],
+        };
+        additionalUnits.push(newUnit);
+        renderAdditionalUnits();
+      });
+    }
+
+    if (baseNameInput) {
+      baseNameInput.addEventListener('input', () => {
+        refreshTargetSelectOptions();
+      });
+    }
+
     createProductForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      clearFormError();
+
+      if (!createProductForm.checkValidity()) {
+        e.stopPropagation();
+        createProductForm.classList.add('was-validated');
+        showFormError('يرجى التحقق من ملء جميع الحقول المطلوبة المميزة باللون الأحمر.');
+        return;
+      }
 
       const nameInput = document.getElementById('productName');
       const codeInput = document.getElementById('productCode');
@@ -533,7 +1084,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const descInput = document.getElementById('productDescription');
       const activeCheckbox = document.getElementById('productIsActive');
 
-      const baseNameInput = document.getElementById('baseUnitName');
+      const baseNameInputEl = document.getElementById('baseUnitName');
       const basePriceInput = document.getElementById('baseUnitPrice');
       const baseBarcodeInput = document.getElementById('baseUnitBarcode');
 
@@ -547,30 +1098,43 @@ document.addEventListener('DOMContentLoaded', () => {
       const description = descInput ? descInput.value.trim() || null : null;
       const isActive = activeCheckbox ? activeCheckbox.checked : true;
 
-      const baseUnitName = baseNameInput ? baseNameInput.value.trim() : '';
+      const baseUnitName = baseNameInputEl ? baseNameInputEl.value.trim() : '';
       const baseUnitPrice = basePriceInput ? basePriceInput.value.trim() : '';
       const baseUnitBarcode = baseBarcodeInput ? baseBarcodeInput.value.trim() || null : null;
 
-      if (!name) {
-        showAlert('اسم المنتج مطلوب');
+      // Duplicate unit names validation
+      const allUnitNames = [baseUnitName.toLowerCase(), ...additionalUnits.map((u) => u.name.trim().toLowerCase())];
+      const uniqueNames = new Set(allUnitNames);
+      if (uniqueNames.size !== allUnitNames.length) {
+        showFormError('توجد وحدات مكررة بنفس الاسم. يجب أن يكون اسم كل وحدة فريداً داخل المنتج.');
         return;
       }
-      if (!code) {
-        showAlert('رمز المنتج مطلوب');
+
+      // Barcode collision check on client side
+      const barcodes = [baseUnitBarcode, ...additionalUnits.map((u) => (u.barcode ? u.barcode.trim() : null))].filter(Boolean);
+      const uniqueBarcodes = new Set(barcodes);
+      if (uniqueBarcodes.size !== barcodes.length) {
+        showFormError('يوجد تكرار في رمز الباركود بين الوحدات المدخلة.');
         return;
       }
-      if (!baseUnitName) {
-        showAlert('اسم الوحدة الأساسية مطلوب');
-        return;
-      }
-      if (!baseUnitPrice) {
-        showAlert('سعر الوحدة الأساسية مطلوب');
-        return;
+
+      // Additional units numeric checks
+      for (const u of additionalUnits) {
+        const cq = parseFloat(u.conversionQuantity);
+        if (isNaN(cq) || cq <= 0) {
+          showFormError(`معامل التحويل للوحدة "${u.name || 'بدون اسم'}" غير صالح. يجب أن يكون أكبر تماماً من الصفر.`);
+          return;
+        }
+        const pr = parseFloat(u.price);
+        if (isNaN(pr) || pr < 0) {
+          showFormError(`سعر الوحدة "${u.name || 'بدون اسم'}" غير صالح. يجب أن يكون صفراً أو أكبر.`);
+          return;
+        }
       }
 
       const specsResult = collectSpecifications(baseSpecsContainer);
       if (!specsResult.valid) {
-        showAlert(specsResult.message || 'بيانات مواصفات الوحدة غير صالحة');
+        showFormError(specsResult.message || 'بيانات مواصفات الوحدة غير صالحة.');
         return;
       }
       const specifications = specsResult.specifications;
@@ -594,6 +1158,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (spinner) spinner.classList.remove('d-none');
 
       try {
+        // Step 1: Create product with base unit
         const res = await window.erpFetch('/api/inventory/products', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -601,14 +1166,58 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const json = await res.json();
 
-        if (json.success && json.data) {
-          // Direct redirect to edit units page
-          window.location.href = `/inventory/products/${encodeURIComponent(json.data.id)}/edit#units`;
-        } else {
-          showAlert(json.message || 'فشل في إنشاء المنتج');
+        if (!json.success || !json.data) {
+          showFormError(extractApiErrorMessage(json, 'فشل في إنشاء المنتج'));
+          if (submitBtn) submitBtn.disabled = false;
+          if (spinner) spinner.classList.add('d-none');
+          return;
         }
+
+        const createdProduct = json.data;
+        const productId = createdProduct.id;
+        const baseUnitId = createdProduct.baseUnitId;
+
+        // Step 2: Create additional units sequentially
+        if (additionalUnits.length > 0) {
+          const unitIdMap = new Map();
+          unitIdMap.set('__BASE__', baseUnitId);
+
+          for (let i = 0; i < additionalUnits.length; i++) {
+            const u = additionalUnits[i];
+            const targetRealId = unitIdMap.get(u.equivalentToTarget) || baseUnitId;
+
+            const unitPayload = {
+              name: u.name,
+              conversionQuantity: String(u.conversionQuantity),
+              equivalentToUnitId: targetRealId,
+              price: String(u.price),
+              barcode: u.barcode ? u.barcode.trim() : null,
+            };
+
+            const unitRes = await window.erpFetch(`/api/inventory/products/${encodeURIComponent(productId)}/units`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(unitPayload),
+            });
+            const unitJson = await unitRes.json();
+
+            if (!unitJson.success || !unitJson.data) {
+              sessionStorage.setItem(
+                'pendingToast',
+                `تم إنشاء المنتج، لكن تعذر إضافة الوحدة "${u.name}". يمكنك استكمال الوحدات هنا.`
+              );
+              window.location.href = `/inventory/products/${encodeURIComponent(productId)}/edit#units`;
+              return;
+            }
+
+            unitIdMap.set(u.id, unitJson.data.id);
+          }
+        }
+
+        sessionStorage.setItem('pendingToast', 'تم حفظ المنتج وجميع وحداته بنجاح!');
+        window.location.href = '/inventory/products';
       } catch (err) {
-        showAlert('حدث خطأ أثناء إرسال بيانات المنتج إلى الخادم');
+        showFormError('حدث خطأ أثناء إرسال بيانات المنتج إلى الخادم.');
       } finally {
         if (submitBtn) submitBtn.disabled = false;
         if (spinner) spinner.classList.add('d-none');
@@ -861,25 +1470,35 @@ document.addEventListener('DOMContentLoaded', () => {
           // Actions
           const tdActions = document.createElement('td');
           tdActions.className = 'text-end pe-4';
+          const actionGroup = document.createElement('div');
+          actionGroup.className = 'd-inline-flex gap-1';
 
           if (permissions.canUpdateProduct) {
             const editBtn = document.createElement('button');
             editBtn.type = 'button';
-            editBtn.className = 'btn btn-sm btn-outline-primary rounded-pill px-3 me-1';
-            editBtn.textContent = 'تعديل';
+            editBtn.className = 'btn btn-sm btn-outline-primary';
+            editBtn.title = 'تعديل الوحدة';
+            const editIcon = document.createElement('i');
+            editIcon.className = 'fa-solid fa-pen-to-square';
+            editBtn.appendChild(editIcon);
             editBtn.addEventListener('click', () => openEditUnitModal(unit));
-            tdActions.appendChild(editBtn);
+            actionGroup.appendChild(editBtn);
 
             // Base unit cannot be deleted
             if (!unit.isBase) {
               const delBtn = document.createElement('button');
               delBtn.type = 'button';
-              delBtn.className = 'btn btn-sm btn-outline-danger rounded-pill px-3';
-              delBtn.textContent = 'أرشفة';
+              delBtn.className = 'btn btn-sm btn-outline-danger';
+              delBtn.title = 'أرشفة الوحدة';
+              const delIcon = document.createElement('i');
+              delIcon.className = 'fa-solid fa-trash-can';
+              delBtn.appendChild(delIcon);
               delBtn.addEventListener('click', () => handleDeleteUnit(unit));
-              tdActions.appendChild(delBtn);
+              actionGroup.appendChild(delBtn);
             }
           }
+
+          tdActions.appendChild(actionGroup);
 
           tr.appendChild(tdActions);
           productUnitsTableBody.appendChild(tr);
@@ -902,9 +1521,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Save Product Info Form
+    // Save Product Info Form
     if (editProductForm) {
       editProductForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+        clearFormError();
+
+        if (!editProductForm.checkValidity()) {
+          e.stopPropagation();
+          editProductForm.classList.add('was-validated');
+          showFormError('يرجى التحقق من صحة البيانات المدخلة.');
+          return;
+        }
 
         const nameInput = document.getElementById('editProductName');
         const catSelect = document.getElementById('editProductCategoryId');
@@ -921,7 +1549,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const isActive = activeCheckbox ? activeCheckbox.checked : true;
 
         if (!name) {
-          showAlert('اسم المنتج مطلوب');
+          showFormError('اسم المنتج مطلوب.');
           return;
         }
 
@@ -938,13 +1566,24 @@ document.addEventListener('DOMContentLoaded', () => {
           const json = await res.json();
 
           if (json.success) {
-            showAlert('تم حفظ بيانات المنتج بنجاح', 'success');
+            if (typeof Swal !== 'undefined') {
+              const Toast = Swal.mixin({
+                toast: true,
+                position: 'top-start',
+                showConfirmButton: false,
+                timer: 3000,
+                timerProgressBar: true,
+              });
+              Toast.fire({ icon: 'success', title: 'تم حفظ بيانات المنتج بنجاح' });
+            } else {
+              showAlert('تم حفظ بيانات المنتج بنجاح', 'success');
+            }
             loadProductData();
           } else {
-            showAlert(json.message || 'فشل في حفظ التعديلات');
+            showFormError(extractApiErrorMessage(json, 'فشل في حفظ التعديلات'));
           }
         } catch (err) {
-          showAlert('حدث خطأ أثناء إرسال التعديلات إلى الخادم');
+          showFormError('حدث خطأ أثناء إرسال التعديلات إلى الخادم.');
         } finally {
           if (submitBtn) submitBtn.disabled = false;
           if (spinner) spinner.classList.add('d-none');
@@ -955,8 +1594,32 @@ document.addEventListener('DOMContentLoaded', () => {
     // Archive Product Button
     if (btnArchiveProduct) {
       btnArchiveProduct.addEventListener('click', async () => {
-        if (!confirm('هل أنت متأكد من أرشفة هذا المنتج بالكامل؟')) return;
+        const actionTitle = 'أرشفة المنتج';
+        const actionText = 'هل أنت متأكد من رغبتك في أرشفة هذا المنتج بالكامل؟ سيتم تعطيله في النظام.';
 
+        if (typeof Swal !== 'undefined') {
+          Swal.fire({
+            title: actionTitle,
+            text: actionText,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#EE5253',
+            cancelButtonColor: '#6B7280',
+            confirmButtonText: 'نعم، أرشفة المنتج',
+            cancelButtonText: 'إلغاء',
+          }).then(async (result) => {
+            if (result.isConfirmed) {
+              await executeArchiveProduct();
+            }
+          });
+        } else {
+          if (confirm(actionText)) {
+            await executeArchiveProduct();
+          }
+        }
+      });
+
+      async function executeArchiveProduct() {
         try {
           const res = await window.erpFetch(`/api/inventory/products/${encodeURIComponent(productId)}`, {
             method: 'DELETE',
@@ -964,14 +1627,36 @@ document.addEventListener('DOMContentLoaded', () => {
           const json = await res.json();
 
           if (json.success) {
+            sessionStorage.setItem('pendingToast', 'تمت أرشفة المنتج بنجاح');
             window.location.href = '/inventory/products';
           } else {
-            showAlert(json.message || 'فشل في أرشفة المنتج');
+            const errorMsg = extractApiErrorMessage(json, 'فشل في أرشفة المنتج');
+            if (typeof Swal !== 'undefined') {
+              Swal.fire({
+                icon: 'error',
+                title: 'تعذر أرشفة المنتج',
+                text: errorMsg,
+                confirmButtonText: 'حسناً',
+                confirmButtonColor: '#10AC84',
+              });
+            } else {
+              showFormError(errorMsg);
+            }
           }
         } catch (err) {
-          showAlert('حدث خطأ أثناء تنفيذ عملية الأرشفة');
+          if (typeof Swal !== 'undefined') {
+            Swal.fire({
+              icon: 'error',
+              title: 'خطأ في الاتصال',
+              text: 'تعذر الاتصال بالخادم أثناء أرشفة المنتج',
+              confirmButtonText: 'حسناً',
+              confirmButtonColor: '#10AC84',
+            });
+          } else {
+            showFormError('حدث خطأ أثناء تنفيذ عملية الأرشفة');
+          }
         }
-      });
+      }
     }
 
     // Add Unit Modal Handling
@@ -1025,6 +1710,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (addUnitForm) {
         addUnitForm.addEventListener('submit', async (e) => {
           e.preventDefault();
+
+          if (!addUnitForm.checkValidity()) {
+            e.stopPropagation();
+            addUnitForm.classList.add('was-validated');
+            return;
+          }
 
           const name = newUnitNameInput ? newUnitNameInput.value.trim() : '';
           const conversionQuantity = newUnitConversionQuantityInput ? newUnitConversionQuantityInput.value.trim() : '';
@@ -1084,10 +1775,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (json.success) {
               addModal.hide();
-              showAlert('تمت إضافة الوحدة بنجاح', 'success');
+              if (typeof Swal !== 'undefined') {
+                const Toast = Swal.mixin({
+                  toast: true,
+                  position: 'top-start',
+                  showConfirmButton: false,
+                  timer: 3000,
+                  timerProgressBar: true,
+                });
+                Toast.fire({ icon: 'success', title: 'تمت إضافة الوحدة بنجاح' });
+              } else {
+                showAlert('تمت إضافة الوحدة بنجاح', 'success');
+              }
               loadProductUnits();
             } else {
-              showAlert(json.message || 'فشل في إضافة الوحدة', 'danger', addAlert);
+              showAlert(extractApiErrorMessage(json, 'فشل في إضافة الوحدة'), 'danger', addAlert);
             }
           } catch (err) {
             showAlert('حدث خطأ أثناء إرسال بيانات الوحدة', 'danger', addAlert);
@@ -1113,6 +1815,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (editUnitForm) {
         editUnitForm.addEventListener('submit', async (e) => {
           e.preventDefault();
+
+          if (!editUnitForm.checkValidity()) {
+            e.stopPropagation();
+            editUnitForm.classList.add('was-validated');
+            return;
+          }
 
           const unitIdInput = document.getElementById('editUnitId');
           const unitId = unitIdInput ? unitIdInput.value : '';
@@ -1179,10 +1887,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (json.success) {
               editModalInstance.hide();
-              showAlert('تم حفظ تعديلات الوحدة بنجاح', 'success');
+              if (typeof Swal !== 'undefined') {
+                const Toast = Swal.mixin({
+                  toast: true,
+                  position: 'top-start',
+                  showConfirmButton: false,
+                  timer: 3000,
+                  timerProgressBar: true,
+                });
+                Toast.fire({ icon: 'success', title: 'تم حفظ تعديلات الوحدة بنجاح' });
+              } else {
+                showAlert('تم حفظ تعديلات الوحدة بنجاح', 'success');
+              }
               loadProductUnits();
             } else {
-              showAlert(json.message || 'فشل في حفظ تعديلات الوحدة', 'danger', editAlert);
+              showAlert(extractApiErrorMessage(json, 'فشل في حفظ تعديلات الوحدة'), 'danger', editAlert);
             }
           } catch (err) {
             showAlert('حدث خطأ أثناء إرسال التعديلات', 'danger', editAlert);
@@ -1253,10 +1972,32 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleDeleteUnit(unit) {
-      if (!confirm(`هل أنت متأكد من أرشفة وحدة "${unit.name}"؟`)) {
-        return;
-      }
+      const actionTitle = 'أرشفة وحدة القياس';
+      const actionText = `هل أنت متأكد من رغبتك في أرشفة وحدة "${unit.name}"؟`;
 
+      if (typeof Swal !== 'undefined') {
+        Swal.fire({
+          title: actionTitle,
+          text: actionText,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonColor: '#EE5253',
+          cancelButtonColor: '#6B7280',
+          confirmButtonText: 'نعم، أرشفة الوحدة',
+          cancelButtonText: 'إلغاء',
+        }).then(async (result) => {
+          if (result.isConfirmed) {
+            await executeDeleteUnit(unit);
+          }
+        });
+      } else {
+        if (confirm(actionText)) {
+          await executeDeleteUnit(unit);
+        }
+      }
+    }
+
+    async function executeDeleteUnit(unit) {
       try {
         const res = await window.erpFetch(`/api/inventory/products/${encodeURIComponent(productId)}/units/${encodeURIComponent(unit.id)}`, {
           method: 'DELETE',
@@ -1264,13 +2005,45 @@ document.addEventListener('DOMContentLoaded', () => {
         const json = await res.json();
 
         if (json.success) {
-          showAlert(json.message || 'تمت أرشفة الوحدة بنجاح', 'success');
+          if (typeof Swal !== 'undefined') {
+            const Toast = Swal.mixin({
+              toast: true,
+              position: 'top-start',
+              showConfirmButton: false,
+              timer: 3000,
+              timerProgressBar: true,
+            });
+            Toast.fire({ icon: 'success', title: json.message || 'تمت أرشفة الوحدة بنجاح' });
+          } else {
+            showAlert(json.message || 'تمت أرشفة الوحدة بنجاح', 'success');
+          }
           loadProductUnits();
         } else {
-          showAlert(json.message || 'فشل في أرشفة الوحدة');
+          const errorMsg = extractApiErrorMessage(json, 'فشل في أرشفة الوحدة');
+          if (typeof Swal !== 'undefined') {
+            Swal.fire({
+              icon: 'error',
+              title: 'تعذر أرشفة الوحدة',
+              text: errorMsg,
+              confirmButtonText: 'حسناً',
+              confirmButtonColor: '#10AC84',
+            });
+          } else {
+            showAlert(errorMsg);
+          }
         }
       } catch (err) {
-        showAlert('حدث خطأ أثناء أرشفة الوحدة');
+        if (typeof Swal !== 'undefined') {
+          Swal.fire({
+            icon: 'error',
+            title: 'خطأ في الاتصال',
+            text: 'حدث خطأ أثناء أرشفة الوحدة',
+            confirmButtonText: 'حسناً',
+            confirmButtonColor: '#10AC84',
+          });
+        } else {
+          showAlert('حدث خطأ أثناء أرشفة الوحدة');
+        }
       }
     }
 

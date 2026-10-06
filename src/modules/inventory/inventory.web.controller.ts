@@ -38,6 +38,8 @@ export class InventoryHomeWebController {
         title: 'لوحة التحكم | إدارة المستودعات',
         appName: 'إدارة المستودعات',
         themeColor: '#10AC84',
+        hasSidebar: true,
+        sidebarPath: 'inventory/partials/sidebar',
         activeTab: 'dashboard',
         user: currentUser,
         canCreateCategory,

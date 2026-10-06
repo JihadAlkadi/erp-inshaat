@@ -9,8 +9,13 @@
   <!-- Master Wrapper -->
   <div class="master-wrapper">
     <!-- Include Dynamic Sidebar if provided via controller or layout -->
-    <% if (locals.sidebarPath) { %>
-       <%- include(sidebarPath) %>
+    <% 
+      const activeSidebar = (typeof sidebarPath !== 'undefined' && sidebarPath) 
+        ? sidebarPath 
+        : (typeof locals !== 'undefined' && locals && locals.sidebarPath ? locals.sidebarPath : null); 
+    %>
+    <% if (activeSidebar) { %>
+       <%- include(activeSidebar) %>
     <% } %>
 
     <div class="main-content-area d-flex flex-column">

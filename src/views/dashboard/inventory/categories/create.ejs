@@ -6,24 +6,27 @@
         <h3 class="fw-bold mb-1" style="color: #1F2937;">إضافة فئة جديدة <i class="fa-solid fa-folder-plus text-muted fs-5 ms-2"></i></h3>
         <p class="text-muted mb-0 small">تعريف فئة رئيسية أو فرعية ضمن الهيكل الهرمي للمستودعات</p>
       </div>
-      <a href="/inventory/categories" class="btn btn-outline-secondary">
-        <i class="fa-solid fa-arrow-left ms-1"></i> العودة للشجرة
+      <a href="/inventory/categories" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2" style="border-radius: 8px;">
+        <i class="fa-solid fa-arrow-right"></i>
+        <span>العودة للشجرة</span>
       </a>
     </div>
 
     <!-- Alert Container -->
+    <div id="formAlert" class="alert alert-danger d-none mb-4" role="alert"></div>
     <div id="categoryFormAlertContainer"></div>
 
     <!-- Form Card -->
     <div class="card border-0 shadow-sm" style="border-radius: 12px;">
       <div class="card-body p-4 p-md-5">
-        <form id="createCategoryForm" novalidate>
+        <form id="createCategoryForm" class="needs-validation" novalidate>
           <!-- Name -->
           <div class="mb-4">
             <label for="categoryName" class="form-label fw-bold text-dark">اسم الفئة <span class="text-danger">*</span></label>
-            <div class="input-group">
+            <div class="input-group has-validation">
               <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-tag"></i></span>
               <input type="text" class="form-control" id="categoryName" name="name" required maxlength="100" placeholder="مثال: أدوات كهربائية">
+              <div class="invalid-feedback">يرجى إدخال اسم الفئة.</div>
             </div>
             <div class="form-text text-muted">الاسم المعبر عن الفئة والمستخدم في التصفح والتقارير.</div>
           </div>
@@ -31,9 +34,10 @@
           <!-- Code -->
           <div class="mb-4">
             <label for="categoryCode" class="form-label fw-bold text-dark">رمز الفئة (الكود) <span class="text-danger">*</span></label>
-            <div class="input-group">
+            <div class="input-group has-validation">
               <span class="input-group-text bg-light text-muted"><i class="fa-solid fa-barcode"></i></span>
               <input type="text" class="form-control text-uppercase font-monospace" id="categoryCode" name="code" required maxlength="50" placeholder="مثال: ELEC-01">
+              <div class="invalid-feedback">يرجى إدخال رمز الفئة (الكود).</div>
             </div>
             <div class="form-text text-muted">رمز فريد وثابت في النظام لا يمكن تعديله بعد الإنشاء.</div>
           </div>
