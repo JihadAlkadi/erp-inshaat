@@ -2957,6 +2957,20 @@ document.addEventListener('DOMContentLoaded', () => {
       tab.show();
     }
 
+    // Reset material picker inputs
+    selectedTaskCatalogProduct = null;
+    if (taskMaterialSearchInput) taskMaterialSearchInput.value = '';
+    if (taskMaterialQuantityInput) taskMaterialQuantityInput.value = '';
+    if (taskMaterialUnitSelect) {
+      taskMaterialUnitSelect.replaceChildren();
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = '';
+      defaultOpt.textContent = '-- اختر المادة أولاً --';
+      taskMaterialUnitSelect.appendChild(defaultOpt);
+      taskMaterialUnitSelect.disabled = true;
+    }
+    if (taskCatalogSearchResults) taskCatalogSearchResults.classList.add('d-none');
+
     // Load materials and attachments
     loadTaskMaterials();
     loadTaskAttachments();
@@ -3102,13 +3116,22 @@ document.addEventListener('DOMContentLoaded', () => {
     taskMaterialSearchInput.addEventListener('input', () => {
       const q = taskMaterialSearchInput.value.trim();
       clearTimeout(taskSearchDebounceTimer);
+      selectedTaskCatalogProduct = null;
+      if (taskMaterialUnitSelect) {
+        taskMaterialUnitSelect.replaceChildren();
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = '';
+        defaultOpt.textContent = '-- اختر المادة أولاً --';
+        taskMaterialUnitSelect.appendChild(defaultOpt);
+        taskMaterialUnitSelect.disabled = true;
+      }
       if (q.length < 1) {
         if (taskCatalogSearchResults) taskCatalogSearchResults.classList.add('d-none');
         return;
       }
       taskSearchDebounceTimer = setTimeout(async () => {
         try {
-          const res = await window.erpFetch(`/api/inventory/products?search=${encodeURIComponent(q)}&limit=8`);
+          const res = await window.erpFetch(`/api/inventory/products/reference-options?search=${encodeURIComponent(q)}&limit=10`);
           const data = await res.json();
           if (res.ok && data.success) {
             renderTaskCatalogSearchResults(data.data?.items || []);
@@ -3162,25 +3185,60 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadTaskProductUnits(productId) {
     if (!taskMaterialUnitSelect) return;
     taskMaterialUnitSelect.replaceChildren();
+    const loadingOpt = document.createElement('option');
+    loadingOpt.value = '';
+    loadingOpt.textContent = 'جاري تحميل الوحدات...';
+    taskMaterialUnitSelect.appendChild(loadingOpt);
     taskMaterialUnitSelect.disabled = true;
 
-    try {
-      const res = await window.erpFetch(`/api/inventory/products/${productId}/units`);
-      const data = await res.json();
-      if (res.ok && data.success) {
-        const units = data.data || [];
-        units.forEach((u) => {
-          const opt = document.createElement('option');
-          opt.value = u.id;
-          opt.textContent = `${u.name} ${u.isBase ? '(الوحدة الأساسية)' : ''}`;
-          taskMaterialUnitSelect.appendChild(opt);
-        });
-        taskMaterialUnitSelect.disabled = false;
+    let units = productUnitsCache.get(productId);
+    if (!units) {
+      try {
+        const res = await window.erpFetch(`/api/inventory/products/${productId}/units/reference-options`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.data)) {
+            units = data.data;
+            productUnitsCache.set(productId, units);
+          }
+        }
+      } catch {
+        units = [];
       }
-    } catch (err) {
-      console.error('Failed to load units:', err);
+    }
+
+    taskMaterialUnitSelect.replaceChildren();
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '-- اختر وحدة القياس --';
+    taskMaterialUnitSelect.appendChild(defaultOpt);
+
+    if (units && units.length > 0) {
+      units.forEach((u) => {
+        const opt = document.createElement('option');
+        opt.value = u.id;
+        opt.textContent = `${u.name}${u.isBase ? ' (الوحدة الأساسية)' : ''}`;
+        taskMaterialUnitSelect.appendChild(opt);
+      });
+      taskMaterialUnitSelect.disabled = false;
+    } else {
+      const noUnitsOpt = document.createElement('option');
+      noUnitsOpt.value = '';
+      noUnitsOpt.textContent = 'لا توجد وحدات معرفة لهذا المنتج';
+      taskMaterialUnitSelect.appendChild(noUnitsOpt);
     }
   }
+
+  // Hide taskCatalogSearchResults on click outside
+  document.addEventListener('click', (e) => {
+    if (
+      taskCatalogSearchResults &&
+      !taskCatalogSearchResults.contains(e.target) &&
+      e.target !== taskMaterialSearchInput
+    ) {
+      taskCatalogSearchResults.classList.add('d-none');
+    }
+  });
 
   // Add Task Material
   if (btnAddTaskMaterial) {
@@ -3191,10 +3249,9 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const productUnitId = taskMaterialUnitSelect ? taskMaterialUnitSelect.value : null;
-      const qtyVal = taskMaterialQuantityInput ? taskMaterialQuantityInput.value.trim() : '';
-      const plannedQuantity = parseFloat(qtyVal);
+      const plannedQuantity = taskMaterialQuantityInput ? taskMaterialQuantityInput.value.trim() : '';
 
-      if (!productUnitId || isNaN(plannedQuantity) || plannedQuantity <= 0) {
+      if (!productUnitId || !plannedQuantity || isNaN(Number(plannedQuantity)) || Number(plannedQuantity) <= 0) {
         Swal.fire('تنبيه', 'يرجى اختيار وحدة وإدخال كمية صحيحة أكبر من صفر', 'warning');
         return;
       }
@@ -3227,6 +3284,10 @@ document.addEventListener('DOMContentLoaded', () => {
           if (taskMaterialQuantityInput) taskMaterialQuantityInput.value = '';
           if (taskMaterialUnitSelect) {
             taskMaterialUnitSelect.replaceChildren();
+            const defaultOpt = document.createElement('option');
+            defaultOpt.value = '';
+            defaultOpt.textContent = '-- اختر المادة أولاً --';
+            taskMaterialUnitSelect.appendChild(defaultOpt);
             taskMaterialUnitSelect.disabled = true;
           }
           selectedTaskCatalogProduct = null;
