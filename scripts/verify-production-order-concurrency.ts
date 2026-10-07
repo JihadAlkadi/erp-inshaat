@@ -108,7 +108,64 @@ async function runConcurrencyVerification(): Promise<void> {
     console.log(`✔ DB sequence table current_value is correctly '${concurrentCount}'.`);
 
     // ------------------------------------------------------------------
-    // Part 2: Missing Sequence Row Fails Closed (No lazy creation)
+    // Part 2: Concurrent Duplicate addLine() Race Protection
+    // ------------------------------------------------------------------
+    console.log('\nTesting concurrent duplicate addLine() race protection...');
+    const targetOrder = createdOrders[0];
+
+    const tmplId = '00000000-0000-0000-0000-000000000010';
+    const patternId = '00000000-0000-0000-0000-000000000011';
+    const optId = '00000000-0000-0000-0000-000000000012';
+
+    await ds.query(
+      `INSERT INTO production_template (id, name, code, is_active) VALUES (?, 'Concurrent Tmpl', 'TMPL-CONC', 1)`,
+      [tmplId]
+    );
+    await ds.query(
+      `INSERT INTO production_template_pattern (id, template_id, name) VALUES (?, ?, 'Color Pattern')`,
+      [patternId, tmplId]
+    );
+    await ds.query(
+      `INSERT INTO production_template_pattern_option (id, pattern_id, name, sort_order) VALUES (?, ?, 'Blue Option', 1)`,
+      [optId, patternId]
+    );
+
+    const lineConfig = {
+      templateId: tmplId,
+      quantity: 5,
+      patternSelections: [{ patternId, optionId: optId }],
+    };
+
+    const addLineResults = await Promise.allSettled([
+      orderService.addLine(targetOrder.id, lineConfig),
+      orderService.addLine(targetOrder.id, lineConfig),
+    ]);
+
+    const fulfilledCount = addLineResults.filter((r) => r.status === 'fulfilled').length;
+    const rejectedCount = addLineResults.filter((r) => r.status === 'rejected').length;
+
+    console.log(`Concurrent addLine() results: ${fulfilledCount} succeeded, ${rejectedCount} rejected.`);
+
+    if (fulfilledCount !== 1 || rejectedCount !== 1) {
+      throw new Error(`Expected exactly 1 success and 1 rejection in concurrent addLine(), got ${fulfilledCount} and ${rejectedCount}`);
+    }
+
+    const rejection: any = addLineResults.find((r) => r.status === 'rejected');
+    const rejectionReason = rejection.reason;
+    console.log('Rejected concurrent call reason:', rejectionReason?.code || rejectionReason?.message);
+
+    // Verify DB count: exactly 1 active line with this configuration
+    const [lineCountRow] = await ds.query(
+      `SELECT COUNT(*) as cnt FROM production_order_line WHERE order_id = ? AND template_id = ? AND deleted_at IS NULL`,
+      [targetOrder.id, tmplId]
+    );
+    if (Number(lineCountRow.cnt) !== 1) {
+      throw new Error(`Expected exactly 1 active line in DB, found ${lineCountRow.cnt}`);
+    }
+    console.log('✔ Exactly 1 active line exists in DB for this configuration (0 duplicates allowed).');
+
+    // ------------------------------------------------------------------
+    // Part 3: Missing Sequence Row Fails Closed (No lazy creation)
     // ------------------------------------------------------------------
     console.log('\nTesting missing sequence row invariant (fail closed)...');
     await ds.query(`DELETE FROM production_order_sequence WHERE id = 'PRODUCTION_ORDER'`);

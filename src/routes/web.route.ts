@@ -362,7 +362,16 @@ webRouter.get(
   productionOrderWebController.renderOrderCreate
 );
 
-// GET /production/orders/:id - Order Builder Page (Protected)
+// GET /production/orders/:id/edit - Order Editor Page (Protected)
+webRouter.get(
+  '/production/orders/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_ORDER_UPDATE),
+  validateUuidParam('id'),
+  productionOrderWebController.renderOrderEdit
+);
+
+// GET /production/orders/:id - Order Read-Only Details Page (Protected)
 webRouter.get(
   '/production/orders/:id',
   requireWebAuth,

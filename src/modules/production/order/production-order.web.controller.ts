@@ -4,6 +4,7 @@ import { SystemPermission } from '../../system/permission/constants/system-permi
 import { AuthPrincipal } from '../../system/auth/auth.types.js';
 import { productionOrderService, ProductionOrderService } from './production-order.service.js';
 import { safeJsonStringify } from './production-order.types.js';
+import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 
 export class ProductionOrderWebController {
   constructor(private orderService: ProductionOrderService = productionOrderService) {}
@@ -74,6 +75,45 @@ export class ProductionOrderWebController {
       const { id } = req.params;
 
       const order = await this.orderService.getOrderById(id as string);
+      const readiness = await this.orderService.validateDraftForRelease(id as string);
+
+      const canUpdateOrder = await authorizationService.hasPermission(
+        currentUser,
+        SystemPermission.PRODUCTION_ORDER_UPDATE
+      );
+
+      res.render('dashboard/production/orders/show', {
+        layout: 'dashboard/production/layout',
+        title: `${order.orderNumber} - تفاصيل أمر الإنتاج`,
+        appName: 'إدارة الإنتاج',
+        themeColor: '#0984E3',
+        hasSidebar: true,
+        sidebarPath: 'production/partials/sidebar',
+        activeTab: 'orders',
+        user: currentUser,
+        canUpdateOrder,
+        order,
+        readiness,
+        initialOrderJson: safeJsonStringify(order),
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  renderOrderEdit = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const currentUser = req.user as AuthPrincipal;
+      const { id } = req.params;
+
+      const order = await this.orderService.getOrderById(id as string);
+
+      if (order.status !== 'DRAFT') {
+        throw new BusinessRuleError(
+          'لا يمكن تعديل أمر إنتاج خارج حالة المسودة',
+          'PRODUCTION_ORDER_NOT_DRAFT'
+        );
+      }
 
       const canUpdateOrder = await authorizationService.hasPermission(
         currentUser,
@@ -84,7 +124,7 @@ export class ProductionOrderWebController {
         SystemPermission.PRODUCTION_ORDER_DELETE
       );
 
-      res.render('dashboard/production/orders/show', {
+      res.render('dashboard/production/orders/edit', {
         layout: 'dashboard/production/layout',
         title: `${order.orderNumber} - إعداد أمر الإنتاج`,
         appName: 'إدارة الإنتاج',

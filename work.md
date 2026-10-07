@@ -31,10 +31,50 @@
     > ProductionOrderEntity is the unified pessimistic lock root for all draft-order mutations.
     - كل عملية تعديل داخل التجميعة (`updateOrder`, `archiveOrder`, `addLine`, `updateLineQuantity`, `archiveLine`, `reorderLines`, `changePatternSelection`, `syncDraftLineSelections`) تبدأ بقفل تشاؤمي `pessimistic_write` على صف أمر الإنتاج `ProductionOrderEntity` داخل المعاملة عبر `guardService.lockMutableOrder(orderId, manager)`.
     - القوالب تملك جذر قفل مستقل بها ولا تستخدم كجذر قفل للأمر لتفادي التعارض وتداخل الأقفال.
-  - **بنود أمر الإنتاج والتحقق من الكميات (Production Order Lines & Quantity Invariant)**:
-    - كل بند يمثل تركيبة مستقلة: `Template + Quantity + Pattern Selections`.
-    - تكرار نفس القالب ونفس خيارات النمط مسموح ولا يتم دمج البنود تلقائياً (كل Line كيان مستقل).
-    - **صحة وسلامة الكمية (Line Quantity Invariant)**: الكمية عدد صحيح موجب حصراً `1 <= quantity <= 10000`، ويتم التحقق منها على 3 مستويات: DTO Validation و Service Invariant (`validateLineQuantity` تطلق `PRODUCTION_ORDER_LINE_QUANTITY_INVALID` للأعداد العشرية أو السالبة أو الصفر أو التي تتجاوز 10,000) وقيد Check في قاعدة البيانات `CHK_production_order_line_quantity`.
+  - **قاعدة فرادة تركيبة البند ومنع التكرار (Line Configuration Uniqueness Invariant)**:
+    > Within a single Production Order, no two active lines may share the exact same configuration (Template + Pattern Option Selections).
+    > Quantity is NOT part of line identity; changing quantity does not create a distinct configuration.
+    > Matching is order-agnostic: selections sent in any order represent the identical configuration.
+    > Templates without patterns cannot be repeated on the same order.
+    > Uniqueness applies strictly to active lines (`deleted_at IS NULL`). Archived lines do not block reuse.
+    - **رمز التحقق الهيكلي وفرادة قاعدة البيانات (active_configuration_hash & Database Index)**:
+      - عمود `active_configuration_hash VARCHAR(64) NULL` في جدول `production_order_line`.
+      - فهرس فريد مركب `UQ_prod_order_line_order_config_hash UNIQUE (order_id, active_configuration_hash)`.
+      - للبند النشط: يحسب الرمز الحتمي عبر `hashLineConfiguration(templateId, selections)` (SHA-256 بتنسيق 64 hex lowercase بعد فرز الأنماط حتمياً).
+      - للبند المؤرشف: يتم تصفير الرمز حتماً إلى `NULL` عند الأرشفة (`archiveLine`) لتفادي أي حجز للتركيبة من قبل البنود المحذوفة في محرك MySQL.
+      - هجرة الترقية `1710000000014-AddProductionOrderLineConfigurationUniqueness`:
+        - تعمل بكفاءة على قواعد البيانات الجديدة والترقية من 0013.
+        - تقوم بعمل Backfill لجميع البنود النشطة القائمة بحساب الـ Hash من اختياراتها.
+        - تفشل بصرامة وتوقف الهجرة فوراً (Fail Loudly) مع تفاصيل تشخيصية إذا كانت قاعدة البيانات تحتوي مسبقاً على بنود نشطة مكررة.
+    - **تطبيق القاعدة برمجياً في خدمة الطلب (Service-Level Duplicate Prevention)**:
+      - في `addLine()`: يتم فحص وجود بند نشط مسبقاً بنفس الـ Hash قبل الإدخال؛ إذا وجد يفشل الطلب فوراً بالرمز الثابت `PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION` مع إرجاع `existingLineId` في التفاصيل لتوجيه العميل نحو تعديل كمية البند القائم.
+      - في `changePatternSelection()`: يتم حساب الـ Hash للتركيبة المعدلة، وفحص عدم تعارضها مع أي بند نشط آخر في نفس الطلب (`id != lineId`). عند وجود تعارض تفشل العملية بالرمز `PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION`.
+      - في `syncDraftLineSelections()`: عند إعادة مزامنة البند مع تحديثات القالب، إذا أسفرت المزامنة عن تركيبة مطابقة لبند آخر، تتراجع المعاملة ذرياً وتفشل بالرمز `PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION`.
+      - في `getOrderByIdInternal()`: التحقق الصارم من وجود `active_configuration_hash` لأي بند نشط؛ وفي حال غيابه يفشل الاستعلام بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
+    - **فحص التكرار الاستباقي في الواجهة (Client-Side Pre-check)**:
+      - يحسب الـ JS في مساحة العمل كود التركيبة المختار ويقارنه فورياً مع البنود الحالية للطلب.
+      - عند تطابق التركيبة، يُعرض تنبيه مباشر: "هذه التركيبة موجودة مسبقًا في البند #X. عدّل كمية البند الموجود بدل إضافة بند مكرر"، ويُعطل زر الإضافة تلقائياً.
+  - **فصل مساحات العمل في واجهات الويب (Web UI Architecture Separation)**:
+    - **صفحة العرض العامة (`/production/orders/:id` — `show.ejs` + `production-order-show.js`)**:
+      - صفحة قراءة فقط ومستقرة (Strictly Read-Only).
+      - لا تحتوي على أي أزرار أو حقول أو نوافذ منبثقة لتعديل أو إضافة أو أرشفة البنود أو الطلب.
+      - لا ينفذ ملف `production-order-show.js` أي طلبات HTTP معدلة (`POST`, `PATCH`, `DELETE`).
+      - تحتوي على زر تنقل واضح لمحرري الطلب: `تعديل / إعداد الطلب` يوجه إلى مسار التحرير `/production/orders/:id/edit`.
+    - **صفحة محرر المسودة الشامل (`/production/orders/:id/edit` — `edit.ejs` + `production-order-edit.js`)**:
+      - مساحة عمل متكاملة وشاملة لصياغة مسودة الطلب في صفحة واحدة دون نوافذ متداخلة معقدة.
+      - تضمين محرر البنود المباشر (`#addLineComposerCard`):
+        - البحث عن القالب مع ترقيم خادمي وزر "تحميل المزيد" وتطهير التكرارات.
+        - حماية السباق عبر عداد تسلسلي متزايد حتماً `templatePickerRequestSeq`.
+        - استعلام تكوين القالب الخفيف بحماية سباق مستقلة `templateConfigurationRequestSeq`.
+        - فحص استباقي للتكرار قبل الإرسال.
+      - إدارة البنود الحالية:
+        - تعديل الكميات وحفظها فورياً.
+        - تغيير خيارات الأنماط مع التراجع التلقائي (Rollback) في الواجهة عند حدوث تعارض تكرار.
+        - إعادة ترتيب البنود (Move Up / Move Down).
+        - مزامنة البنود مع تحديثات القالب.
+        - أرشفة البنود والطلب.
+  - **صحة وسلامة الكمية (Line Quantity Invariant)**:
+    - الكمية عدد صحيح موجب حصراً `1 <= quantity <= 10000`، ويتم التحقق منها على 3 مستويات: DTO Validation و Service Invariant (`validateLineQuantity` تطلق `PRODUCTION_ORDER_LINE_QUANTITY_INVALID` للأعداد العشرية أو السالبة أو الصفر أو التي تتجاوز 10,000) وقيد Check في قاعدة البيانات `CHK_production_order_line_quantity`.
     - الترتيب مكثف `sortOrder: 1..N` ومدعوم بإعادة ترتيب كامل `PATCH /api/production/orders/:orderId/lines/reorder` بتبديل كامل دقيق (Exact Permutation).
     - `templateId` ثابت وغير قابل للتعديل للبند القائم لمنع بقاء اختيارات أنماط يتيمة.
   - **تحديد خيارات الأنماط وعقد القصد الصريح (Pattern Selection Intent Contract)**:

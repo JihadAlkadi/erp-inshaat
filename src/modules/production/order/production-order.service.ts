@@ -1,4 +1,4 @@
-import { DataSource, EntityManager, Repository, IsNull, In } from 'typeorm';
+import { DataSource, EntityManager, Repository, IsNull, In, Not } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionOrderEntity, ProductionOrderStatus } from './production-order.entity.js';
 import { ProductionOrderSequenceEntity } from './production-order-sequence.entity.js';
@@ -24,6 +24,7 @@ import { AddProductionOrderLineDto } from '../order-line/dto/add-production-orde
 import { UpdateProductionOrderLineDto } from '../order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
+import { hashLineConfiguration } from '../order-line/production-order-line-configuration.helper.js';
 import {
   ProductionOrderGuardService,
   productionOrderGuardService,
@@ -239,6 +240,36 @@ export class ProductionOrderService {
     }
   }
 
+  private async assertConfigurationAvailable(
+    orderId: string,
+    configurationHash: string,
+    excludeLineId: string | undefined,
+    manager: EntityManager
+  ): Promise<void> {
+    const lineRepo = manager.getRepository(ProductionOrderLineEntity);
+    const where: any = {
+      orderId,
+      activeConfigurationHash: configurationHash,
+      deletedAt: IsNull(),
+    };
+    if (excludeLineId) {
+      where.id = Not(excludeLineId);
+    }
+
+    const existing = await lineRepo.findOne({
+      where,
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new BusinessRuleError(
+        'يوجد بند إنتاج آخر في هذا الطلب يستخدم نفس القالب ونفس خيارات الأنماط. عدّل كمية البند الموجود بدلاً من إضافة بند مكرر.',
+        'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION',
+        { existingLineId: existing.id }
+      );
+    }
+  }
+
   /**
    * Adds a new line to a DRAFT production order.
    * Atomic: creates line and pattern selections (default or explicit).
@@ -365,21 +396,41 @@ export class ProductionOrderService {
         }
       }
 
-      // 5. Calculate next sort order dense (1..N)
+      // 5. Compute canonical configuration hash and assert uniqueness within order
+      const configHash = hashLineConfiguration(dto.templateId, selectionsToCreate);
+      await this.assertConfigurationAvailable(orderId, configHash, undefined, manager);
+
+      // 6. Calculate next sort order dense (1..N)
       const lineRepo = manager.getRepository(ProductionOrderLineEntity);
       const activeLinesCount = await lineRepo.count({
         where: { orderId, deletedAt: IsNull() },
       });
       const nextSortOrder = activeLinesCount + 1;
 
-      // 6. Insert Line
+      // 7. Insert Line
       const newLine = lineRepo.create({
         orderId,
         templateId: dto.templateId,
         quantity: dto.quantity,
         sortOrder: nextSortOrder,
+        activeConfigurationHash: configHash,
       });
-      const savedLine = await lineRepo.save(newLine);
+
+      let savedLine: ProductionOrderLineEntity;
+      try {
+        savedLine = await lineRepo.save(newLine);
+      } catch (err: any) {
+        if (
+          err?.code === 'ER_DUP_ENTRY' ||
+          err?.message?.includes('UQ_prod_order_line_order_config_hash')
+        ) {
+          throw new BusinessRuleError(
+            'يوجد بند إنتاج آخر في هذا الطلب يستخدم نفس القالب ونفس خيارات الأنماط. عدّل كمية البند الموجود بدلاً من إضافة بند مكرر.',
+            'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+          );
+        }
+        throw err;
+      }
 
       // 7. Insert Selections
       const selectionRepo = manager.getRepository(ProductionOrderLinePatternSelectionEntity);
@@ -443,11 +494,13 @@ export class ProductionOrderService {
       await this.guardService.lockMutableOrder(orderId, manager);
 
       // 2. Validate Line exists on this order
-      await this.guardService.requireExistingLine(orderId, lineId, manager);
+      const line = await this.guardService.requireExistingLine(orderId, lineId, manager);
 
-      // 3. Soft-delete the line
+      // 3. Clear activeConfigurationHash and soft-delete the line in the same transaction
       const lineRepo = manager.getRepository(ProductionOrderLineEntity);
-      await lineRepo.softDelete(lineId);
+      line.activeConfigurationHash = null;
+      line.deletedAt = new Date();
+      await lineRepo.save(line);
 
       // 4. Re-compact remaining active lines to dense 1..N
       const remainingLines = await lineRepo.find({
@@ -584,11 +637,42 @@ export class ProductionOrderService {
         );
       }
 
-      // 5. Find or create selection record
+      // 5. Find current selections and compute would-be configuration
       const selectionRepo = manager.getRepository(ProductionOrderLinePatternSelectionEntity);
-      let selection = await selectionRepo.findOne({
-        where: { orderLineId: lineId, templatePatternId: patternId },
+      const existingSelections = await selectionRepo.find({
+        where: { orderLineId: lineId },
       });
+
+      const wouldBeSelections: Array<{ templatePatternId: string; selectedOptionId: string }> = [];
+      let targetPatternReplaced = false;
+
+      for (const sel of existingSelections) {
+        if (sel.templatePatternId === patternId) {
+          wouldBeSelections.push({
+            templatePatternId: patternId,
+            selectedOptionId: dto.optionId,
+          });
+          targetPatternReplaced = true;
+        } else {
+          wouldBeSelections.push({
+            templatePatternId: sel.templatePatternId,
+            selectedOptionId: sel.selectedOptionId,
+          });
+        }
+      }
+
+      if (!targetPatternReplaced) {
+        wouldBeSelections.push({
+          templatePatternId: patternId,
+          selectedOptionId: dto.optionId,
+        });
+      }
+
+      const wouldBeHash = hashLineConfiguration(line.templateId, wouldBeSelections);
+      await this.assertConfigurationAvailable(orderId, wouldBeHash, lineId, manager);
+
+      // 6. Find or create selection record
+      let selection = existingSelections.find((s) => s.templatePatternId === patternId);
 
       if (selection) {
         selection.selectedOptionId = dto.optionId;
@@ -600,6 +684,24 @@ export class ProductionOrderService {
           selectedOptionId: dto.optionId,
         });
         await selectionRepo.save(selection);
+      }
+
+      // 7. Update line's activeConfigurationHash
+      const lineRepo = manager.getRepository(ProductionOrderLineEntity);
+      line.activeConfigurationHash = wouldBeHash;
+      try {
+        await lineRepo.save(line);
+      } catch (err: any) {
+        if (
+          err?.code === 'ER_DUP_ENTRY' ||
+          err?.message?.includes('UQ_prod_order_line_order_config_hash')
+        ) {
+          throw new BusinessRuleError(
+            'يوجد بند إنتاج آخر في هذا الطلب يستخدم نفس القالب ونفس خيارات الأنماط. عدّل كمية البند الموجود بدلاً من إضافة بند مكرر.',
+            'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+          );
+        }
+        throw err;
       }
 
       const fullOrder = await this.getOrderByIdInternal(orderId, manager);
@@ -717,28 +819,53 @@ export class ProductionOrderService {
 
       const activePatternMap = new Map(patternsWithOptions.map((item) => [item.pattern.id, item]));
 
-      // 6. Remove obsolete selections (pointing to patterns no longer active)
+      // 6. Calculate reconciled selections and resulting configuration hash BEFORE modifying anything
+      const existingMap = new Map(existingSelections.map((s) => [s.templatePatternId, s]));
+      const resultingSelections: Array<{ templatePatternId: string; selectedOptionId: string }> = [];
+
+      for (const item of patternsWithOptions) {
+        const sel = existingMap.get(item.pattern.id);
+        if (sel) {
+          const isValidOption = item.options.some((opt) => opt.id === sel.selectedOptionId);
+          if (isValidOption) {
+            resultingSelections.push({
+              templatePatternId: item.pattern.id,
+              selectedOptionId: sel.selectedOptionId,
+            });
+          } else {
+            resultingSelections.push({
+              templatePatternId: item.pattern.id,
+              selectedOptionId: item.options[0].id,
+            });
+          }
+        } else {
+          resultingSelections.push({
+            templatePatternId: item.pattern.id,
+            selectedOptionId: item.options[0].id,
+          });
+        }
+      }
+
+      const resultingHash = hashLineConfiguration(line.templateId, resultingSelections);
+      await this.assertConfigurationAvailable(orderId, resultingHash, lineId, manager);
+
+      // 7. Remove obsolete selections (pointing to patterns no longer active)
       for (const sel of existingSelections) {
         if (!activePatternMap.has(sel.templatePatternId)) {
           await selectionRepo.remove(sel);
         }
       }
 
-      // 7. Reconcile selections for active patterns
-      const existingMap = new Map(existingSelections.map((s) => [s.templatePatternId, s]));
-
+      // 8. Reconcile selections for active patterns
       for (const item of patternsWithOptions) {
         const sel = existingMap.get(item.pattern.id);
         if (sel) {
-          // Check if current selected option is still valid and active
           const isValidOption = item.options.some((opt) => opt.id === sel.selectedOptionId);
           if (!isValidOption) {
-            // Option was deleted/invalidated: replace with default
             sel.selectedOptionId = item.options[0].id;
             await selectionRepo.save(sel);
           }
         } else {
-          // Missing selection: create with default
           const newSel = selectionRepo.create({
             orderLineId: lineId,
             templatePatternId: item.pattern.id,
@@ -746,6 +873,24 @@ export class ProductionOrderService {
           });
           await selectionRepo.save(newSel);
         }
+      }
+
+      // 9. Update line's activeConfigurationHash
+      const lineRepo = manager.getRepository(ProductionOrderLineEntity);
+      line.activeConfigurationHash = resultingHash;
+      try {
+        await lineRepo.save(line);
+      } catch (err: any) {
+        if (
+          err?.code === 'ER_DUP_ENTRY' ||
+          err?.message?.includes('UQ_prod_order_line_order_config_hash')
+        ) {
+          throw new BusinessRuleError(
+            'يوجد بند إنتاج آخر في هذا الطلب يستخدم نفس القالب ونفس خيارات الأنماط. عدّل كمية البند الموجود بدلاً من إضافة بند مكرر.',
+            'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+          );
+        }
+        throw err;
       }
 
       const fullOrder = await this.getOrderByIdInternal(orderId, manager);
@@ -1053,6 +1198,13 @@ export class ProductionOrderService {
     const refOptionMap = new Map(referencedOptions.map((o) => [o.id, o]));
 
     for (const line of lines) {
+      if (!line.activeConfigurationHash) {
+        throw new BusinessRuleError(
+          'بنية اختيارات البند تالفة: رمز التحقق الهيكلي للبند مفقود',
+          'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+        );
+      }
+
       const lineSels = selectionsByLineId.get(line.id) || [];
       for (const sel of lineSels) {
         const pat = refPatternMap.get(sel.templatePatternId);

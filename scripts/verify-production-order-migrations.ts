@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import mysql from 'mysql2/promise';
 import { envConfig } from '../src/config/env.config.js';
 import { databaseConfig } from '../src/config/database.config.js';
+import { hashLineConfiguration } from '../src/modules/production/order-line/production-order-line-configuration.helper.js';
 
 async function createRawConnection(): Promise<mysql.Connection> {
   return await mysql.createConnection({
@@ -16,7 +17,7 @@ async function createRawConnection(): Promise<mysql.Connection> {
 
 async function runScenario1Fresh(): Promise<void> {
   console.log('\n======================================================');
-  console.log('--- Scenario 1: Fresh DB Migration 0001 -> 0013 ---');
+  console.log('--- Scenario 1: Fresh DB Migration 0001 -> 0014 ---');
   console.log('======================================================');
 
   const rawConn = await createRawConnection();
@@ -34,9 +35,9 @@ async function runScenario1Fresh(): Promise<void> {
 
     await freshDs.initialize();
 
-    console.log('Running all migrations (0001 -> 0013)...');
+    console.log('Running all migrations (0001 -> 0014)...');
     await freshDs.runMigrations();
-    console.log('Migrations 0001 -> 0013 applied successfully.');
+    console.log('Migrations 0001 -> 0014 applied successfully.');
 
     // 1. Verify tables exist
     for (const table of [
@@ -53,87 +54,68 @@ async function runScenario1Fresh(): Promise<void> {
       console.log(`✔ ${table} table exists`);
     }
 
-    // 2. Verify sequence seed row
-    const [seqRow] = await freshDs.query(
-      `SELECT id, current_value FROM production_order_sequence WHERE id = 'PRODUCTION_ORDER'`
-    );
-    if (!seqRow || seqRow.id !== 'PRODUCTION_ORDER') {
-      throw new Error('Assertion failed: sequence seed row missing');
-    }
-    console.log('✔ production_order_sequence seeded with PRODUCTION_ORDER');
-
-    // 3. Verify unique index on production_order.order_number
-    const poIndexes = await freshDs.query(
-      `SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'production_order' AND COLUMN_NAME = 'order_number'`,
+    // 2. Verify active_configuration_hash column on production_order_line
+    const [hashCol] = await freshDs.query(
+      `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'production_order_line' AND COLUMN_NAME = 'active_configuration_hash'`,
       [dbName]
     );
-    const uniqueOrderNumber = poIndexes.find((idx: any) => Number(idx.NON_UNIQUE) === 0);
-    if (!uniqueOrderNumber) {
-      console.log('poIndexes found:', poIndexes);
-      throw new Error('Assertion failed: UNIQUE index on order_number missing');
+    if (!hashCol || hashCol.COLUMN_NAME !== 'active_configuration_hash') {
+      throw new Error('Assertion failed: active_configuration_hash column missing on production_order_line');
     }
-    console.log('✔ UNIQUE index on production_order.order_number verified');
+    console.log('✔ active_configuration_hash column exists on production_order_line (VARCHAR(64) NULL)');
 
-    // 4. Verify unique index on production_order_line_pattern_selection (order_line_id, template_pattern_id)
-    const selIndexes = await freshDs.query(
-      `SELECT INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'production_order_line_pattern_selection' AND INDEX_NAME = 'UQ_prod_order_line_pattern'`,
+    // 3. Verify unique index UQ_prod_order_line_order_config_hash
+    const hashIndexes = await freshDs.query(
+      `SELECT INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'production_order_line' AND INDEX_NAME = 'UQ_prod_order_line_order_config_hash'`,
       [dbName]
     );
-    if (selIndexes.length !== 2) {
-      throw new Error('Assertion failed: composite UNIQUE index UQ_prod_order_line_pattern missing');
+    if (hashIndexes.length !== 2) {
+      throw new Error('Assertion failed: composite UNIQUE index UQ_prod_order_line_order_config_hash missing');
     }
-    console.log('✔ UQ_prod_order_line_pattern composite UNIQUE constraint verified');
+    console.log('✔ UQ_prod_order_line_order_config_hash composite UNIQUE index verified on (order_id, active_configuration_hash)');
 
-    // 5. Test CHECK constraints live:
-    // 5a. production_order status != DRAFT should fail
-    const roleId = '00000000-0000-0000-0000-000000000000';
-    const userId = '00000000-0000-0000-0000-000000000001';
-    // Insert a dummy system role and user first
+    // 4. Test unique index enforcement:
+    const roleId = '00000000-0000-0000-0000-000000000001';
+    const userId = '00000000-0000-0000-0000-000000000002';
+    const tmplId = '00000000-0000-0000-0000-000000000003';
+    const orderId = '00000000-0000-0000-0000-000000000004';
+
+    await freshDs.query(`INSERT INTO system_role (id, name, code) VALUES (?, 'Admin', 'ADMIN')`, [roleId]);
+    await freshDs.query(`INSERT INTO system_user (id, full_name, phone, password_hash, role_id, is_active) VALUES (?, 'User', '1234567890', 'hash', ?, 1)`, [userId, roleId]);
+    await freshDs.query(`INSERT INTO production_template (id, name, code, is_active) VALUES (?, 'Template', 'T-1', 1)`, [tmplId]);
+    await freshDs.query(`INSERT INTO production_order (id, order_number, status, created_by_user_id) VALUES (?, 'PO-000001', 'DRAFT', ?)`, [orderId, userId]);
+
+    const testHash = 'a'.repeat(64);
     await freshDs.query(
-      `INSERT INTO system_role (id, name, code) VALUES (?, 'Admin', 'ADMIN')`,
-      [roleId]
-    );
-    await freshDs.query(
-      `INSERT INTO system_user (id, full_name, phone, password_hash, role_id, is_active) VALUES (?, 'Test User', '1234567890', 'hash', ?, 1)`,
-      [userId, roleId]
+      `INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order, active_configuration_hash) VALUES ('line-1', ?, ?, 1, 1, ?)`,
+      [orderId, tmplId, testHash]
     );
 
-    let checkFailed = false;
+    // Duplicate insert on same order with same hash MUST fail
+    let duplicateRejected = false;
     try {
       await freshDs.query(
-        `INSERT INTO production_order (id, order_number, status, created_by_user_id) VALUES ('po-invalid-1', 'PO-TEST01', 'RELEASED', ?)`,
-        [userId]
+        `INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order, active_configuration_hash) VALUES ('line-2', ?, ?, 2, 2, ?)`,
+        [orderId, tmplId, testHash]
       );
     } catch (err: any) {
-      checkFailed = true;
-      console.log('✔ CHK_production_order_status successfully rejected status = RELEASED');
+      if (err.code === 'ER_DUP_ENTRY') {
+        duplicateRejected = true;
+        console.log('✔ Duplicate active_configuration_hash on same order correctly rejected by MySQL UNIQUE index');
+      }
     }
-    if (!checkFailed) throw new Error('Assertion failed: status = RELEASED should have been rejected by CHECK constraint');
+    if (!duplicateRejected) throw new Error('Assertion failed: duplicate hash should have been rejected');
 
-    // 5b. production_order_line quantity = 0 should fail
-    // Insert valid template first
-    const tmplId = '00000000-0000-0000-0000-000000000002';
+    // Multiple lines with NULL active_configuration_hash (archived lines) MUST be allowed
     await freshDs.query(
-      `INSERT INTO production_template (id, name, code, is_active) VALUES (?, 'Template A', 'TMPL-A', 1)`,
-      [tmplId]
+      `INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order, active_configuration_hash, deleted_at) VALUES ('line-archived-1', ?, ?, 1, 3, NULL, NOW())`,
+      [orderId, tmplId]
     );
-    const validOrderId = '00000000-0000-0000-0000-000000000003';
     await freshDs.query(
-      `INSERT INTO production_order (id, order_number, status, created_by_user_id) VALUES (?, 'PO-000001', 'DRAFT', ?)`,
-      [validOrderId, userId]
+      `INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order, active_configuration_hash, deleted_at) VALUES ('line-archived-2', ?, ?, 1, 4, NULL, NOW())`,
+      [orderId, tmplId]
     );
-
-    let qtyFailed = false;
-    try {
-      await freshDs.query(
-        `INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order) VALUES ('line-bad', ?, ?, 0, 1)`,
-        [validOrderId, tmplId]
-      );
-    } catch (err: any) {
-      qtyFailed = true;
-      console.log('✔ CHK_production_order_line_quantity successfully rejected quantity = 0');
-    }
-    if (!qtyFailed) throw new Error('Assertion failed: quantity = 0 should have been rejected');
+    console.log('✔ Multiple soft-deleted lines with NULL active_configuration_hash successfully co-exist');
 
     await freshDs.destroy();
   } finally {
@@ -145,7 +127,7 @@ async function runScenario1Fresh(): Promise<void> {
 
 async function runScenario2Upgrade(): Promise<void> {
   console.log('\n======================================================');
-  console.log('--- Scenario 2: Upgrade Migration 0012 -> 0013 ---');
+  console.log('--- Scenario 2: Upgrade Migration 0013 -> 0014 ---');
   console.log('======================================================');
 
   const rawConn = await createRawConnection();
@@ -155,24 +137,67 @@ async function runScenario2Upgrade(): Promise<void> {
     await rawConn.query(`CREATE DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     console.log(`Created disposable database: ${dbName}`);
 
-    // All migrations except 0013
+    // Run migrations through 0013 (excluding 0014)
     const allMigrations = databaseConfig.migrations as Function[];
-    const pre0013Migrations = allMigrations.filter((m) => m.name !== 'CreateProductionOrderDraftingFoundation1710000000013');
+    const pre0014Migrations = allMigrations.filter((m) => m.name !== 'AddProductionOrderLineConfigurationUniqueness1710000000014');
 
     const preDs = new DataSource({
       ...databaseConfig,
       database: dbName,
-      migrations: pre0013Migrations,
+      migrations: pre0014Migrations,
       logging: false,
     });
 
     await preDs.initialize();
-    console.log('Applying migrations through 0012...');
+    console.log('Applying migrations through 0013...');
     await preDs.runMigrations();
-    console.log('Migrations through 0012 applied.');
+    console.log('Migrations through 0013 applied.');
+
+    // Seed test data under migration 0013 schema:
+    const roleId = '00000000-0000-0000-0000-000000000010';
+    const userId = '00000000-0000-0000-0000-000000000011';
+    const tmplId1 = '00000000-0000-0000-0000-000000000012';
+    const tmplId2 = '00000000-0000-0000-0000-000000000013';
+    const patternId1 = '00000000-0000-0000-0000-000000000014';
+    const optId1 = '00000000-0000-0000-0000-000000000015';
+    const orderId = '00000000-0000-0000-0000-000000000016';
+
+    await preDs.query(`INSERT INTO system_role (id, name, code) VALUES (?, 'Admin', 'ADMIN')`, [roleId]);
+    await preDs.query(`INSERT INTO system_user (id, full_name, phone, password_hash, role_id, is_active) VALUES (?, 'User', '1234567890', 'hash', ?, 1)`, [userId, roleId]);
+    await preDs.query(`INSERT INTO production_template (id, name, code, is_active) VALUES (?, 'Template with Patterns', 'TMPL-P', 1)`, [tmplId1]);
+    await preDs.query(`INSERT INTO production_template (id, name, code, is_active) VALUES (?, 'Template without Patterns', 'TMPL-NP', 1)`, [tmplId2]);
+    await preDs.query(`INSERT INTO production_template_pattern (id, template_id, name) VALUES (?, ?, 'Pattern 1')`, [patternId1, tmplId1]);
+    await preDs.query(`INSERT INTO production_template_pattern_option (id, pattern_id, name, sort_order) VALUES (?, ?, 'Option 1', 1)`, [optId1, patternId1]);
+    await preDs.query(`INSERT INTO production_order (id, order_number, status, created_by_user_id) VALUES (?, 'PO-000001', 'DRAFT', ?)`, [orderId, userId]);
+
+    // Active Line 1: has pattern selection
+    const lineId1 = '00000000-0000-0000-0000-000000000021';
+    await preDs.query(
+      `INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order) VALUES (?, ?, ?, 5, 1)`,
+      [lineId1, orderId, tmplId1]
+    );
+    await preDs.query(
+      `INSERT INTO production_order_line_pattern_selection (id, order_line_id, template_pattern_id, selected_option_id) VALUES ('sel-1', ?, ?, ?)`,
+      [lineId1, patternId1, optId1]
+    );
+
+    // Active Line 2: no patterns
+    const lineId2 = '00000000-0000-0000-0000-000000000022';
+    await preDs.query(
+      `INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order) VALUES (?, ?, ?, 3, 2)`,
+      [lineId2, orderId, tmplId2]
+    );
+
+    // Soft-deleted Line 3: archived
+    const lineId3 = '00000000-0000-0000-0000-000000000023';
+    await preDs.query(
+      `INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order, deleted_at) VALUES (?, ?, ?, 1, 3, NOW())`,
+      [lineId3, orderId, tmplId1]
+    );
+
     await preDs.destroy();
 
-    // Now initialize with all migrations (including 0013) and upgrade
+    // Now run Migration 0014 upgrade
     const upgradeDs = new DataSource({
       ...databaseConfig,
       database: dbName,
@@ -180,27 +205,107 @@ async function runScenario2Upgrade(): Promise<void> {
     });
 
     await upgradeDs.initialize();
-    console.log('Applying upgrade migration 0013...');
+    console.log('Applying upgrade migration 0014...');
     const applied = await upgradeDs.runMigrations();
     console.log(`Applied ${applied.length} upgrade migration(s):`, applied.map((m) => m.name));
 
-    if (!applied.some((m) => m.name === 'CreateProductionOrderDraftingFoundation1710000000013')) {
-      throw new Error('Assertion failed: Migration 0013 was not applied in upgrade scenario');
+    if (!applied.some((m) => m.name === 'AddProductionOrderLineConfigurationUniqueness1710000000014')) {
+      throw new Error('Assertion failed: Migration 0014 was not applied in upgrade scenario');
     }
 
-    // Verify tables exist
-    for (const table of [
-      'production_order_sequence',
-      'production_order',
-      'production_order_line',
-      'production_order_line_pattern_selection',
-    ]) {
-      const [row] = await upgradeDs.query(
-        `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
-        [dbName, table]
-      );
-      if (!row) throw new Error(`Assertion failed in upgrade: table ${table} missing`);
-      console.log(`✔ ${table} table exists after upgrade`);
+    // Verify backfilled hashes
+    const [rowLine1] = await upgradeDs.query(`SELECT active_configuration_hash FROM production_order_line WHERE id = ?`, [lineId1]);
+    const expectedHash1 = hashLineConfiguration(tmplId1, [{ templatePatternId: patternId1, selectedOptionId: optId1 }]);
+    if (rowLine1.active_configuration_hash !== expectedHash1) {
+      throw new Error(`Backfill failed for Line 1: got ${rowLine1.active_configuration_hash}, expected ${expectedHash1}`);
+    }
+    console.log('✔ Line 1 correctly backfilled with configuration hash matching its pattern selections');
+
+    const [rowLine2] = await upgradeDs.query(`SELECT active_configuration_hash FROM production_order_line WHERE id = ?`, [lineId2]);
+    const expectedHash2 = hashLineConfiguration(tmplId2, []);
+    if (rowLine2.active_configuration_hash !== expectedHash2) {
+      throw new Error(`Backfill failed for Line 2: got ${rowLine2.active_configuration_hash}, expected ${expectedHash2}`);
+    }
+    console.log('✔ Line 2 correctly backfilled with configuration hash for template without patterns');
+
+    const [rowLine3] = await upgradeDs.query(`SELECT active_configuration_hash FROM production_order_line WHERE id = ?`, [lineId3]);
+    if (rowLine3.active_configuration_hash !== null) {
+      throw new Error(`Archived Line 3 should have active_configuration_hash = NULL, got ${rowLine3.active_configuration_hash}`);
+    }
+    console.log('✔ Archived Line 3 left with active_configuration_hash = NULL');
+
+    await upgradeDs.destroy();
+  } finally {
+    await rawConn.query(`DROP DATABASE IF EXISTS \`${dbName}\``);
+    await rawConn.end();
+    console.log(`Cleaned up disposable database: ${dbName}`);
+  }
+}
+
+async function runScenario3DuplicateFailLoud(): Promise<void> {
+  console.log('\n======================================================');
+  console.log('--- Scenario 3: Pre-existing Duplicates Fail Loudly in Migration 0014 ---');
+  console.log('======================================================');
+
+  const rawConn = await createRawConnection();
+  const dbName = `test_po_fail_loud_${Date.now()}`;
+
+  try {
+    await rawConn.query(`CREATE DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    console.log(`Created disposable database: ${dbName}`);
+
+    const allMigrations = databaseConfig.migrations as Function[];
+    const pre0014Migrations = allMigrations.filter((m) => m.name !== 'AddProductionOrderLineConfigurationUniqueness1710000000014');
+
+    const preDs = new DataSource({
+      ...databaseConfig,
+      database: dbName,
+      migrations: pre0014Migrations,
+      logging: false,
+    });
+
+    await preDs.initialize();
+    await preDs.runMigrations();
+
+    // Seed duplicate active lines under 0013
+    const roleId = '00000000-0000-0000-0000-000000000030';
+    const userId = '00000000-0000-0000-0000-000000000031';
+    const tmplId = '00000000-0000-0000-0000-000000000032';
+    const orderId = '00000000-0000-0000-0000-000000000033';
+
+    await preDs.query(`INSERT INTO system_role (id, name, code) VALUES (?, 'Admin', 'ADMIN')`, [roleId]);
+    await preDs.query(`INSERT INTO system_user (id, full_name, phone, password_hash, role_id, is_active) VALUES (?, 'User', '1234567890', 'hash', ?, 1)`, [userId, roleId]);
+    await preDs.query(`INSERT INTO production_template (id, name, code, is_active) VALUES (?, 'Tmpl', 'T-DUP', 1)`, [tmplId]);
+    await preDs.query(`INSERT INTO production_order (id, order_number, status, created_by_user_id) VALUES (?, 'PO-DUP', 'DRAFT', ?)`, [orderId, userId]);
+
+    // Insert 2 active duplicate lines with same template and no selections
+    await preDs.query(`INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order) VALUES ('dup-1', ?, ?, 1, 1)`, [orderId, tmplId]);
+    await preDs.query(`INSERT INTO production_order_line (id, order_id, template_id, quantity, sort_order) VALUES ('dup-2', ?, ?, 2, 2)`, [orderId, tmplId]);
+
+    await preDs.destroy();
+
+    // Now attempt running Migration 0014 -> must fail loudly with duplicate details!
+    const upgradeDs = new DataSource({
+      ...databaseConfig,
+      database: dbName,
+      logging: false,
+    });
+
+    await upgradeDs.initialize();
+    let migrationFailedLoudly = false;
+    try {
+      await upgradeDs.runMigrations();
+    } catch (err: any) {
+      if (err.message?.includes('Pre-existing duplicate line configurations detected in database')) {
+        migrationFailedLoudly = true;
+        console.log('✔ Migration 0014 failed loudly with detailed diagnostic message when duplicate configurations existed in DB');
+      } else {
+        console.error('Migration threw unexpected error:', err);
+      }
+    }
+
+    if (!migrationFailedLoudly) {
+      throw new Error('Assertion failed: Migration 0014 should have failed loudly due to duplicate lines');
     }
 
     await upgradeDs.destroy();
@@ -212,11 +317,12 @@ async function runScenario2Upgrade(): Promise<void> {
 }
 
 async function main() {
-  console.log('Starting Migration 0013 Verification Tests on MySQL...');
+  console.log('Starting Migration 0014 Verification Tests on MySQL...');
   await runScenario1Fresh();
   await runScenario2Upgrade();
+  await runScenario3DuplicateFailLoud();
   console.log('\n======================================================');
-  console.log('ALL MIGRATION 0013 SCENARIOS PASSED SUCCESSFULLY!');
+  console.log('ALL MIGRATION 0014 SCENARIOS PASSED SUCCESSFULLY!');
   console.log('======================================================');
 }
 

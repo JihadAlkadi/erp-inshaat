@@ -3,6 +3,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import {
+  canonicalizeLineConfiguration,
+  hashLineConfiguration,
+} from '../src/modules/production/order-line/production-order-line-configuration.helper.js';
 
 import { databaseConfig } from '../src/config/database.config.js';
 import { SystemPermission } from '../src/modules/system/permission/constants/system-permission.enum.js';
@@ -41,6 +47,12 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       const migrations = databaseConfig.migrations as Function[];
       const m13 = migrations.find((m) => m.name === 'CreateProductionOrderDraftingFoundation1710000000013');
       assert.ok(m13, 'Migration 0013 must be registered in databaseConfig');
+    });
+
+    it('verifies Migration 0014 is registered in databaseConfig.migrations', () => {
+      const migrations = databaseConfig.migrations as Function[];
+      const m14 = migrations.find((m) => m.name === 'AddProductionOrderLineConfigurationUniqueness1710000000014');
+      assert.ok(m14, 'Migration 0014 must be registered in databaseConfig');
     });
 
     it('verifies all 4 Order aggregate entities are registered in databaseConfig.entities', () => {
@@ -533,7 +545,10 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
     }) {
       const store = {
         order: initialData.order ? { ...initialData.order } : null,
-        lines: (initialData.lines || []).map((l) => ({ ...l })),
+        lines: (initialData.lines || []).map((l) => ({
+          activeConfigurationHash: l.activeConfigurationHash !== undefined ? l.activeConfigurationHash : 'mock-active-hash',
+          ...l,
+        })),
         selections: (initialData.selections || []).map((s) => ({ ...s })),
         templates: (initialData.templates || (initialData.template ? [initialData.template] : [])).map((t) => ({ ...t })),
         patterns: (initialData.patterns || []).map((p) => ({ ...p })),
@@ -558,8 +573,15 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
             }
             if (entityClass === ProductionOrderLineEntity) {
               return store.lines.find((l) => {
-                if (opts?.where?.id && l.id !== opts.where.id) return false;
+                if (opts?.where?.id) {
+                  if (opts.where.id._type === 'not') {
+                    if (l.id === opts.where.id._value) return false;
+                  } else if (l.id !== opts.where.id) {
+                    return false;
+                  }
+                }
                 if (opts?.where?.orderId && l.orderId !== opts.where.orderId) return false;
+                if (opts?.where?.activeConfigurationHash && l.activeConfigurationHash !== opts.where.activeConfigurationHash) return false;
                 if (opts?.where?.deletedAt && l.deletedAt !== null) return false;
                 return true;
               }) || null;
@@ -1055,6 +1077,441 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       assert.equal(config.patterns.length, 1);
       assert.equal(config.patterns[0].defaultOptionId, 'opt-1');
       assert.equal((config.patterns[0] as any).tasks, undefined);
+    });
+  });
+
+  // ==========================================
+  // 11. CONFIGURATION UNIQUENESS & CANONICAL HASH INVARIANTS
+  // ==========================================
+  describe('11. Configuration Uniqueness & Canonical Hash Invariants', () => {
+    it('canonicalizeLineConfiguration(): sorts pattern selections deterministically by templatePatternId', () => {
+      const selectionsA = [
+        { templatePatternId: 'pattern-2', selectedOptionId: 'opt-b' },
+        { templatePatternId: 'pattern-1', selectedOptionId: 'opt-a' },
+      ];
+      const selectionsB = [
+        { templatePatternId: 'pattern-1', selectedOptionId: 'opt-a' },
+        { templatePatternId: 'pattern-2', selectedOptionId: 'opt-b' },
+      ];
+
+      const canonicalA = canonicalizeLineConfiguration('template-123', selectionsA);
+      const canonicalB = canonicalizeLineConfiguration('template-123', selectionsB);
+
+      assert.equal(canonicalA, 'template-123|pattern-1:opt-a|pattern-2:opt-b');
+      assert.equal(canonicalB, 'template-123|pattern-1:opt-a|pattern-2:opt-b');
+      assert.equal(canonicalA, canonicalB);
+    });
+
+    it('hashLineConfiguration(): produces identical 64-char lowercase hex SHA-256 regardless of selection order', () => {
+      const hashA = hashLineConfiguration('tmpl-1', [
+        { templatePatternId: 'p-z', selectedOptionId: 'opt-z' },
+        { templatePatternId: 'p-a', selectedOptionId: 'opt-a' },
+      ]);
+      const hashB = hashLineConfiguration('tmpl-1', [
+        { templatePatternId: 'p-a', selectedOptionId: 'opt-a' },
+        { templatePatternId: 'p-z', selectedOptionId: 'opt-z' },
+      ]);
+
+      assert.equal(hashA.length, 64);
+      assert.equal(hashA, hashA.toLowerCase());
+      assert.equal(hashA, hashB);
+    });
+
+    it('hashLineConfiguration(): changes when selected option changes', () => {
+      const hash1 = hashLineConfiguration('tmpl-1', [{ templatePatternId: 'p-1', selectedOptionId: 'opt-1' }]);
+      const hash2 = hashLineConfiguration('tmpl-1', [{ templatePatternId: 'p-1', selectedOptionId: 'opt-2' }]);
+      assert.notEqual(hash1, hash2);
+    });
+
+    it('hashLineConfiguration(): changes when template changes', () => {
+      const hash1 = hashLineConfiguration('tmpl-1', [{ templatePatternId: 'p-1', selectedOptionId: 'opt-1' }]);
+      const hash2 = hashLineConfiguration('tmpl-2', [{ templatePatternId: 'p-1', selectedOptionId: 'opt-1' }]);
+      assert.notEqual(hash1, hash2);
+    });
+
+    it('hashLineConfiguration(): template without patterns produces deterministic hash from templateId alone', () => {
+      const hash1 = hashLineConfiguration('tmpl-no-pattern', []);
+      const hash2 = hashLineConfiguration('tmpl-no-pattern');
+      assert.equal(hash1.length, 64);
+      assert.equal(hash1, hash2);
+    });
+  });
+
+  // ==========================================
+  // 12. SERVICE-LEVEL CONFIGURATION DUPLICATE PREVENTION
+  // ==========================================
+  describe('12. Service-Level Configuration Duplicate Prevention', () => {
+    function createDuplicateTestContext() {
+      const store = {
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [] as any[],
+        selections: [] as any[],
+        templates: [
+          { id: 't-with-patterns', name: 'قالب مع أنماط', isActive: true, deletedAt: null },
+          { id: 't-no-patterns', name: 'قالب بدون أنماط', isActive: true, deletedAt: null },
+        ],
+        patterns: [
+          { id: 'p-1', templateId: 't-with-patterns', name: 'النمط 1', deletedAt: null, createdAt: new Date() },
+          { id: 'p-2', templateId: 't-with-patterns', name: 'النمط 2', deletedAt: null, createdAt: new Date() },
+        ],
+        options: [
+          { id: 'opt-1a', patternId: 'p-1', name: 'خيار 1-أ', sortOrder: 1, deletedAt: null },
+          { id: 'opt-1b', patternId: 'p-1', name: 'خيار 1-ب', sortOrder: 2, deletedAt: null },
+          { id: 'opt-2a', patternId: 'p-2', name: 'خيار 2-أ', sortOrder: 1, deletedAt: null },
+        ],
+        sequence: { id: 'PRODUCTION_ORDER', currentValue: 1 },
+      };
+
+      const createRepo = (entityClass: any) => {
+        return {
+          findOne: async (opts: any) => {
+            if (entityClass === ProductionOrderEntity) return store.order;
+            if (entityClass === ProductionTemplateEntity) {
+              return store.templates.find((t) => t.id === opts.where.id && !t.deletedAt) || null;
+            }
+            if (entityClass === ProductionTemplatePatternEntity) {
+              return store.patterns.find((p) => p.id === opts.where.id && (!opts.where.templateId || p.templateId === opts.where.templateId) && !p.deletedAt) || null;
+            }
+            if (entityClass === ProductionTemplatePatternOptionEntity) {
+              return store.options.find((o) => o.id === opts.where.id && (!opts.where.patternId || o.patternId === opts.where.patternId) && !o.deletedAt) || null;
+            }
+            if (entityClass === ProductionOrderLineEntity) {
+              return store.lines.find((l) => {
+                if (opts?.where?.id) {
+                  if (opts.where.id._type === 'not' && l.id === opts.where.id._value) return false;
+                  if (opts.where.id._type !== 'not' && l.id !== opts.where.id) return false;
+                }
+                if (opts?.where?.orderId && l.orderId !== opts.where.orderId) return false;
+                if (opts?.where?.activeConfigurationHash && l.activeConfigurationHash !== opts.where.activeConfigurationHash) return false;
+                if (opts?.where?.deletedAt && l.deletedAt !== null) return false;
+                return true;
+              }) || null;
+            }
+            if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+              return store.selections.find((s) => s.orderLineId === opts.where.orderLineId && s.templatePatternId === opts.where.templatePatternId) || null;
+            }
+            return null;
+          },
+          find: async (opts: any) => {
+            if (entityClass === ProductionOrderLineEntity) {
+              return store.lines.filter((l) => !opts?.withDeleted ? !l.deletedAt : true);
+            }
+            if (entityClass === ProductionTemplateEntity) {
+              return store.templates.filter((t) => !opts?.withDeleted ? !t.deletedAt : true);
+            }
+            if (entityClass === ProductionTemplatePatternEntity) {
+              return store.patterns.filter((p) => {
+                if (opts?.where?.templateId) {
+                  const tmplList = opts.where.templateId._value || (Array.isArray(opts.where.templateId) ? opts.where.templateId : [opts.where.templateId]);
+                  if (!tmplList.includes(p.templateId)) return false;
+                }
+                return !opts?.withDeleted ? !p.deletedAt : true;
+              }).map((p) => {
+                if (opts?.relations?.options) {
+                  return { ...p, options: store.options.filter((o) => o.patternId === p.id && !o.deletedAt) };
+                }
+                return p;
+              });
+            }
+            if (entityClass === ProductionTemplatePatternOptionEntity) {
+              return store.options.filter((o) => !opts?.withDeleted ? !o.deletedAt : true);
+            }
+            if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+              return store.selections.filter((s) => {
+                if (opts?.where?.orderLineId) {
+                  const lineList = opts.where.orderLineId._value || (Array.isArray(opts.where.orderLineId) ? opts.where.orderLineId : [opts.where.orderLineId]);
+                  if (!lineList.includes(s.orderLineId)) return false;
+                }
+                return true;
+              });
+            }
+            return [];
+          },
+          count: async (opts: any) => {
+            if (entityClass === ProductionOrderLineEntity) {
+              return store.lines.filter((l) => !l.deletedAt).length;
+            }
+            return 0;
+          },
+          create: (data: any) => ({ id: data.id || `line-${Date.now()}-${Math.floor(Math.random() * 1000)}`, deletedAt: null, ...data }),
+          save: async (entity: any) => {
+            if (entityClass === ProductionOrderLineEntity) {
+              const idx = store.lines.findIndex((l) => l.id === entity.id);
+              if (idx >= 0) store.lines[idx] = entity;
+              else store.lines.push(entity);
+            } else if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+              const idx = store.selections.findIndex((s) => s.id === entity.id);
+              if (idx >= 0) store.selections[idx] = entity;
+              else store.selections.push(entity);
+            }
+            return entity;
+          },
+        };
+      };
+
+      const mockManager: any = {
+        getRepository: (c: any) => createRepo(c),
+        save: async (e: any) => e,
+      };
+
+      const mockDataSource: any = {
+        getRepository: (c: any) => createRepo(c),
+        transaction: async (cb: any) => cb(mockManager),
+      };
+
+      const guard = new ProductionOrderGuardService(mockDataSource);
+      const service = new ProductionOrderService(mockDataSource, guard);
+
+      return { store, service };
+    }
+
+    it('addLine(): adding duplicate configuration throws PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION', async () => {
+      const { service } = createDuplicateTestContext();
+
+      // Add first line
+      const line1 = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 5,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+      assert.ok(line1.id);
+
+      // Try adding duplicate configuration with same options
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', {
+            templateId: 't-with-patterns',
+            quantity: 10, // different quantity does NOT permit duplication!
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1a' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION');
+          assert.equal(err.details?.existingLineId, line1.id);
+          return true;
+        }
+      );
+    });
+
+    it('addLine(): different selection order still detected as duplicate and throws PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION', async () => {
+      const { service } = createDuplicateTestContext();
+
+      const line1 = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 2,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Send selections in reversed order [p-2, p-1]
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', {
+            templateId: 't-with-patterns',
+            quantity: 3,
+            patternSelections: [
+              { patternId: 'p-2', optionId: 'opt-2a' },
+              { patternId: 'p-1', optionId: 'opt-1a' },
+            ],
+          });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+      );
+    });
+
+    it('addLine(): allows same template with DIFFERENT option selection', async () => {
+      const { service } = createDuplicateTestContext();
+
+      const line1 = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 2,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Different option on p-1: opt-1b instead of opt-1a
+      const line2 = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 2,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1b' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      assert.ok(line2.id);
+      assert.notEqual(line1.id, line2.id);
+    });
+
+    it('addLine(): template without patterns duplicate throws PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION', async () => {
+      const { service } = createDuplicateTestContext();
+
+      const line1 = await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 1,
+      });
+      assert.ok(line1.id);
+
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', {
+            templateId: 't-no-patterns',
+            quantity: 5,
+          });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+      );
+    });
+
+    it('addLine(): allows adding configuration that was previously archived on this order', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      const line1 = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 2,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Archive line1
+      await service.archiveLine('ord-1', line1.id);
+
+      // Verify archived line cleared activeConfigurationHash
+      const archivedLine = store.lines.find((l) => l.id === line1.id);
+      assert.equal(archivedLine.activeConfigurationHash, null);
+      assert.ok(archivedLine.deletedAt !== null);
+
+      // Now adding identical configuration succeeds!
+      const line2 = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 4,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      assert.ok(line2.id);
+      assert.notEqual(line2.id, line1.id);
+    });
+
+    it('changePatternSelection(): collision with another active line throws PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION', async () => {
+      const { service } = createDuplicateTestContext();
+
+      // Line 1: opt-1a, opt-2a
+      const line1 = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Line 2: opt-1b, opt-2a
+      const line2 = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1b' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Attempt to change Line 2's pattern p-1 to opt-1a -> would collide with Line 1!
+      await assert.rejects(
+        async () => {
+          await service.changePatternSelection('ord-1', line2.id, 'p-1', { optionId: 'opt-1a' });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+      );
+    });
+
+    it('getOrderByIdInternal(): active line missing activeConfigurationHash throws PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      store.lines.push({
+        id: 'corrupt-line',
+        orderId: 'ord-1',
+        templateId: 't-no-patterns',
+        quantity: 1,
+        sortOrder: 1,
+        activeConfigurationHash: null, // missing hash!
+        deletedAt: null,
+      });
+
+      await assert.rejects(
+        async () => {
+          await service.getOrderById('ord-1');
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+      );
+    });
+  });
+
+  // ==========================================
+  // 13. WEB UI SEPARATION & INTEGRITY INVARIANTS
+  // ==========================================
+  describe('13. Web UI Separation & Integrity Invariants', () => {
+    it('show.ejs: strictly read-only and contains no mutation controls or modals', () => {
+      const showEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/show.ejs'), 'utf-8');
+
+      // Mutating buttons and modals must NOT exist in show.ejs
+      assert.ok(!showEjs.includes('openAddLineModalBtn'), 'show.ejs must not contain openAddLineModalBtn');
+      assert.ok(!showEjs.includes('confirmAddLineBtn'), 'show.ejs must not contain confirmAddLineBtn');
+      assert.ok(!showEjs.includes('templatePickerSearch'), 'show.ejs must not contain templatePickerSearch');
+      assert.ok(!showEjs.includes('editQuantityModal'), 'show.ejs must not contain editQuantityModal');
+      assert.ok(!showEjs.includes('editHeaderModal'), 'show.ejs must not contain editHeaderModal');
+      assert.ok(!showEjs.includes('archiveOrderModal'), 'show.ejs must not contain archiveOrderModal');
+      assert.ok(!showEjs.includes('<form'), 'show.ejs must not contain form elements');
+
+      // Must contain navigation button to /edit
+      assert.ok(showEjs.includes('editOrderNavBtn'), 'show.ejs must contain editOrderNavBtn navigation');
+      assert.ok(showEjs.includes('/production/orders/<%= order.id %>/edit'), 'show.ejs must link to /edit');
+      assert.ok(showEjs.includes('/js/production-order-show.js'), 'show.ejs must load production-order-show.js');
+    });
+
+    it('edit.ejs: contains comprehensive Draft Order Editor controls', () => {
+      const editEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/edit.ejs'), 'utf-8');
+
+      assert.ok(editEjs.includes('addLineComposerCard'), 'edit.ejs must contain addLineComposerCard');
+      assert.ok(editEjs.includes('templateSearchInput'), 'edit.ejs must contain templateSearchInput');
+      assert.ok(editEjs.includes('templateLoadMoreBtn'), 'edit.ejs must contain templateLoadMoreBtn');
+      assert.ok(editEjs.includes('composerQuantityInput'), 'edit.ejs must contain composerQuantityInput');
+      assert.ok(editEjs.includes('composerAddLineBtn'), 'edit.ejs must contain composerAddLineBtn');
+      assert.ok(editEjs.includes('editHeaderModal'), 'edit.ejs must contain editHeaderModal');
+      assert.ok(editEjs.includes('archiveOrderModal'), 'edit.ejs must contain archiveOrderModal');
+      assert.ok(editEjs.includes('/js/production-order-edit.js'), 'edit.ejs must load production-order-edit.js');
+    });
+
+    it('production-order-show.js: does not execute any mutating API calls', () => {
+      const showJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-show.js'), 'utf-8');
+
+      assert.ok(!showJs.includes("method: 'POST'"), 'show.js must not perform POST requests');
+      assert.ok(!showJs.includes("method: 'PATCH'"), 'show.js must not perform PATCH requests');
+      assert.ok(!showJs.includes("method: 'DELETE'"), 'show.js must not perform DELETE requests');
+    });
+
+    it('production-order-edit.js: uses monotonically increasing sequence counters', () => {
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+
+      assert.ok(editJs.includes('templatePickerRequestSeq'), 'edit.js must track templatePickerRequestSeq');
+      assert.ok(editJs.includes('templateConfigurationRequestSeq'), 'edit.js must track templateConfigurationRequestSeq');
+      assert.ok(editJs.includes('++templatePickerRequestSeq'), 'templatePickerRequestSeq must increment monotonically');
+      assert.ok(editJs.includes('++templateConfigurationRequestSeq'), 'templateConfigurationRequestSeq must increment monotonically');
     });
   });
 });

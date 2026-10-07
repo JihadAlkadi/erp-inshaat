@@ -93,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const orderId = resJson.data.id;
-      window.location.href = `/production/orders/${orderId}`;
+      window.location.href = `/production/orders/${orderId}/edit`;
     } catch (err) {
       alertBox.textContent = err.message || 'حدث خطأ غير متوقع';
       alertBox.classList.remove('d-none');

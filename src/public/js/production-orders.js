@@ -214,30 +214,52 @@ document.addEventListener('DOMContentLoaded', () => {
       const tdActions = document.createElement('td');
       tdActions.className = 'py-3 px-3 text-end text-nowrap';
 
+      // View Button -> /production/orders/:id (Read-Only)
       const viewBtn = document.createElement('a');
       viewBtn.href = `/production/orders/${order.id}`;
-      viewBtn.className = 'btn btn-sm btn-outline-primary me-1';
-      viewBtn.setAttribute('title', 'عرض مساحة العمل');
+      viewBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+      viewBtn.setAttribute('title', 'عرض تفاصيل الطلب');
       const viewIcon = document.createElement('i');
-      viewIcon.className = 'fa-solid fa-arrow-left';
+      viewIcon.className = 'fa-solid fa-eye me-1';
       viewBtn.appendChild(viewIcon);
+      const viewText = document.createElement('span');
+      viewText.textContent = 'عرض';
+      viewBtn.appendChild(viewText);
       tdActions.appendChild(viewBtn);
 
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.className = 'btn btn-sm btn-outline-danger';
-      delBtn.setAttribute('title', 'أرشفة الطلب');
-      const delIcon = document.createElement('i');
-      delIcon.className = 'fa-solid fa-trash-can';
-      delBtn.appendChild(delIcon);
+      // Edit Button -> /production/orders/:id/edit (Draft Editor)
+      if (window.canUpdateOrder && order.status === 'DRAFT') {
+        const editBtn = document.createElement('a');
+        editBtn.href = `/production/orders/${order.id}/edit`;
+        editBtn.className = 'btn btn-sm btn-outline-primary me-1';
+        editBtn.setAttribute('title', 'تعديل وإعداد الطلب');
+        const editIcon = document.createElement('i');
+        editIcon.className = 'fa-solid fa-pen-to-square me-1';
+        editBtn.appendChild(editIcon);
+        const editText = document.createElement('span');
+        editText.textContent = 'تعديل';
+        editBtn.appendChild(editText);
+        tdActions.appendChild(editBtn);
+      }
 
-      delBtn.addEventListener('click', () => {
-        pendingArchiveOrderId = order.id;
-        archiveModalOrderNumber.textContent = order.orderNumber;
-        archiveModal.show();
-      });
+      // Archive Button (if permitted)
+      if (window.canDeleteOrder && order.status === 'DRAFT') {
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'btn btn-sm btn-outline-danger';
+        delBtn.setAttribute('title', 'أرشفة الطلب');
+        const delIcon = document.createElement('i');
+        delIcon.className = 'fa-solid fa-trash-can';
+        delBtn.appendChild(delIcon);
 
-      tdActions.appendChild(delBtn);
+        delBtn.addEventListener('click', () => {
+          pendingArchiveOrderId = order.id;
+          archiveModalOrderNumber.textContent = order.orderNumber;
+          archiveModal.show();
+        });
+
+        tdActions.appendChild(delBtn);
+      }
       tr.appendChild(tdActions);
 
       tableBody.appendChild(tr);

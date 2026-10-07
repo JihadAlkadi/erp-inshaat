@@ -33,6 +33,10 @@ export class ProductionOrderLineEntity {
   @Column({ name: 'sort_order', type: 'int' })
   sortOrder!: number;
 
+  @Index('UQ_prod_order_line_order_config_hash')
+  @Column({ name: 'active_configuration_hash', type: 'char', length: 64, nullable: true })
+  activeConfigurationHash!: string | null;
+
   @ManyToOne(() => ProductionOrderEntity, (order) => order.lines, {
     eager: false,
     onDelete: 'CASCADE',

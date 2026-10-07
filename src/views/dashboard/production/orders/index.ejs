@@ -157,4 +157,8 @@
   </div>
 </div>
 
+<script>
+  window.canUpdateOrder = <%= typeof canUpdateOrder !== 'undefined' && canUpdateOrder ? 'true' : 'false' %>;
+  window.canDeleteOrder = <%= typeof canDeleteOrder !== 'undefined' && canDeleteOrder ? 'true' : 'false' %>;
+</script>
 <script src="/js/production-orders.js"></script>
