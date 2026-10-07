@@ -2917,21 +2917,32 @@ document.addEventListener('DOMContentLoaded', () => {
   // Task Materials elements
   const taskMaterialSearchInput = document.getElementById('taskMaterialSearchInput');
   const taskCatalogSearchResults = document.getElementById('taskCatalogSearchResults');
+  const taskCatalogSearchResultsList = document.getElementById('taskCatalogSearchResultsList');
+  const taskCatalogLoadMoreContainer = document.getElementById('taskCatalogLoadMoreContainer');
+  const btnTaskCatalogLoadMore = document.getElementById('btnTaskCatalogLoadMore');
+  const taskSelectedProductContainer = document.getElementById('taskSelectedProductContainer');
+  const taskSelectedProductCode = document.getElementById('taskSelectedProductCode');
+  const taskSelectedProductName = document.getElementById('taskSelectedProductName');
+  const btnTaskDeselectProduct = document.getElementById('btnTaskDeselectProduct');
+  const taskAddMaterialForm = document.getElementById('taskAddMaterialForm');
   const taskMaterialUnitSelect = document.getElementById('taskMaterialUnitSelect');
   const taskMaterialQuantityInput = document.getElementById('taskMaterialQuantityInput');
-  const btnAddTaskMaterial = document.getElementById('btnAddTaskMaterial');
+  const btnSubmitTaskMaterial = document.getElementById('btnSubmitTaskMaterial');
   const taskMaterialsTableBody = document.getElementById('taskMaterialsTableBody');
-  const taskMaterialsEmptyNotice = document.getElementById('taskMaterialsEmptyNotice');
 
   // Task Attachments elements
+  const taskUploadAttachmentForm = document.getElementById('taskUploadAttachmentForm');
   const taskAttachmentFileInput = document.getElementById('taskAttachmentFileInput');
   const taskAttachmentDescInput = document.getElementById('taskAttachmentDescInput');
   const btnUploadTaskAttachment = document.getElementById('btnUploadTaskAttachment');
+  const taskUploadSpinner = document.getElementById('taskUploadSpinner');
   const taskAttachmentsListContainer = document.getElementById('taskAttachmentsListContainer');
-  const taskAttachmentsEmptyNotice = document.getElementById('taskAttachmentsEmptyNotice');
 
   let selectedTaskCatalogProduct = null;
   let taskSearchDebounceTimer = null;
+  let taskCatalogCurrentPage = 1;
+  let taskCatalogTotalPages = 1;
+  let taskCatalogSearchQuery = '';
 
   async function openTaskModal(patternId, optionId, task, activeTabId = 'tab-task-info') {
     activeModalTask = { patternId, optionId, task };
@@ -2958,17 +2969,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Reset material picker inputs
-    selectedTaskCatalogProduct = null;
+    deselectTaskCatalogProduct();
     if (taskMaterialSearchInput) taskMaterialSearchInput.value = '';
-    if (taskMaterialQuantityInput) taskMaterialQuantityInput.value = '';
-    if (taskMaterialUnitSelect) {
-      taskMaterialUnitSelect.replaceChildren();
-      const defaultOpt = document.createElement('option');
-      defaultOpt.value = '';
-      defaultOpt.textContent = '-- اختر المادة أولاً --';
-      taskMaterialUnitSelect.appendChild(defaultOpt);
-      taskMaterialUnitSelect.disabled = true;
-    }
     if (taskCatalogSearchResults) taskCatalogSearchResults.classList.add('d-none');
 
     // Load materials and attachments
@@ -3065,44 +3067,48 @@ document.addEventListener('DOMContentLoaded', () => {
     taskMaterialsTableBody.replaceChildren();
 
     if (!materials || materials.length === 0) {
-      if (taskMaterialsEmptyNotice) taskMaterialsEmptyNotice.classList.remove('d-none');
+      const emptyRow = document.createElement('tr');
+      const emptyCell = document.createElement('td');
+      emptyCell.colSpan = canUpdate ? 5 : 4;
+      emptyCell.className = 'text-center py-4 text-muted';
+      emptyCell.textContent = 'لم يتم تحديد أي مواد مطلوبة لهذه المهمة بعد.';
+      emptyRow.appendChild(emptyCell);
+      taskMaterialsTableBody.appendChild(emptyRow);
       return;
     }
-    if (taskMaterialsEmptyNotice) taskMaterialsEmptyNotice.classList.add('d-none');
 
     materials.forEach((mat) => {
       const tr = document.createElement('tr');
-
-      const tdCode = document.createElement('td');
-      tdCode.className = 'font-monospace small';
-      tdCode.textContent = mat.product?.code || '—';
 
       const tdName = document.createElement('td');
       tdName.className = 'fw-bold text-dark';
       tdName.textContent = mat.product?.name || 'مادة غير محددة';
 
+      const tdCode = document.createElement('td');
+      tdCode.className = 'font-monospace small text-muted';
+      tdCode.textContent = mat.product?.code || '—';
+
       const tdUnit = document.createElement('td');
+      tdUnit.className = 'small';
       tdUnit.textContent = mat.productUnit?.name || '—';
 
       const tdQty = document.createElement('td');
-      tdQty.className = 'fw-bold text-primary font-monospace';
+      tdQty.className = 'text-center font-monospace fw-bold text-primary';
       tdQty.textContent = parseFloat(mat.plannedQuantity).toLocaleString();
 
-      tr.append(tdCode, tdName, tdUnit, tdQty);
+      tr.append(tdName, tdCode, tdUnit, tdQty);
 
       if (canUpdate) {
         const tdActions = document.createElement('td');
         tdActions.className = 'text-center';
-
         const btnDelete = document.createElement('button');
         btnDelete.type = 'button';
-        btnDelete.className = 'btn btn-sm btn-outline-danger p-1';
-        btnDelete.title = 'حذف المادة';
+        btnDelete.className = 'btn btn-sm btn-light text-danger p-1';
+        btnDelete.title = 'إزالة المادة';
         const icon = document.createElement('i');
         icon.className = 'fa-solid fa-trash-can';
         btnDelete.appendChild(icon);
         btnDelete.addEventListener('click', () => removeTaskMaterial(mat.id));
-
         tdActions.appendChild(btnDelete);
         tr.appendChild(tdActions);
       }
@@ -3111,123 +3117,181 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Task Material Search & Unit selection
+  // Task Material Catalog Search & Unit Selection
   if (taskMaterialSearchInput) {
     taskMaterialSearchInput.addEventListener('input', () => {
-      const q = taskMaterialSearchInput.value.trim();
       clearTimeout(taskSearchDebounceTimer);
-      selectedTaskCatalogProduct = null;
-      if (taskMaterialUnitSelect) {
-        taskMaterialUnitSelect.replaceChildren();
-        const defaultOpt = document.createElement('option');
-        defaultOpt.value = '';
-        defaultOpt.textContent = '-- اختر المادة أولاً --';
-        taskMaterialUnitSelect.appendChild(defaultOpt);
-        taskMaterialUnitSelect.disabled = true;
-      }
-      if (q.length < 1) {
-        if (taskCatalogSearchResults) taskCatalogSearchResults.classList.add('d-none');
-        return;
-      }
-      taskSearchDebounceTimer = setTimeout(async () => {
-        try {
-          const res = await window.erpFetch(`/api/inventory/products/reference-options?search=${encodeURIComponent(q)}&limit=10`);
-          const data = await res.json();
-          if (res.ok && data.success) {
-            renderTaskCatalogSearchResults(data.data?.items || []);
-          }
-        } catch (err) {
-          console.error('Failed to search products:', err);
-        }
-      }, 250);
+      taskSearchDebounceTimer = setTimeout(() => {
+        taskCatalogSearchQuery = taskMaterialSearchInput.value.trim();
+        taskCatalogCurrentPage = 1;
+        fetchTaskCatalogProducts(true);
+      }, 300);
     });
   }
 
-  function renderTaskCatalogSearchResults(products) {
-    if (!taskCatalogSearchResults) return;
-    taskCatalogSearchResults.replaceChildren();
+  if (btnTaskCatalogLoadMore) {
+    btnTaskCatalogLoadMore.addEventListener('click', () => {
+      if (taskCatalogCurrentPage < taskCatalogTotalPages) {
+        taskCatalogCurrentPage++;
+        fetchTaskCatalogProducts(false);
+      }
+    });
+  }
 
-    if (!products || products.length === 0) {
-      const emptyDiv = document.createElement('div');
-      emptyDiv.className = 'p-2 text-muted small text-center';
-      emptyDiv.textContent = 'لا توجد منتجات مطابقة للبحث';
-      taskCatalogSearchResults.appendChild(emptyDiv);
+  async function fetchTaskCatalogProducts(reset = true) {
+    if (!taskCatalogSearchResults || !taskCatalogSearchResultsList) return;
+    if (reset) {
+      taskCatalogCurrentPage = 1;
+      taskCatalogSearchResultsList.replaceChildren();
+      const loadingEl = document.createElement('div');
+      loadingEl.className = 'p-3 text-center text-muted small';
+      loadingEl.textContent = 'جاري البحث في الكتالوج...';
+      taskCatalogSearchResultsList.appendChild(loadingEl);
       taskCatalogSearchResults.classList.remove('d-none');
-      return;
     }
 
-    products.forEach((prod) => {
-      const itemDiv = document.createElement('div');
-      itemDiv.className = 'catalog-search-item';
+    try {
+      const q = encodeURIComponent(taskCatalogSearchQuery);
+      const res = await window.erpFetch(`/api/inventory/products/reference-options?search=${q}&page=${taskCatalogCurrentPage}&limit=20`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.data) {
+          taskCatalogTotalPages = data.data.totalPages || 1;
+          const items = data.data.items || [];
 
-      const nameDiv = document.createElement('div');
-      nameDiv.className = 'fw-bold small text-dark';
-      nameDiv.textContent = prod.name;
+          if (reset) taskCatalogSearchResultsList.replaceChildren();
 
-      const codeSpan = document.createElement('span');
-      codeSpan.className = 'badge bg-light text-secondary border font-monospace small';
-      codeSpan.textContent = prod.code;
+          if (items.length === 0 && reset) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'p-3 text-center text-muted small';
+            emptyEl.textContent = 'لا توجد منتجات مطابقة لنتيجة البحث.';
+            taskCatalogSearchResultsList.appendChild(emptyEl);
+          } else {
+            items.forEach((prod) => {
+              const itemDiv = document.createElement('div');
+              itemDiv.className = 'catalog-search-item';
 
-      itemDiv.append(nameDiv, codeSpan);
-      itemDiv.addEventListener('click', async () => {
-        selectedTaskCatalogProduct = prod;
-        taskMaterialSearchInput.value = `${prod.name} (${prod.code})`;
-        taskCatalogSearchResults.classList.add('d-none');
-        await loadTaskProductUnits(prod.id);
-      });
+              const infoSpan = document.createElement('div');
+              const nameSpan = document.createElement('strong');
+              nameSpan.className = 'text-dark small d-block';
+              nameSpan.textContent = prod.name;
+              const codeSpan = document.createElement('span');
+              codeSpan.className = 'badge bg-light text-secondary font-monospace border small';
+              codeSpan.textContent = prod.code;
+              infoSpan.append(nameSpan, codeSpan);
 
-      taskCatalogSearchResults.appendChild(itemDiv);
-    });
+              const btnPick = document.createElement('button');
+              btnPick.type = 'button';
+              btnPick.className = 'btn btn-xs btn-outline-primary py-0 px-2 small';
+              btnPick.textContent = 'اختيار';
 
-    taskCatalogSearchResults.classList.remove('d-none');
-  }
-
-  async function loadTaskProductUnits(productId) {
-    if (!taskMaterialUnitSelect) return;
-    taskMaterialUnitSelect.replaceChildren();
-    const loadingOpt = document.createElement('option');
-    loadingOpt.value = '';
-    loadingOpt.textContent = 'جاري تحميل الوحدات...';
-    taskMaterialUnitSelect.appendChild(loadingOpt);
-    taskMaterialUnitSelect.disabled = true;
-
-    let units = productUnitsCache.get(productId);
-    if (!units) {
-      try {
-        const res = await window.erpFetch(`/api/inventory/products/${productId}/units/reference-options`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && Array.isArray(data.data)) {
-            units = data.data;
-            productUnitsCache.set(productId, units);
+              itemDiv.append(infoSpan, btnPick);
+              itemDiv.addEventListener('click', () => selectTaskCatalogProduct(prod));
+              taskCatalogSearchResultsList.appendChild(itemDiv);
+            });
           }
+
+          if (taskCatalogLoadMoreContainer) {
+            if (taskCatalogCurrentPage < taskCatalogTotalPages) {
+              taskCatalogLoadMoreContainer.classList.remove('d-none');
+            } else {
+              taskCatalogLoadMoreContainer.classList.add('d-none');
+            }
+          }
+          taskCatalogSearchResults.classList.remove('d-none');
         }
-      } catch {
-        units = [];
+      }
+    } catch {
+      if (reset) {
+        taskCatalogSearchResultsList.replaceChildren();
+        const errDiv = document.createElement('div');
+        errDiv.className = 'p-3 text-center text-danger small';
+        errDiv.textContent = 'حدث خطأ أثناء تحميل الكتالوج.';
+        taskCatalogSearchResultsList.appendChild(errDiv);
       }
     }
+  }
 
-    taskMaterialUnitSelect.replaceChildren();
-    const defaultOpt = document.createElement('option');
-    defaultOpt.value = '';
-    defaultOpt.textContent = '-- اختر وحدة القياس --';
-    taskMaterialUnitSelect.appendChild(defaultOpt);
+  async function selectTaskCatalogProduct(product) {
+    selectedTaskCatalogProduct = product;
+    if (taskCatalogSearchResults) taskCatalogSearchResults.classList.add('d-none');
+    if (taskMaterialSearchInput) taskMaterialSearchInput.value = '';
 
-    if (units && units.length > 0) {
-      units.forEach((u) => {
-        const opt = document.createElement('option');
-        opt.value = u.id;
-        opt.textContent = `${u.name}${u.isBase ? ' (الوحدة الأساسية)' : ''}`;
-        taskMaterialUnitSelect.appendChild(opt);
-      });
-      taskMaterialUnitSelect.disabled = false;
-    } else {
-      const noUnitsOpt = document.createElement('option');
-      noUnitsOpt.value = '';
-      noUnitsOpt.textContent = 'لا توجد وحدات معرفة لهذا المنتج';
-      taskMaterialUnitSelect.appendChild(noUnitsOpt);
+    if (taskSelectedProductContainer) {
+      taskSelectedProductContainer.classList.remove('d-none');
+      if (taskSelectedProductCode) taskSelectedProductCode.textContent = product.code;
+      if (taskSelectedProductName) taskSelectedProductName.textContent = product.name;
+    }
+
+    // Load units on demand
+    if (taskMaterialUnitSelect) {
+      taskMaterialUnitSelect.replaceChildren();
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = '';
+      defaultOpt.textContent = 'جاري تحميل الوحدات...';
+      taskMaterialUnitSelect.appendChild(defaultOpt);
+      taskMaterialUnitSelect.disabled = true;
+
+      let units = productUnitsCache.get(product.id);
+      if (!units) {
+        try {
+          const res = await window.erpFetch(`/api/inventory/products/${product.id}/units/reference-options`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.data)) {
+              units = data.data;
+              productUnitsCache.set(product.id, units);
+            }
+          }
+        } catch {
+          units = [];
+        }
+      }
+
+      taskMaterialUnitSelect.replaceChildren();
+      const optSelect = document.createElement('option');
+      optSelect.value = '';
+      optSelect.textContent = '-- اختر وحدة القياس --';
+      taskMaterialUnitSelect.appendChild(optSelect);
+
+      if (units && units.length > 0) {
+        units.forEach((u) => {
+          const opt = document.createElement('option');
+          opt.value = u.id;
+          opt.textContent = `${u.name}${u.isBase ? ' (الوحدة الأساسية)' : ''}`;
+          taskMaterialUnitSelect.appendChild(opt);
+        });
+        taskMaterialUnitSelect.disabled = false;
+        if (taskMaterialQuantityInput) taskMaterialQuantityInput.disabled = false;
+        if (btnSubmitTaskMaterial) btnSubmitTaskMaterial.disabled = false;
+      } else {
+        const noUnitsOpt = document.createElement('option');
+        noUnitsOpt.value = '';
+        noUnitsOpt.textContent = 'لا توجد وحدات معرفة لهذا المنتج';
+        taskMaterialUnitSelect.appendChild(noUnitsOpt);
+      }
     }
   }
+
+  function deselectTaskCatalogProduct() {
+    selectedTaskCatalogProduct = null;
+    if (taskSelectedProductContainer) taskSelectedProductContainer.classList.add('d-none');
+    if (taskMaterialUnitSelect) {
+      taskMaterialUnitSelect.replaceChildren();
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = '';
+      defaultOpt.textContent = '-- اختر الوحدة --';
+      taskMaterialUnitSelect.appendChild(defaultOpt);
+      taskMaterialUnitSelect.disabled = true;
+    }
+    if (taskMaterialQuantityInput) {
+      taskMaterialQuantityInput.value = '';
+      taskMaterialQuantityInput.disabled = true;
+    }
+    if (btnSubmitTaskMaterial) btnSubmitTaskMaterial.disabled = true;
+  }
+
+  if (btnTaskDeselectProduct) btnTaskDeselectProduct.addEventListener('click', deselectTaskCatalogProduct);
 
   // Hide taskCatalogSearchResults on click outside
   document.addEventListener('click', (e) => {
@@ -3240,21 +3304,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Add Task Material
-  if (btnAddTaskMaterial) {
-    btnAddTaskMaterial.addEventListener('click', async () => {
-      if (!activeModalTask || !selectedTaskCatalogProduct) {
-        Swal.fire('تنبيه', 'يرجى اختيار مادة من الدليل أولاً', 'warning');
+  // Submit Task Add Material
+  if (taskAddMaterialForm) {
+    taskAddMaterialForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!activeModalTask || !selectedTaskCatalogProduct) return;
+
+      if (!taskAddMaterialForm.checkValidity()) {
+        taskAddMaterialForm.classList.add('was-validated');
         return;
       }
 
-      const productUnitId = taskMaterialUnitSelect ? taskMaterialUnitSelect.value : null;
-      const plannedQuantity = taskMaterialQuantityInput ? taskMaterialQuantityInput.value.trim() : '';
-
-      if (!productUnitId || !plannedQuantity || isNaN(Number(plannedQuantity)) || Number(plannedQuantity) <= 0) {
-        Swal.fire('تنبيه', 'يرجى اختيار وحدة وإدخال كمية صحيحة أكبر من صفر', 'warning');
-        return;
-      }
+      const productId = selectedTaskCatalogProduct.id;
+      const productUnitId = taskMaterialUnitSelect.value;
+      const plannedQuantity = taskMaterialQuantityInput.value.trim();
 
       const { patternId, optionId, task } = activeModalTask;
       try {
@@ -3263,11 +3326,7 @@ document.addEventListener('DOMContentLoaded', () => {
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              productId: selectedTaskCatalogProduct.id,
-              productUnitId,
-              plannedQuantity,
-            }),
+            body: JSON.stringify({ productId, productUnitId, plannedQuantity }),
           }
         );
         const data = await res.json();
@@ -3278,19 +3337,8 @@ document.addEventListener('DOMContentLoaded', () => {
           if (taskTabMaterialsBadge) taskTabMaterialsBadge.textContent = task.plannedMaterialsCount;
           renderTaskMaterialsTable(task.materials);
           renderWorkflow();
-
-          // Reset picker
-          if (taskMaterialSearchInput) taskMaterialSearchInput.value = '';
-          if (taskMaterialQuantityInput) taskMaterialQuantityInput.value = '';
-          if (taskMaterialUnitSelect) {
-            taskMaterialUnitSelect.replaceChildren();
-            const defaultOpt = document.createElement('option');
-            defaultOpt.value = '';
-            defaultOpt.textContent = '-- اختر المادة أولاً --';
-            taskMaterialUnitSelect.appendChild(defaultOpt);
-            taskMaterialUnitSelect.disabled = true;
-          }
-          selectedTaskCatalogProduct = null;
+          deselectTaskCatalogProduct();
+          taskAddMaterialForm.classList.remove('was-validated');
           showToast('تمت إضافة المادة للمهمة بنجاح');
         } else {
           Swal.fire('خطأ', data.message || 'تعذر إضافة المادة', 'error');
@@ -3368,64 +3416,121 @@ document.addEventListener('DOMContentLoaded', () => {
     taskAttachmentsListContainer.replaceChildren();
 
     if (!attachments || attachments.length === 0) {
-      if (taskAttachmentsEmptyNotice) taskAttachmentsEmptyNotice.classList.remove('d-none');
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'text-center py-4 text-muted border border-dashed rounded-3 bg-light bg-opacity-50';
+      const icon = document.createElement('i');
+      icon.className = 'fa-solid fa-paperclip fs-2 mb-2 text-secondary opacity-50';
+      const p1 = document.createElement('p');
+      p1.className = 'mb-1 fw-bold';
+      p1.textContent = 'لا توجد وثائق مرجعية لهذه المهمة بعد.';
+      const p2 = document.createElement('p');
+      p2.className = 'small text-muted mb-0';
+      p2.textContent = 'يمكن إرفاق مخطط أو PDF أو صورة توضيحية تساعد على تنفيذ المهمة.';
+      emptyDiv.append(icon, p1, p2);
+      taskAttachmentsListContainer.appendChild(emptyDiv);
       return;
     }
-    if (taskAttachmentsEmptyNotice) taskAttachmentsEmptyNotice.classList.add('d-none');
 
-    attachments.forEach((att) => {
+    attachments.forEach((att, index) => {
       const card = document.createElement('div');
-      card.className = 'attachment-item-card d-flex justify-content-between align-items-center';
+      card.className = 'attachment-item-card d-flex justify-content-between align-items-center gap-2';
 
+      // Left info
       const infoDiv = document.createElement('div');
-      const nameDiv = document.createElement('div');
-      nameDiv.className = 'fw-bold text-dark small';
-      nameDiv.textContent = att.originalFileName;
+      infoDiv.className = 'd-flex align-items-center gap-3 overflow-hidden';
 
-      const metaDiv = document.createElement('div');
-      metaDiv.className = 'text-muted small';
-      const sizeSpan = document.createElement('span');
-      sizeSpan.textContent = `${(att.sizeBytes / 1024).toFixed(1)} KB`;
-      metaDiv.appendChild(sizeSpan);
+      // Icon based on mime
+      const iconDiv = document.createElement('div');
+      iconDiv.className = 'fs-3';
+      if (att.mimeType === 'application/pdf') {
+        const pdfIcon = document.createElement('i');
+        pdfIcon.className = 'fa-solid fa-file-pdf text-danger';
+        iconDiv.appendChild(pdfIcon);
+      } else {
+        const imgIcon = document.createElement('i');
+        imgIcon.className = 'fa-solid fa-file-image text-primary';
+        iconDiv.appendChild(imgIcon);
+      }
+      infoDiv.appendChild(iconDiv);
+
+      const textDiv = document.createElement('div');
+      textDiv.className = 'text-truncate';
+
+      const fileUrl = `/api/production/templates/${templateId}/patterns/${activeModalTask.patternId}/options/${activeModalTask.optionId}/tasks/${activeModalTask.task.id}/attachments/${att.id}/file`;
+
+      const nameA = document.createElement('a');
+      nameA.href = fileUrl;
+      nameA.target = '_blank';
+      nameA.className = 'fw-bold text-dark text-decoration-none d-block text-truncate';
+      nameA.textContent = att.originalFileName;
+      textDiv.appendChild(nameA);
+
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'text-muted small';
+      const sizeKb = (att.sizeBytes / 1024).toFixed(1);
+      const sizeStr = att.sizeBytes > 1048576 ? `${(att.sizeBytes / 1048576).toFixed(2)} MB` : `${sizeKb} KB`;
+      metaSpan.textContent = `${sizeStr} • #${att.sortOrder}`;
 
       if (att.description) {
         const descSpan = document.createElement('span');
-        descSpan.className = 'ms-2';
-        descSpan.textContent = `• ${att.description}`;
-        metaDiv.appendChild(descSpan);
+        descSpan.className = 'ms-2 text-secondary fst-italic';
+        descSpan.textContent = `— ${att.description}`;
+        metaSpan.appendChild(descSpan);
       }
-
-      infoDiv.append(nameDiv, metaDiv);
+      textDiv.appendChild(metaSpan);
+      infoDiv.appendChild(textDiv);
       card.appendChild(infoDiv);
 
+      // Actions
       const actionsDiv = document.createElement('div');
-      actionsDiv.className = 'd-flex align-items-center gap-1';
+      actionsDiv.className = 'd-flex align-items-center gap-1 flex-shrink-0';
 
-      const btnDownload = document.createElement('button');
-      btnDownload.type = 'button';
-      btnDownload.className = 'btn btn-sm btn-outline-primary p-1';
-      btnDownload.title = 'تحميل / عرض';
-      const dlIcon = document.createElement('i');
-      dlIcon.className = 'fa-solid fa-download';
-      btnDownload.appendChild(dlIcon);
-      btnDownload.addEventListener('click', () => {
-        window.open(
-          `/api/production/templates/${templateId}/patterns/${activeModalTask.patternId}/options/${activeModalTask.optionId}/tasks/${activeModalTask.task.id}/attachments/${att.id}/file`,
-          '_blank'
-        );
-      });
+      // Download/open button
+      const btnDownload = document.createElement('a');
+      btnDownload.href = fileUrl;
+      btnDownload.target = '_blank';
+      btnDownload.className = 'btn btn-sm btn-light p-1';
+      btnDownload.title = 'فتح / تحميل الملف';
+      const iconDown = document.createElement('i');
+      iconDown.className = 'fa-solid fa-arrow-up-right-from-square text-primary';
+      btnDownload.appendChild(iconDown);
       actionsDiv.appendChild(btnDownload);
 
       if (canUpdate) {
-        const btnDelete = document.createElement('button');
-        btnDelete.type = 'button';
-        btnDelete.className = 'btn btn-sm btn-outline-danger p-1';
-        btnDelete.title = 'حذف الوثيقة';
-        const delIcon = document.createElement('i');
-        delIcon.className = 'fa-solid fa-trash-can';
-        btnDelete.appendChild(delIcon);
-        btnDelete.addEventListener('click', () => removeTaskAttachment(att.id));
-        actionsDiv.appendChild(btnDelete);
+        // Move Up
+        const btnUp = document.createElement('button');
+        btnUp.type = 'button';
+        btnUp.className = 'btn btn-sm btn-light p-1';
+        btnUp.title = 'تحريك لأعلى';
+        btnUp.disabled = index === 0;
+        const iconUp = document.createElement('i');
+        iconUp.className = 'fa-solid fa-arrow-up text-secondary';
+        btnUp.appendChild(iconUp);
+        btnUp.addEventListener('click', () => moveTaskAttachment(index, -1));
+        actionsDiv.appendChild(btnUp);
+
+        // Move Down
+        const btnDown = document.createElement('button');
+        btnDown.type = 'button';
+        btnDown.className = 'btn btn-sm btn-light p-1';
+        btnDown.title = 'تحريك لأسفل';
+        btnDown.disabled = index === attachments.length - 1;
+        const iconD = document.createElement('i');
+        iconD.className = 'fa-solid fa-arrow-down text-secondary';
+        btnDown.appendChild(iconD);
+        btnDown.addEventListener('click', () => moveTaskAttachment(index, 1));
+        actionsDiv.appendChild(btnDown);
+
+        // Delete
+        const btnDel = document.createElement('button');
+        btnDel.type = 'button';
+        btnDel.className = 'btn btn-sm btn-light p-1 text-danger';
+        btnDel.title = 'حذف الوثيقة';
+        const iconDel = document.createElement('i');
+        iconDel.className = 'fa-solid fa-trash-can';
+        btnDel.appendChild(iconDel);
+        btnDel.addEventListener('click', () => removeTaskAttachment(att.id, att.originalFileName));
+        actionsDiv.appendChild(btnDel);
       }
 
       card.appendChild(actionsDiv);
@@ -3433,22 +3538,73 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  async function moveTaskAttachment(index, offset) {
+    if (!activeModalTask || !Array.isArray(activeModalTask.task.attachments)) return;
+    const { patternId, optionId, task } = activeModalTask;
+    const targetIndex = index + offset;
+    if (targetIndex < 0 || targetIndex >= task.attachments.length) return;
+
+    const previousOrder = [...task.attachments];
+    const movedItem = task.attachments.splice(index, 1)[0];
+    task.attachments.splice(targetIndex, 0, movedItem);
+
+    task.attachments.forEach((a, idx) => {
+      a.sortOrder = idx + 1;
+    });
+    renderTaskAttachmentsList(task.attachments);
+
+    const attachmentIds = task.attachments.map((a) => a.id);
+    try {
+      const res = await window.erpFetch(
+        `/api/production/templates/${templateId}/patterns/${patternId}/options/${optionId}/tasks/${task.id}/attachments/reorder`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ attachmentIds }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        task.attachments = previousOrder;
+        renderTaskAttachmentsList(task.attachments);
+        Swal.fire('خطأ', data.message || 'تعذر إعادة ترتيب الوثائق', 'error');
+      }
+    } catch {
+      task.attachments = previousOrder;
+      renderTaskAttachmentsList(task.attachments);
+      Swal.fire('خطأ', 'تعذر الاتصال بالخادم', 'error');
+    }
+  }
+
   // Upload Task Attachment
-  if (btnUploadTaskAttachment) {
-    btnUploadTaskAttachment.addEventListener('click', async () => {
-      if (!activeModalTask || !taskAttachmentFileInput || !taskAttachmentFileInput.files[0]) {
+  if (taskUploadAttachmentForm) {
+    taskUploadAttachmentForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!activeModalTask) return;
+
+      if (!taskUploadAttachmentForm.checkValidity()) {
+        taskUploadAttachmentForm.classList.add('was-validated');
+        return;
+      }
+
+      const file = taskAttachmentFileInput ? taskAttachmentFileInput.files[0] : null;
+      if (!file) {
         Swal.fire('تنبيه', 'يرجى اختيار ملف لرفعه', 'warning');
         return;
       }
 
-      const file = taskAttachmentFileInput.files[0];
-      const description = taskAttachmentDescInput ? taskAttachmentDescInput.value.trim() : '';
+      if (file.size > 20 * 1024 * 1024) {
+        Swal.fire('خطأ', 'حجم الملف يتجاوز 20 ميغابايت المسموح بها', 'error');
+        return;
+      }
 
       const formData = new FormData();
       formData.append('file', file);
-      if (description) formData.append('description', description);
+      const desc = taskAttachmentDescInput ? taskAttachmentDescInput.value.trim() : '';
+      if (desc) formData.append('description', desc);
 
-      btnUploadTaskAttachment.disabled = true;
+      if (btnUploadTaskAttachment) btnUploadTaskAttachment.disabled = true;
+      if (taskUploadSpinner) taskUploadSpinner.classList.remove('d-none');
       const { patternId, optionId, task } = activeModalTask;
 
       try {
@@ -3468,8 +3624,8 @@ document.addEventListener('DOMContentLoaded', () => {
           renderTaskAttachmentsList(task.attachments);
           renderWorkflow();
 
-          taskAttachmentFileInput.value = '';
-          if (taskAttachmentDescInput) taskAttachmentDescInput.value = '';
+          taskUploadAttachmentForm.reset();
+          taskUploadAttachmentForm.classList.remove('was-validated');
           showToast('تم رفع الوثيقة المرجعية بنجاح');
         } else {
           Swal.fire('خطأ', data.message || 'تعذر رفع الوثيقة', 'error');
@@ -3477,18 +3633,19 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch {
         Swal.fire('خطأ', 'تعذر الاتصال بالخادم أثناء رفع الملف', 'error');
       } finally {
-        btnUploadTaskAttachment.disabled = false;
+        if (btnUploadTaskAttachment) btnUploadTaskAttachment.disabled = false;
+        if (taskUploadSpinner) taskUploadSpinner.classList.add('d-none');
       }
     });
   }
 
-  async function removeTaskAttachment(attachmentId) {
+  async function removeTaskAttachment(attachmentId, fileName) {
     if (!activeModalTask) return;
     const { patternId, optionId, task } = activeModalTask;
 
     const resConfirm = await Swal.fire({
-      title: 'حذف الوثيقة',
-      text: 'هل أنت متأكد من حذف هذه الوثيقة المرجعية؟',
+      title: 'حذف الوثيقة المرجعية',
+      text: fileName ? `هل تريد أرشفة وثيقة "${fileName}"؟` : 'هل أنت متأكد من حذف هذه الوثيقة المرجعية؟',
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#dc3545',
@@ -3508,6 +3665,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (res.ok && data.success) {
           if (task.attachments) {
             task.attachments = task.attachments.filter((a) => a.id !== attachmentId);
+            task.attachments.forEach((a, idx) => {
+              a.sortOrder = idx + 1;
+            });
             task.attachmentsCount = task.attachments.length;
           }
           if (taskTabAttachmentsBadge) taskTabAttachmentsBadge.textContent = task.attachmentsCount || 0;
