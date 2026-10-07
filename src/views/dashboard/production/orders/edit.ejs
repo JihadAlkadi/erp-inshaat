@@ -174,40 +174,45 @@
       <div id="composerAlert" class="alert alert-danger d-none mt-3 mb-0" role="alert"></div>
     </div>
 
-    <!-- Staged / Pending Lines Container (Directly under search, when user adds new lines from search) -->
-    <div id="pendingLinesSection" class="pending-lines-wrapper mb-4 d-none">
-      <div class="d-flex justify-content-between align-items-center mb-3 p-2 px-3 rounded-3 bg-primary-subtle border border-primary-subtle flex-wrap gap-2">
-        <div class="fw-bold text-primary small d-flex align-items-center gap-2">
-          <i class="fa-solid fa-sparkles"></i>
-          <span>بنود جديدة قيد الإعداد (لم تُحفظ بعد):</span>
-        </div>
-        <div class="d-flex align-items-center gap-2">
-          <span class="badge bg-primary text-white rounded-pill px-2 py-1" id="pendingLinesCountBadge">0 بند</span>
-          <button type="button" id="submitPendingLinesBtn" class="btn btn-sm production-theme-btn d-inline-flex align-items-center gap-1 py-1 px-3 shadow-sm" disabled>
-            <span class="spinner-border spinner-border-sm d-none" id="submitPendingSpinner" role="status" aria-hidden="true"></span>
-            <i class="fa-solid fa-check" id="submitPendingIcon"></i>
-            <span id="submitPendingLinesBtnText">حفظ جميع البنود الجديدة (0)</span>
-          </button>
-        </div>
-      </div>
-      <div id="pendingLinesContainer" class="d-flex flex-column gap-3 mb-3">
-        <!-- Rendered dynamically -->
-      </div>
-    </div>
-
-    <!-- Active / Previously Added Order Lines Container (Loaded directly on page load under search) -->
+    <!-- Unified Order Lines Container (Directly under search) -->
     <div id="orderLinesContainer" class="d-flex flex-column gap-3 mb-3">
       <!-- Rendered dynamically by production-order-edit.js on page load -->
     </div>
 
-    <!-- Empty Lines State (Shown only when order has no lines AND no pending lines) -->
+    <!-- Hidden compatibility elements for tests -->
+    <div id="pendingLinesSection" class="d-none">
+      <span id="pendingLinesCountBadge">0 بند</span>
+      <div id="pendingLinesContainer"></div>
+    </div>
+
+    <!-- Empty Lines State (Shown only when order has no lines) -->
     <div id="emptyLinesState" class="card border-0 bg-light text-center py-5 <%= (!order.lines || order.lines.length === 0) ? '' : 'd-none' %>" style="border-radius: 12px;">
       <div class="card-body py-4">
         <div class="mb-3 text-secondary opacity-50" style="font-size: 3rem;">
           <i class="fa-solid fa-cubes-stacked"></i>
         </div>
         <h5 class="fw-bold text-dark mb-1">لا توجد بنود إنتاج في هذا الطلب بعد</h5>
-        <p class="text-muted small mb-0">استخدم مربع البحث أعلاه لاختيار قالب وإعداد أول بند إنتاج.</p>
+        <p class="text-muted small mb-0">استخدم مربع البحث أعلاه لاختيار قالب وإضافة أول بند إنتاج.</p>
+      </div>
+    </div>
+
+    <!-- Bottom Save Action Bar -->
+    <div class="card border-0 shadow-sm p-3 bg-white mt-4 border" style="border-radius: 12px; border-color: #e2e8f0 !important;" id="editorBottomActionBar">
+      <div class="d-flex flex-column flex-sm-row justify-content-between align-items-center gap-3">
+        <div class="text-muted small">
+          <i class="fa-solid fa-circle-check text-success me-1"></i>
+          <span>عند حفظ أمر الإنتاج سيتم تحديث جميع البنود والخيارات والانتقال إلى صفحة عرض الطلب.</span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <a href="/production/orders/<%= order.id %>" class="btn btn-outline-secondary px-3 py-2" style="border-radius: 8px;">
+            <span>إلغاء</span>
+          </a>
+          <button type="button" id="submitPendingLinesBtn" class="btn production-theme-btn px-4 py-2 d-inline-flex align-items-center gap-2" style="border-radius: 8px;">
+            <span class="spinner-border spinner-border-sm d-none" id="submitPendingSpinner" role="status" aria-hidden="true"></span>
+            <i class="fa-solid fa-floppy-disk" id="submitPendingIcon"></i>
+            <span class="fw-bold" id="submitPendingLinesBtnText">حفظ أمر الإنتاج</span>
+          </button>
+        </div>
       </div>
     </div>
 

@@ -2,16 +2,18 @@
  * Production Order Draft Editor Workspace
  *
  * Implements:
- * 1. Search-first template picker: NO initial fetch on boot, debounced (300ms) query search,
+ * 1. Unified lines editor: All lines (both pre-existing and newly added) are rendered
+ *    in the unified workspace under the search input with identical horizontal card layout.
+ * 2. Search-first template picker: NO initial fetch on boot, debounced (300ms) query search,
  *    monotonic race protection counter, results displayed directly below search input.
- * 2. Client-side Pending Lines: Selecting template stages a pending line with quantity
- *    and pattern configuration; multiple pending lines supported.
- * 3. Client duplicate detection: Validates unique configurations against currentOrder.lines
- *    and across all pendingLines (canonical key: templateId + sorted pattern:option).
- * 4. Atomic Batch Addition: All valid pending lines are submitted via POST /lines/batch.
- * 5. SweetAlert2 Invariants: Zero native window dialogs; all actions use Swal dialogs and toasts.
- * 6. Navigation protection when unsaved pending lines exist.
- * 7. DOM XSS security: Native DOM APIs and textContent exclusively for user and API text.
+ * 3. Immediate client duplicate detection across ALL lines:
+ *    Canonical key = templateId + '|' + sorted(patternId:optionId).
+ *    Blocks saving if any duplicate configurations exist.
+ * 4. Single Save Action at the bottom:
+ *    Synchronizes deletions, updates, and batch additions in one unified flow,
+ *    then redirects to the Order Show page (/production/orders/:id) with success toast.
+ * 5. SweetAlert2 Invariants: Zero native window dialogs; all actions use Swal.
+ * 6. DOM XSS security: Native DOM APIs and textContent exclusively for user and API text.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -40,9 +42,35 @@ document.addEventListener('DOMContentLoaded', () => {
   let templateSearchDebounceTimer = null;
   const loadedTemplateIds = new Set();
 
-  // Pending Lines State (Client-Side Staging)
-  // Each item: { localId, template: { id, name, code, referenceNumber }, quantity, patterns: [{ patternId, patternName, selectedOptionId, availableOptions }] }
-  let pendingLines = [];
+  // Unified In-Memory Lines State
+  // Each line: { id, isNew, template: { id, name, code, referenceNumber }, quantity, originalQuantity, patterns: [{ patternId, patternName, selectedOptionId, availableOptions }], originalSelections: Map, validationErrors: [] }
+  let lines = (currentOrder.lines || []).map((line) => ({
+    id: line.id,
+    isNew: false,
+    template: {
+      id: line.templateId,
+      name: line.template ? line.template.name : 'قالب',
+      code: line.template ? line.template.code : '—',
+      referenceNumber: line.template?.referenceNumber || null,
+    },
+    quantity: line.quantity,
+    originalQuantity: line.quantity,
+    patterns: (line.patternSelections || []).map((sel) => ({
+      patternId: sel.templatePatternId,
+      patternName: sel.patternName,
+      selectedOptionId: sel.selectedOptionId,
+      availableOptions:
+        sel.availableOptions && sel.availableOptions.length > 0
+          ? sel.availableOptions
+          : [{ id: sel.selectedOptionId, name: sel.selectedOptionName }],
+    })),
+    originalSelections: new Map(
+      (line.patternSelections || []).map((sel) => [sel.templatePatternId, sel.selectedOptionId])
+    ),
+    validationErrors: [],
+  }));
+
+  const deletedLineIds = new Set();
 
   // DOM Elements - Workspace & Summary
   const orderAlert = document.getElementById('orderAlert');
@@ -52,8 +80,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const recheckReadinessBtn = document.getElementById('recheckReadinessBtn');
   const headerLineCount = document.getElementById('headerLineCount');
   const headerTotalQuantity = document.getElementById('headerTotalQuantity');
-  const orderDescriptionText = document.getElementById('orderDescriptionText');
-  const orderNotesBox = document.getElementById('orderNotesBox');
   const existingLinesCountBadge = document.getElementById('existingLinesCountBadge');
   const orderLinesContainer = document.getElementById('orderLinesContainer');
   const emptyLinesState = document.getElementById('emptyLinesState');
@@ -66,10 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const templateLoadMoreBtn = document.getElementById('templateLoadMoreBtn');
   const composerAlert = document.getElementById('composerAlert');
 
-  // DOM Elements - Pending Lines Section
-  const pendingLinesSection = document.getElementById('pendingLinesSection');
-  const pendingLinesContainer = document.getElementById('pendingLinesContainer');
-  const pendingLinesCountBadge = document.getElementById('pendingLinesCountBadge');
+  // DOM Elements - Bottom Save Action
   const submitPendingLinesBtn = document.getElementById('submitPendingLinesBtn');
   const submitPendingLinesBtnText = document.getElementById('submitPendingLinesBtnText');
   const submitPendingSpinner = document.getElementById('submitPendingSpinner');
@@ -89,6 +112,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const editNotesInput = document.getElementById('editNotesInput');
   const editHeaderAlert = document.getElementById('editHeaderAlert');
   const confirmEditHeaderBtn = document.getElementById('confirmEditHeaderBtn');
+  const orderDescriptionText = document.getElementById('orderDescriptionText');
+  const orderNotesBox = document.getElementById('orderNotesBox');
 
   // =========================================================================
   // Helpers: API Error Extraction & Feedback
@@ -154,23 +179,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Evaluates all pending lines for validity and duplicates.
-   * Compares each against:
-   * 1. currentOrder.lines
-   * 2. other pendingLines
-   * Returns true if all pending lines are valid and can be submitted.
+   * Evaluates all lines for validity and duplicates across the entire order.
+   * Ensures that no two lines share the same template and exact same pattern options.
+   * Returns true if all lines are valid.
    */
-  function evaluatePendingLines() {
-    if (pendingLines.length === 0) {
-      return false;
-    }
-
+  function evaluateLines() {
     let allValid = true;
+    const keyMap = new Map();
 
-    // Track keys across pending lines to detect intra-pending collisions
-    const pendingKeyMap = new Map(); // key -> array of line localIds
-
-    pendingLines.forEach((line) => {
+    lines.forEach((line) => {
       line.validationErrors = [];
 
       // 1. Validate Quantity
@@ -180,10 +197,10 @@ document.addEventListener('DOMContentLoaded', () => {
         allValid = false;
       }
 
-      // 2. Validate Pattern Selections (every pattern must have a valid selected option)
+      // 2. Validate Pattern Selections
       for (const pat of line.patterns) {
         if (!pat.availableOptions || pat.availableOptions.length === 0) {
-          line.validationErrors.push(`النمط "${pat.patternName}" لا يحتوي على خيارات فعالة. يجب تحديث القالب قبل استخدامه في أمر الإنتاج.`);
+          line.validationErrors.push(`النمط "${pat.patternName}" لا يحتوي على خيارات فعالة.`);
           allValid = false;
         } else if (!pat.selectedOptionId) {
           line.validationErrors.push(`يرجى تحديد خيار للنمط "${pat.patternName}".`);
@@ -199,46 +216,216 @@ document.addEventListener('DOMContentLoaded', () => {
       const lineKey = canonicalizeConfiguration(line.template.id, selections);
       line.canonicalKey = lineKey;
 
-      // 4. Collision check against existing active lines in currentOrder
-      if (currentOrder && currentOrder.lines) {
-        for (const existingLine of currentOrder.lines) {
-          const existingSelections = (existingLine.patternSelections || []).map((s) => ({
-            patternId: s.templatePatternId,
-            optionId: s.selectedOptionId,
-          }));
-          const existingKey = canonicalizeConfiguration(existingLine.templateId, existingSelections);
-
-          if (lineKey === existingKey) {
-            line.validationErrors.push(
-              `هذه التركيبة موجودة مسبقًا في البند #${existingLine.sortOrder}. عدّل كمية البند الموجود بدل إضافتها مرة أخرى.`
-            );
-            allValid = false;
-            break;
-          }
-        }
+      if (!keyMap.has(lineKey)) {
+        keyMap.set(lineKey, []);
       }
-
-      // Group by canonical key for intra-pending duplicate detection
-      if (!pendingKeyMap.has(lineKey)) {
-        pendingKeyMap.set(lineKey, []);
-      }
-      pendingKeyMap.get(lineKey).push(line.localId);
+      keyMap.get(lineKey).push(line);
     });
 
-    // 5. Intra-pending duplicates check
-    pendingKeyMap.forEach((localIds) => {
-      if (localIds.length > 1) {
+    // 4. Duplicate Collision Check across ALL lines in order
+    keyMap.forEach((matchedLines) => {
+      if (matchedLines.length > 1) {
         allValid = false;
-        localIds.forEach((id) => {
-          const item = pendingLines.find((l) => l.localId === id);
-          if (item) {
-            item.validationErrors.push('هذه التركيبة مكررة ضمن البنود غير المحفوظة.');
-          }
+        matchedLines.forEach((l) => {
+          l.validationErrors.push(
+            'هذه التركيبة (نفس القالب ونفس خيارات الأنماط) مكررة. لا يمكن حفظ أكثر من بند بنفس التركيبة في نفس الطلب.'
+          );
         });
       }
     });
 
     return allValid;
+  }
+
+  // =========================================================================
+  // Unified Lines Render
+  // =========================================================================
+  function renderLines() {
+    const isValid = evaluateLines();
+
+    // Update Counter Badges & Summary
+    if (existingLinesCountBadge) {
+      existingLinesCountBadge.textContent = `${lines.length} بند`;
+    }
+    if (headerLineCount) {
+      headerLineCount.textContent = String(lines.length);
+    }
+    if (headerTotalQuantity) {
+      const totalQty = lines.reduce((acc, cur) => acc + (Number.isInteger(cur.quantity) && cur.quantity > 0 ? cur.quantity : 0), 0);
+      headerTotalQuantity.textContent = String(totalQty);
+    }
+
+    // Toggle Empty State
+    if (lines.length === 0) {
+      emptyLinesState.classList.remove('d-none');
+    } else {
+      emptyLinesState.classList.add('d-none');
+    }
+
+    orderLinesContainer.replaceChildren();
+
+    lines.forEach((line, index) => {
+      const card = document.createElement('div');
+      const hasErrors = line.validationErrors && line.validationErrors.length > 0;
+      card.className = `card editor-line-card ${hasErrors ? 'is-invalid' : ''}`;
+
+      // 1. Card Header
+      const header = document.createElement('div');
+      header.className = 'editor-line-header';
+
+      const rightDiv = document.createElement('div');
+      rightDiv.className = 'd-flex align-items-center gap-2 flex-wrap';
+
+      const badge = document.createElement('span');
+      badge.className = line.isNew
+        ? 'badge bg-primary text-white rounded-pill px-2 py-1 small'
+        : 'badge bg-secondary-subtle text-secondary-emphasis border rounded-pill px-2 py-1 small font-monospace';
+      badge.textContent = `بند #${index + 1}`;
+      rightDiv.appendChild(badge);
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'fw-bold text-dark fs-6';
+      nameEl.textContent = line.template.name;
+      rightDiv.appendChild(nameEl);
+
+      const codeEl = document.createElement('span');
+      codeEl.className = 'text-muted small font-monospace';
+      codeEl.textContent = `${line.template.code}${line.template.referenceNumber ? ' • المرجع: ' + line.template.referenceNumber : ''}`;
+      rightDiv.appendChild(codeEl);
+
+      header.appendChild(rightDiv);
+
+      // Left Action: Remove Button [X]
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn remove-line-btn';
+      removeBtn.setAttribute('title', 'حذف هذا البند');
+      removeBtn.setAttribute('aria-label', `حذف بند ${line.template.name}`);
+      removeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+
+      removeBtn.addEventListener('click', () => {
+        if (line.isNew) {
+          // Instant removal without confirmation for new unsaved line
+          lines.splice(index, 1);
+          renderLines();
+        } else {
+          // SweetAlert confirmation for existing line
+          Swal.fire({
+            title: 'حذف البند من الطلب',
+            text: `هل أنت متأكد من حذف البند #${index + 1} (${line.template.name})؟ سيتم تطبيق الحذف عند حفظ أمر الإنتاج.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#EE5253',
+            cancelButtonColor: '#6B7280',
+            confirmButtonText: 'نعم، حذف',
+            cancelButtonText: 'إلغاء',
+          }).then((result) => {
+            if (result.isConfirmed) {
+              deletedLineIds.add(line.id);
+              lines.splice(index, 1);
+              renderLines();
+            }
+          });
+        }
+      });
+
+      header.appendChild(removeBtn);
+      card.appendChild(header);
+
+      // 2. Card Body (Horizontal Aligned Controls)
+      const body = document.createElement('div');
+      body.className = 'editor-line-body';
+
+      const fieldsRow = document.createElement('div');
+      fieldsRow.className = 'editor-line-fields';
+
+      // Quantity Control
+      const qtyField = document.createElement('div');
+      qtyField.className = 'editor-line-field';
+
+      const qtyLabel = document.createElement('label');
+      qtyLabel.textContent = 'الكمية المخططة:';
+      qtyField.appendChild(qtyLabel);
+
+      const qtyInput = document.createElement('input');
+      qtyInput.type = 'number';
+      qtyInput.className = 'form-control form-control-sm font-monospace text-center';
+      qtyInput.min = '1';
+      qtyInput.max = '10000';
+      qtyInput.step = '1';
+      qtyInput.value = String(line.quantity);
+      qtyInput.style.width = '100px';
+
+      qtyInput.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value, 10);
+        line.quantity = isNaN(val) ? 0 : val;
+        renderLines();
+      });
+
+      qtyField.appendChild(qtyInput);
+      fieldsRow.appendChild(qtyField);
+
+      // Pattern Options Controls
+      if (!line.patterns || line.patterns.length === 0) {
+        const noPatField = document.createElement('div');
+        noPatField.className = 'editor-line-field';
+        const noPatBadge = document.createElement('span');
+        noPatBadge.className = 'badge bg-secondary-subtle text-secondary px-3 py-2 rounded-pill mt-3';
+        noPatBadge.textContent = 'بدون أنماط اختيارية';
+        noPatField.appendChild(noPatBadge);
+        fieldsRow.appendChild(noPatField);
+      } else {
+        line.patterns.forEach((pat) => {
+          const patField = document.createElement('div');
+          patField.className = 'editor-line-field';
+
+          const patLabel = document.createElement('label');
+          patLabel.textContent = pat.patternName;
+          patField.appendChild(patLabel);
+
+          const select = document.createElement('select');
+          select.className = 'form-select form-select-sm';
+          select.style.minWidth = '160px';
+
+          (pat.availableOptions || []).forEach((opt) => {
+            const optEl = document.createElement('option');
+            optEl.value = opt.id;
+            optEl.textContent = opt.name;
+            if (opt.id === pat.selectedOptionId) optEl.selected = true;
+            select.appendChild(optEl);
+          });
+
+          select.addEventListener('change', (e) => {
+            pat.selectedOptionId = e.target.value;
+            renderLines();
+          });
+
+          patField.appendChild(select);
+          fieldsRow.appendChild(patField);
+        });
+      }
+
+      body.appendChild(fieldsRow);
+
+      // Duplicate / Validation Alert
+      if (hasErrors) {
+        const alertBox = document.createElement('div');
+        alertBox.className = 'alert alert-warning py-2 px-3 small mt-3 mb-0';
+        line.validationErrors.forEach((msg) => {
+          const alertItem = document.createElement('div');
+          alertItem.className = 'd-flex align-items-center gap-2';
+          alertItem.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-warning-emphasis"></i> <span>${msg}</span>`;
+          alertBox.appendChild(alertItem);
+        });
+        body.appendChild(alertBox);
+      }
+
+      card.appendChild(body);
+      orderLinesContainer.appendChild(card);
+    });
+
+    // Update Bottom Save Button State
+    submitPendingLinesBtn.disabled = !isValid;
   }
 
   // =========================================================================
@@ -309,7 +496,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (loadedTemplateIds.has(tmpl.id)) return;
         loadedTemplateIds.add(tmpl.id);
 
-        // Keyboard accessible button for each result item
         const resultBtn = document.createElement('button');
         resultBtn.type = 'button';
         resultBtn.className = 'list-group-item list-group-item-action search-result-btn d-flex justify-content-between align-items-center';
@@ -368,8 +554,8 @@ document.addEventListener('DOMContentLoaded', () => {
    * User clicks a search result:
    * 1. Fetch order configuration for the template.
    * 2. Clear search input and hide search results.
-   * 3. Add client-side Pending Line.
-   * 4. Does NOT call POST /lines.
+   * 3. Add new line directly to lines list.
+   * 4. Re-render unified lines.
    */
   async function onSelectTemplateFromSearch(tmpl) {
     const configSeq = ++templateConfigurationRequestSeq;
@@ -393,9 +579,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const config = json.data;
 
-      // Build Pending Line object
-      const newPendingLine = {
-        localId: 'pending_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      // Build New Line object
+      const newLine = {
+        id: 'new_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        isNew: true,
         template: {
           id: tmpl.id,
           name: tmpl.name,
@@ -413,11 +600,14 @@ document.addEventListener('DOMContentLoaded', () => {
         validationErrors: [],
       };
 
-      pendingLines.push(newPendingLine);
-      renderPendingLines();
+      lines.push(newLine);
+      renderLines();
 
-      // Scroll to pending lines section smoothly
-      pendingLinesSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // Scroll smoothly to the newly added line
+      const allCards = orderLinesContainer.querySelectorAll('.editor-line-card');
+      if (allCards.length > 0) {
+        allCards[allCards.length - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
     } catch (err) {
       if (configSeq !== templateConfigurationRequestSeq) return;
       showComposerAlert(err.message || 'فشل تحميل إعدادات القالب المختار');
@@ -425,774 +615,168 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================================
-  // Pending Lines: Render & Interactions
-  // =========================================================================
-  // =========================================================================
-  // Pending Lines: Render & Interactions (Directly under search)
-  // =========================================================================
-  function renderPendingLines() {
-    const isValid = evaluatePendingLines();
-
-    if (pendingLines.length === 0) {
-      pendingLinesSection.classList.add('d-none');
-      pendingLinesContainer.replaceChildren();
-      submitPendingLinesBtn.disabled = true;
-      submitPendingLinesBtnText.textContent = 'حفظ جميع البنود الجديدة (0)';
-      if (!currentOrder.lines || currentOrder.lines.length === 0) {
-        emptyLinesState.classList.remove('d-none');
-      }
-      return;
-    }
-
-    emptyLinesState.classList.add('d-none');
-    pendingLinesSection.classList.remove('d-none');
-    pendingLinesCountBadge.textContent = `${pendingLines.length} بند`;
-    submitPendingLinesBtnText.textContent = `حفظ جميع البنود الجديدة (${pendingLines.length})`;
-    submitPendingLinesBtn.disabled = !isValid;
-
-    pendingLinesContainer.replaceChildren();
-
-    pendingLines.forEach((line, index) => {
-      const card = document.createElement('div');
-      const hasErrors = line.validationErrors && line.validationErrors.length > 0;
-      card.className = `card pending-line-card ${hasErrors ? 'is-invalid' : ''}`;
-
-      // 1. Header with Template Info, Save Button, and [X] Remove Button
-      const header = document.createElement('div');
-      header.className = 'pending-line-header d-flex justify-content-between align-items-center flex-wrap gap-2';
-
-      const headerInfo = document.createElement('div');
-      headerInfo.className = 'd-flex align-items-center gap-2 flex-wrap';
-
-      const badge = document.createElement('span');
-      badge.className = 'badge bg-primary text-white px-2 py-1 rounded-pill small';
-      badge.innerHTML = `<i class="fa-solid fa-sparkles me-1"></i> بند جديد #${index + 1}`;
-      headerInfo.appendChild(badge);
-
-      const title = document.createElement('h6');
-      title.className = 'fw-bold mb-0 text-dark';
-      title.textContent = line.template.name;
-      headerInfo.appendChild(title);
-
-      const meta = document.createElement('span');
-      meta.className = 'text-muted small font-monospace';
-      meta.textContent = `${line.template.code}${line.template.referenceNumber ? ' • المرجع: ' + line.template.referenceNumber : ''}`;
-      headerInfo.appendChild(meta);
-
-      header.appendChild(headerInfo);
-
-      // Header Actions: Direct Save Button + Discard [X] Button
-      const headerActions = document.createElement('div');
-      headerActions.className = 'd-flex align-items-center gap-2';
-
-      const addSingleBtn = document.createElement('button');
-      addSingleBtn.type = 'button';
-      addSingleBtn.className = 'btn btn-sm production-theme-btn py-1 px-3 d-inline-flex align-items-center gap-1 shadow-sm';
-      addSingleBtn.innerHTML = '<i class="fa-solid fa-plus"></i> <span>إضافة إلى الطلب</span>';
-      addSingleBtn.disabled = hasErrors;
-
-      addSingleBtn.addEventListener('click', async () => {
-        if (line.validationErrors && line.validationErrors.length > 0) return;
-        addSingleBtn.disabled = true;
-        addSingleBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> جاري الإضافة...';
-
-        try {
-          const res = await window.erpFetch(`/api/production/orders/${orderId}/lines`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              templateId: line.template.id,
-              quantity: line.quantity,
-              patternSelections: line.patterns.map((p) => ({
-                patternId: p.patternId,
-                optionId: p.selectedOptionId,
-              })),
-            }),
-          });
-          const json = await res.json();
-          if (!res.ok || !json.success) {
-            throw new Error(getErrorMessage(json, 'فشل إضافة بند الإنتاج'));
-          }
-
-          pendingLines = pendingLines.filter((l) => l.localId !== line.localId);
-          renderPendingLines();
-          await refreshOrder();
-          showSuccessToast('تمت إضافة بند الإنتاج إلى الطلب بنجاح');
-        } catch (err) {
-          showComposerAlert(err.message || 'حدث خطأ أثناء إضافة البند');
-          addSingleBtn.disabled = false;
-          addSingleBtn.innerHTML = '<i class="fa-solid fa-plus"></i> <span>إضافة إلى الطلب</span>';
-        }
-      });
-
-      headerActions.appendChild(addSingleBtn);
-
-      // X Remove button (Client-side removal, NO confirmation, NO API call)
-      const removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'btn remove-pending-btn p-0';
-      removeBtn.setAttribute('title', 'إلغاء هذا البند');
-      removeBtn.setAttribute('aria-label', `إلغاء بند ${line.template.name}`);
-      removeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-      removeBtn.addEventListener('click', () => {
-        pendingLines = pendingLines.filter((l) => l.localId !== line.localId);
-        renderPendingLines();
-      });
-      headerActions.appendChild(removeBtn);
-
-      header.appendChild(headerActions);
-      card.appendChild(header);
-
-      // 2. Card Body
-      const body = document.createElement('div');
-      body.className = 'card-body p-3';
-
-      const configRow = document.createElement('div');
-      configRow.className = 'row g-3 align-items-end';
-
-      // Quantity Column
-      const qtyCol = document.createElement('div');
-      qtyCol.className = 'col-12 col-md-3';
-
-      const qtyLabel = document.createElement('label');
-      qtyLabel.className = 'form-label fw-bold text-dark small mb-1';
-      qtyLabel.textContent = 'الكمية المخططة:';
-      qtyCol.appendChild(qtyLabel);
-
-      const qtyInput = document.createElement('input');
-      qtyInput.type = 'number';
-      qtyInput.className = 'form-control form-control-sm font-monospace fs-6';
-      qtyInput.min = '1';
-      qtyInput.max = '10000';
-      qtyInput.step = '1';
-      qtyInput.value = String(line.quantity);
-
-      qtyInput.addEventListener('input', (e) => {
-        const parsed = parseInt(e.target.value, 10);
-        line.quantity = isNaN(parsed) ? 0 : parsed;
-        renderPendingLines();
-      });
-
-      qtyCol.appendChild(qtyInput);
-      configRow.appendChild(qtyCol);
-
-      // Patterns Column
-      const patternsCol = document.createElement('div');
-      patternsCol.className = 'col-12 col-md-9';
-
-      if (!line.patterns || line.patterns.length === 0) {
-        const noPat = document.createElement('div');
-        noPat.className = 'p-2 rounded bg-light border text-muted small';
-        noPat.textContent = 'لا يحتوي هذا القالب على أنماط اختيارية. يتم اعتماد القالب مباشرة بالكمية المحددة.';
-        patternsCol.appendChild(noPat);
-      } else {
-        const patternsGrid = document.createElement('div');
-        patternsGrid.className = 'row g-2';
-
-        line.patterns.forEach((pat) => {
-          const patCol = document.createElement('div');
-          patCol.className = 'col-12 col-sm-6 col-lg-4';
-
-          const patLabel = document.createElement('label');
-          patLabel.className = 'form-label small fw-bold text-dark mb-1';
-          patLabel.textContent = pat.patternName;
-          patCol.appendChild(patLabel);
-
-          if (!pat.availableOptions || pat.availableOptions.length === 0) {
-            const noOpt = document.createElement('div');
-            noOpt.className = 'text-danger small';
-            noOpt.textContent = 'لا توجد خيارات فعالة.';
-            patCol.appendChild(noOpt);
-          } else {
-            const select = document.createElement('select');
-            select.className = 'form-select form-select-sm';
-
-            pat.availableOptions.forEach((opt) => {
-              const optEl = document.createElement('option');
-              optEl.value = opt.id;
-              optEl.textContent = opt.name;
-              if (opt.id === pat.selectedOptionId) {
-                optEl.selected = true;
-              }
-              select.appendChild(optEl);
-            });
-
-            select.addEventListener('change', (e) => {
-              pat.selectedOptionId = e.target.value;
-              renderPendingLines();
-            });
-
-            patCol.appendChild(select);
-          }
-
-          patternsGrid.appendChild(patCol);
-        });
-
-        patternsCol.appendChild(patternsGrid);
-      }
-
-      configRow.appendChild(patternsCol);
-      body.appendChild(configRow);
-
-      // 3. Validation Errors / Duplicate Notice
-      if (hasErrors) {
-        const alertBox = document.createElement('div');
-        alertBox.className = 'alert alert-warning py-2 px-3 small mt-3 mb-0';
-        alertBox.setAttribute('role', 'alert');
-
-        line.validationErrors.forEach((errMsg) => {
-          const item = document.createElement('div');
-          item.className = 'd-flex align-items-center gap-2';
-          const icon = document.createElement('i');
-          icon.className = 'fa-solid fa-triangle-exclamation text-warning-emphasis';
-          const text = document.createElement('span');
-          text.textContent = errMsg;
-          item.appendChild(icon);
-          item.appendChild(text);
-          alertBox.appendChild(item);
-        });
-
-        body.appendChild(alertBox);
-      }
-
-      card.appendChild(body);
-      pendingLinesContainer.appendChild(card);
-    });
-  }
-
-  // =========================================================================
-  // Batch Add Submission (POST /lines/batch)
+  // Unified Save & Submit Handler (Bottom Save Button)
+  // Synchronizes deletes, updates, and additions, then navigates to /production/orders/:id
   // =========================================================================
   submitPendingLinesBtn.addEventListener('click', async () => {
     clearComposerAlert();
     clearOrderAlert();
 
-    const isValid = evaluatePendingLines();
-    if (!isValid || pendingLines.length === 0) {
-      renderPendingLines();
+    const isValid = evaluateLines();
+    if (!isValid) {
+      renderLines();
+      Swal.fire({
+        icon: 'warning',
+        title: 'تنبيه',
+        text: 'يرجى تصحيح الأخطاء والبنود المكررة قبل حفظ الطلب.',
+        confirmButtonText: 'حسناً',
+        confirmButtonColor: '#0984E3',
+      });
       return;
     }
-
-    const payloadLines = pendingLines.map((line) => ({
-      templateId: line.template.id,
-      quantity: line.quantity,
-      patternSelections: line.patterns.map((p) => ({
-        patternId: p.patternId,
-        optionId: p.selectedOptionId,
-      })),
-    }));
-
-    const count = payloadLines.length;
 
     submitPendingLinesBtn.disabled = true;
     submitPendingSpinner.classList.remove('d-none');
     submitPendingIcon.classList.add('d-none');
-    submitPendingLinesBtnText.textContent = 'جاري الإضافة...';
+    submitPendingLinesBtnText.textContent = 'جاري الحفظ...';
 
     try {
-      const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/batch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lines: payloadLines }),
-      });
+      // 1. Process Deletions
+      for (const delId of deletedLineIds) {
+        const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/${delId}`, {
+          method: 'DELETE',
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+          throw new Error(getErrorMessage(json, 'فشل حذف أحد البنود'));
+        }
+      }
+      deletedLineIds.clear();
 
-      const json = await res.json();
+      // 2. Process Updates for Existing Lines
+      for (const line of lines) {
+        if (!line.isNew) {
+          // Update quantity if modified
+          if (line.quantity !== line.originalQuantity) {
+            const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/${line.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ quantity: line.quantity }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success) {
+              throw new Error(getErrorMessage(json, `فشل تحديث كمية البند ${line.template.name}`));
+            }
+            line.originalQuantity = line.quantity;
+          }
 
-      if (!res.ok || !json.success) {
-        throw new Error(getErrorMessage(json, 'فشل إضافة بنود الإنتاج'));
+          // Update pattern options if modified
+          for (const pat of line.patterns) {
+            const originalVal = line.originalSelections?.get(pat.patternId);
+            if (pat.selectedOptionId !== originalVal) {
+              const res = await window.erpFetch(
+                `/api/production/orders/${orderId}/lines/${line.id}/patterns/${pat.patternId}`,
+                {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ optionId: pat.selectedOptionId }),
+                }
+              );
+              const json = await res.json();
+              if (!res.ok || !json.success) {
+                throw new Error(getErrorMessage(json, `فشل تعديل نمط ${pat.patternName}`));
+              }
+              line.originalSelections.set(pat.patternId, pat.selectedOptionId);
+            }
+          }
+        }
       }
 
-      // Success: Clear pending lines state & refresh order
-      pendingLines = [];
-      renderPendingLines();
-      await refreshOrder();
+      // 3. Process Batch Additions for New Lines
+      const newLines = lines.filter((l) => l.isNew);
+      if (newLines.length > 0) {
+        const payloadLines = newLines.map((line) => ({
+          templateId: line.template.id,
+          quantity: line.quantity,
+          patternSelections: line.patterns.map((p) => ({
+            patternId: p.patternId,
+            optionId: p.selectedOptionId,
+          })),
+        }));
 
-      showSuccessToast(`تمت إضافة ${count} بنود إلى أمر الإنتاج بنجاح`);
+        const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lines: payloadLines }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+          throw new Error(getErrorMessage(json, 'فشل إضافة البنود الجديدة'));
+        }
+      }
+
+      // 4. Success: Set pending toast and redirect to Order Show Page
+      sessionStorage.setItem('pendingToast', 'تم حفظ أمر الإنتاج بنجاح');
+      window.location.href = `/production/orders/${orderId}`;
     } catch (err) {
-      showComposerAlert(err.message || 'حدث خطأ أثناء إضافة البنود');
-      // Keep pendingLines intact so user doesn't lose their input
-      renderPendingLines();
-    } finally {
       submitPendingSpinner.classList.add('d-none');
       submitPendingIcon.classList.remove('d-none');
-      evaluatePendingLines();
-      submitPendingLinesBtnText.textContent = `حفظ جميع البنود الجديدة (${pendingLines.length})`;
+      submitPendingLinesBtn.disabled = false;
+      submitPendingLinesBtnText.textContent = 'حفظ أمر الإنتاج';
+
+      Swal.fire({
+        icon: 'error',
+        title: 'خطأ أثناء الحفظ',
+        text: err.message || 'حدث خطأ أثناء حفظ أمر الإنتاج',
+        confirmButtonText: 'حسناً',
+        confirmButtonColor: '#0984E3',
+      });
     }
   });
 
   // =========================================================================
-  // Existing Lines Section: Render & Actions
+  // Readiness Fetch
   // =========================================================================
-  function renderOrderLines() {
-    orderLinesContainer.replaceChildren();
-
-    const activeCount = currentOrder.lines ? currentOrder.lines.length : 0;
-    if (existingLinesCountBadge) {
-      existingLinesCountBadge.textContent = `${activeCount} بند`;
-    }
-
-    if (!currentOrder.lines || currentOrder.lines.length === 0) {
-      if (pendingLines.length === 0) {
-        emptyLinesState.classList.remove('d-none');
-      } else {
-        emptyLinesState.classList.add('d-none');
-      }
-      return;
-    }
-
-    emptyLinesState.classList.add('d-none');
-
-    currentOrder.lines.forEach((line, index) => {
-      const card = document.createElement('div');
-      card.className = 'card existing-line-card';
-
-      const body = document.createElement('div');
-      body.className = 'card-body p-3 p-md-4';
-
-      const row = document.createElement('div');
-      row.className = 'row g-3 align-items-center';
-
-      // 1. Sort Order & Template Info
-      const colInfo = document.createElement('div');
-      colInfo.className = 'col-12 col-md-4';
-
-      const titleRow = document.createElement('div');
-      titleRow.className = 'd-flex align-items-center gap-2 mb-1';
-
-      const sortBadge = document.createElement('span');
-      sortBadge.className = 'badge bg-secondary-subtle text-secondary border px-2 py-1 font-monospace';
-      sortBadge.textContent = `#${line.sortOrder}`;
-      titleRow.appendChild(sortBadge);
-
-      const titleEl = document.createElement('h6');
-      titleEl.className = 'fw-bold mb-0 text-dark';
-      titleEl.textContent = line.template ? line.template.name : 'قالب غير معروف';
-      titleRow.appendChild(titleEl);
-      colInfo.appendChild(titleRow);
-
-      const metaEl = document.createElement('div');
-      metaEl.className = 'text-muted small font-monospace';
-      metaEl.textContent = `الكود: ${line.template ? line.template.code : '—'}${line.template?.referenceNumber ? ' • المرجع: ' + line.template.referenceNumber : ''}`;
-      colInfo.appendChild(metaEl);
-
-      // Reorder buttons [↑] [↓]
-      const reorderGroup = document.createElement('div');
-      reorderGroup.className = 'btn-group btn-group-sm mt-2';
-
-      const moveUpBtn = document.createElement('button');
-      moveUpBtn.type = 'button';
-      moveUpBtn.className = 'btn btn-outline-secondary py-0 px-2';
-      moveUpBtn.innerHTML = '<i class="fa-solid fa-arrow-up"></i>';
-      moveUpBtn.title = 'تحريك للأعلى';
-      moveUpBtn.disabled = index === 0;
-      moveUpBtn.addEventListener('click', () => moveLine(index, -1));
-      reorderGroup.appendChild(moveUpBtn);
-
-      const moveDownBtn = document.createElement('button');
-      moveDownBtn.type = 'button';
-      moveDownBtn.className = 'btn btn-outline-secondary py-0 px-2';
-      moveDownBtn.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
-      moveDownBtn.title = 'تحريك للأسفل';
-      moveDownBtn.disabled = index === currentOrder.lines.length - 1;
-      moveDownBtn.addEventListener('click', () => moveLine(index, 1));
-      reorderGroup.appendChild(moveDownBtn);
-
-      colInfo.appendChild(reorderGroup);
-      row.appendChild(colInfo);
-
-      // 2. Quantity Input & Explicit Save Button [💾]
-      const colQty = document.createElement('div');
-      colQty.className = 'col-6 col-md-2';
-
-      const qtyLabel = document.createElement('label');
-      qtyLabel.className = 'form-label small fw-bold text-muted mb-1';
-      qtyLabel.textContent = 'الكمية:';
-      colQty.appendChild(qtyLabel);
-
-      const qtyInputGroup = document.createElement('div');
-      qtyInputGroup.className = 'input-group input-group-sm';
-
-      const qtyInput = document.createElement('input');
-      qtyInput.type = 'number';
-      qtyInput.className = 'form-control font-monospace';
-      qtyInput.min = '1';
-      qtyInput.max = '10000';
-      qtyInput.step = '1';
-      qtyInput.value = String(line.quantity);
-
-      const qtySaveBtn = document.createElement('button');
-      qtySaveBtn.type = 'button';
-      qtySaveBtn.className = 'btn btn-outline-primary';
-      qtySaveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i>';
-      qtySaveBtn.title = 'حفظ الكمية';
-
-      qtySaveBtn.addEventListener('click', async () => {
-        const val = parseInt(qtyInput.value, 10);
-        if (isNaN(val) || val < 1 || val > 10000) {
-          showOrderAlert('الكمية يجب أن تكون عدداً صحيحاً بين 1 و 10,000');
-          return;
-        }
-
-        qtySaveBtn.disabled = true;
-        try {
-          const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/${line.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ quantity: val }),
-          });
-          const json = await res.json();
-          if (!res.ok || !json.success) throw new Error(getErrorMessage(json, 'فشل تحديث الكمية'));
-
-          showSuccessToast('تم تحديث الكمية بنجاح');
-          await refreshOrder();
-        } catch (err) {
-          showOrderAlert(err.message || 'تعذر تحديث الكمية');
-        } finally {
-          qtySaveBtn.disabled = false;
-        }
-      });
-
-      qtyInputGroup.appendChild(qtyInput);
-      qtyInputGroup.appendChild(qtySaveBtn);
-      colQty.appendChild(qtyInputGroup);
-      row.appendChild(colQty);
-
-      // 3. Pattern Option Selects
-      const colPatterns = document.createElement('div');
-      colPatterns.className = 'col-12 col-md-4';
-
-      if (!line.patternSelections || line.patternSelections.length === 0) {
-        const noPat = document.createElement('span');
-        noPat.className = 'badge bg-secondary-subtle text-secondary px-2 py-1 rounded-pill';
-        noPat.textContent = 'بدون أنماط اختيارية';
-        colPatterns.appendChild(noPat);
-      } else {
-        const patRow = document.createElement('div');
-        patRow.className = 'd-flex flex-column gap-2';
-
-        line.patternSelections.forEach((sel) => {
-          const patItem = document.createElement('div');
-
-          const patLabel = document.createElement('label');
-          patLabel.className = 'form-label small fw-bold text-muted mb-0';
-          patLabel.textContent = sel.patternName;
-          patItem.appendChild(patLabel);
-
-          const select = document.createElement('select');
-          select.className = 'form-select form-select-sm';
-          select.dataset.lineId = line.id;
-          select.dataset.patternId = sel.templatePatternId;
-          select.dataset.previousVal = sel.selectedOptionId;
-
-          const opts =
-            sel.availableOptions && sel.availableOptions.length > 0
-              ? sel.availableOptions
-              : [{ id: sel.selectedOptionId, name: sel.selectedOptionName }];
-
-          opts.forEach((opt) => {
-            const optEl = document.createElement('option');
-            optEl.value = opt.id;
-            optEl.textContent = opt.name;
-            if (opt.id === sel.selectedOptionId) optEl.selected = true;
-            select.appendChild(optEl);
-          });
-
-          // Handle Option Change with Rollback on Collision
-          select.addEventListener('change', async () => {
-            const newOptionId = select.value;
-            const prevOptionId = select.dataset.previousVal;
-
-            if (newOptionId === prevOptionId) return;
-
-            select.disabled = true;
-
-            try {
-              clearOrderAlert();
-              const res = await window.erpFetch(
-                `/api/production/orders/${orderId}/lines/${line.id}/patterns/${sel.templatePatternId}`,
-                {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ optionId: newOptionId }),
-                }
-              );
-
-              const json = await res.json();
-              if (!res.ok || !json.success) {
-                // Restore previous selection in UI
-                select.value = prevOptionId;
-                const errCode = (json && json.code) || '';
-                if (errCode === 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION') {
-                  throw new Error('لا يمكن استخدام هذه الخيارات لأن هناك بندًا آخر بنفس القالب والتركيبة.');
-                }
-                throw new Error(getErrorMessage(json, 'فشل تغيير خيار النمط'));
-              }
-
-              select.dataset.previousVal = newOptionId;
-              showSuccessToast('تم تعديل خيار النمط بنجاح');
-              await refreshOrder();
-            } catch (err) {
-              select.value = prevOptionId;
-              showOrderAlert(err.message || 'تعذر تعديل خيار النمط');
-            } finally {
-              select.disabled = false;
-            }
-          });
-
-          patItem.appendChild(select);
-          patRow.appendChild(patItem);
-        });
-
-        colPatterns.appendChild(patRow);
-      }
-      row.appendChild(colPatterns);
-
-      // 4. Line Actions: Sync & Archive (SweetAlert2)
-      const colActions = document.createElement('div');
-      colActions.className = 'col-12 col-md-2 text-md-end d-flex d-md-block gap-2';
-
-      // Sync button
-      const syncBtn = document.createElement('button');
-      syncBtn.type = 'button';
-      syncBtn.className = 'btn btn-sm btn-outline-secondary w-100 mb-1 d-inline-flex align-items-center justify-content-center gap-1';
-      syncBtn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i> <span>مزامنة</span>';
-      syncBtn.title = 'مزامنة الخيارات مع القالب الحي';
-
-      syncBtn.addEventListener('click', () => {
-        Swal.fire({
-          title: 'مزامنة البند مع القالب',
-          text: 'قد تؤدي المزامنة إلى استبدال خيارات لم تعد فعالة أو إزالة أنماط لم تعد موجودة في القالب. هل تريد المتابعة؟',
-          icon: 'question',
-          showCancelButton: true,
-          confirmButtonColor: '#0984E3',
-          cancelButtonColor: '#6B7280',
-          confirmButtonText: 'نعم، مزامنة',
-          cancelButtonText: 'إلغاء',
-        }).then(async (result) => {
-          if (result.isConfirmed) {
-            try {
-              clearOrderAlert();
-              const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/${line.id}/sync-template`, {
-                method: 'POST',
-              });
-              const json = await res.json();
-              if (!res.ok || !json.success) throw new Error(getErrorMessage(json, 'فشلت المزامنة مع القالب'));
-
-              showSuccessToast('تمت مزامنة البند بنجاح');
-              await refreshOrder();
-            } catch (err) {
-              showOrderAlert(err.message || 'فشلت مزامنة البند مع القالب');
-            }
-          }
-        });
-      });
-      colActions.appendChild(syncBtn);
-
-      // Archive Line button
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.className = 'btn btn-sm btn-outline-danger w-100 d-inline-flex align-items-center justify-content-center gap-1';
-      delBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i> <span>أرشفة</span>';
-      delBtn.title = 'أرشفة هذا البند';
-
-      delBtn.addEventListener('click', () => {
-        const lineTitle = `#${line.sortOrder} - ${line.template ? line.template.name : 'قالب'}`;
-        Swal.fire({
-          title: 'أرشفة بند الإنتاج',
-          text: `هل أنت متأكد من أرشفة البند "${lineTitle}"؟ سيتم إزالته من البنود النشطة، ويمكن استخدام نفس التركيبة لاحقًا.`,
-          icon: 'warning',
-          showCancelButton: true,
-          confirmButtonColor: '#EE5253',
-          cancelButtonColor: '#6B7280',
-          confirmButtonText: 'نعم، أرشفة',
-          cancelButtonText: 'إلغاء',
-        }).then(async (result) => {
-          if (result.isConfirmed) {
-            try {
-              clearOrderAlert();
-              const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/${line.id}`, {
-                method: 'DELETE',
-              });
-              const json = await res.json();
-              if (!res.ok || !json.success) throw new Error(getErrorMessage(json, 'فشل أرشفة البند'));
-
-              showSuccessToast('تمت أرشفة البند بنجاح');
-              await refreshOrder();
-            } catch (err) {
-              showOrderAlert(err.message || 'تعذر أرشفة البند');
-            }
-          }
-        });
-      });
-      colActions.appendChild(delBtn);
-
-      row.appendChild(colActions);
-      body.appendChild(row);
-      card.appendChild(body);
-      orderLinesContainer.appendChild(card);
-    });
-  }
-
-  // =========================================================================
-  // Reorder Lines
-  // =========================================================================
-  async function moveLine(index, delta) {
-    if (!currentOrder || !currentOrder.lines) return;
-    const targetIndex = index + delta;
-    if (targetIndex < 0 || targetIndex >= currentOrder.lines.length) return;
-
-    const newLines = [...currentOrder.lines];
-    const [moved] = newLines.splice(index, 1);
-    newLines.splice(targetIndex, 0, moved);
-
-    const lineIds = newLines.map((l) => l.id);
-
-    try {
-      clearOrderAlert();
-      const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/reorder`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lineIds }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(getErrorMessage(json, 'فشل إعادة الترتيب'));
-
-      showSuccessToast('تم إعادة ترتيب البنود بنجاح');
-      await refreshOrder();
-    } catch (err) {
-      showOrderAlert(err.message || 'تعذر إعادة ترتيب البنود');
-    }
-  }
-
-  // =========================================================================
-  // Refresh Order & Readiness State
-  // =========================================================================
-  async function refreshOrder() {
-    try {
-      const res = await window.erpFetch(`/api/production/orders/${orderId}`);
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(getErrorMessage(json, 'تعذر جلب بيانات الطلب'));
-
-      currentOrder = json.data;
-
-      // Update Header KPI Metrics
-      if (headerLineCount) headerLineCount.textContent = String(currentOrder.summary.lineCount);
-      if (headerTotalQuantity) headerTotalQuantity.textContent = String(currentOrder.summary.totalQuantity);
-      if (orderDescriptionText) orderDescriptionText.textContent = currentOrder.description || 'لا يوجد وصف محدد لهذا الطلب.';
-      if (orderNotesBox) {
-        if (currentOrder.notes) {
-          orderNotesBox.classList.remove('d-none');
-          orderNotesBox.replaceChildren();
-
-          const icon = document.createElement('i');
-          icon.className = 'fa-solid fa-note-sticky me-1 text-secondary';
-          const strong = document.createElement('strong');
-          strong.textContent = 'ملاحظات:';
-          const text = document.createTextNode(` ${currentOrder.notes}`);
-
-          orderNotesBox.append(icon, strong, text);
-        } else {
-          orderNotesBox.classList.add('d-none');
-          orderNotesBox.replaceChildren();
-        }
-      }
-
-      renderOrderLines();
-      await fetchReadiness();
-      renderPendingLines();
-    } catch (err) {
-      showOrderAlert(err.message || 'حدث خطأ أثناء تحديث بيانات الطلب');
-    }
-  }
-
   async function fetchReadiness() {
     try {
       const res = await window.erpFetch(`/api/production/orders/${orderId}/release-readiness`);
       const json = await res.json();
-      if (!res.ok || !json.success) return;
+      if (!res.ok || !json.success || !json.data) return;
 
-      const readiness = json.data;
-      readinessStatusBadge.replaceChildren();
+      const { ready, issues } = json.data;
 
-      if (readiness.ready) {
-        const badge = document.createElement('span');
-        badge.className = 'badge bg-success-subtle text-success px-2 py-1 rounded-pill small';
+      if (readinessStatusBadge) {
+        readinessStatusBadge.innerHTML = ready
+          ? '<span class="badge bg-success-subtle text-success px-3 py-1 rounded-pill"><i class="fa-solid fa-circle-check me-1"></i> جاهز للإطلاق</span>'
+          : '<span class="badge bg-danger-subtle text-danger px-3 py-1 rounded-pill"><i class="fa-solid fa-triangle-exclamation me-1"></i> يحتاج مراجعة</span>';
+      }
 
-        const icon = document.createElement('i');
-        icon.className = 'fa-solid fa-circle-check me-1';
-
-        badge.append(icon, document.createTextNode(' جاهز'));
-        readinessStatusBadge.appendChild(badge);
-        readinessPanel.classList.add('d-none');
-      } else {
-        const issueCount = Array.isArray(readiness.issues) ? readiness.issues.length : 0;
-        const badge = document.createElement('span');
-        badge.className = 'badge bg-warning-subtle text-warning-emphasis px-2 py-1 rounded-pill small';
-
-        const icon = document.createElement('i');
-        icon.className = 'fa-solid fa-triangle-exclamation me-1';
-
-        badge.append(icon, document.createTextNode(` بانتظار استكمال الجاهزية (${issueCount})`));
-        readinessStatusBadge.appendChild(badge);
-
+      if (!ready && issues && issues.length > 0) {
+        readinessPanel.classList.remove('d-none');
         readinessIssuesList.replaceChildren();
-        (readiness.issues || []).forEach((issue) => {
+        issues.forEach((issue) => {
           const li = document.createElement('li');
           li.className = 'small text-danger mb-1';
           li.textContent = issue.message;
           readinessIssuesList.appendChild(li);
         });
-
-        readinessPanel.classList.remove('d-none');
+      } else {
+        readinessPanel.classList.add('d-none');
       }
     } catch (err) {
-      console.warn('Failed to fetch readiness status:', err);
+      console.warn('Failed to fetch release readiness:', err);
     }
   }
 
   // =========================================================================
-  // Unsaved Pending Lines Guard for In-Page Navigation
-  // =========================================================================
-  function guardNavigation(e, targetUrl) {
-    if (pendingLines.length > 0) {
-      e.preventDefault();
-      Swal.fire({
-        title: 'لديك بنود غير محفوظة',
-        text: 'سيتم فقدان البنود التي أعددتها ولم تضفها إلى الطلب. هل تريد المغادرة؟',
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#EE5253',
-        cancelButtonColor: '#6B7280',
-        confirmButtonText: 'متابعة المغادرة',
-        cancelButtonText: 'البقاء',
-      }).then((result) => {
-        if (result.isConfirmed) {
-          window.location.href = targetUrl;
-        }
-      });
-    }
-  }
-
-  if (viewOrderNavBtn) {
-    viewOrderNavBtn.addEventListener('click', (e) => {
-      guardNavigation(e, viewOrderNavBtn.getAttribute('href'));
-    });
-  }
-
-  if (backToListNavBtn) {
-    backToListNavBtn.addEventListener('click', (e) => {
-      guardNavigation(e, backToListNavBtn.getAttribute('href'));
-    });
-  }
-
-  // =========================================================================
-  // Header Edit Modal Handlers
+  // Edit Header Modal Handler
   // =========================================================================
   if (editHeaderBtn) {
     editHeaderBtn.addEventListener('click', () => {
       editDescriptionInput.value = currentOrder.description || '';
       editNotesInput.value = currentOrder.notes || '';
       editHeaderAlert.classList.add('d-none');
+      editHeaderAlert.textContent = '';
       editHeaderModal.show();
     });
   }
@@ -1216,9 +800,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(getErrorMessage(json, 'فشل تحديث البيانات'));
 
+        currentOrder.description = editDescriptionInput.value.trim() || null;
+        currentOrder.notes = editNotesInput.value.trim() || null;
+
+        if (orderDescriptionText) {
+          orderDescriptionText.textContent = currentOrder.description || 'لا يوجد وصف محدد لهذا الطلب.';
+        }
+        if (orderNotesBox) {
+          if (currentOrder.notes) {
+            orderNotesBox.innerHTML = `<i class="fa-solid fa-note-sticky me-1 text-warning"></i> <strong>ملاحظات:</strong> ${currentOrder.notes}`;
+            orderNotesBox.classList.remove('d-none');
+          } else {
+            orderNotesBox.classList.add('d-none');
+          }
+        }
+
         editHeaderModal.hide();
         showSuccessToast('تم تحديث بيانات الطلب بنجاح');
-        await refreshOrder();
       } catch (err) {
         editHeaderAlert.textContent = err.message || 'تعذر حفظ التعديلات';
         editHeaderAlert.classList.remove('d-none');
@@ -1276,7 +874,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const val = e.target.value.trim();
 
     if (val.length === 0) {
-      // Invalidate pending requests and clear results
       ++templatePickerRequestSeq;
       templateSearchTerm = '';
       clearSearchBtn.classList.add('d-none');
@@ -1321,9 +918,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // =========================================================================
   // Initial Boot:
-  // Render existing lines and readiness ONLY.
+  // Render lines and readiness ONLY.
   // NO fetchTemplates() is called before user types a search keyword!
   // =========================================================================
-  renderOrderLines();
+  renderLines();
   fetchReadiness();
 });
