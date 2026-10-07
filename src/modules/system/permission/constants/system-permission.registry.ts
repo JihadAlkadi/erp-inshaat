@@ -210,6 +210,11 @@ export const SYSTEM_PERMISSION_DEFINITIONS: Record<SystemPermission, PermissionD
     description: 'أرشفة مسودات أوامر الإنتاج',
     module: 'production',
   },
+  [SystemPermission.PRODUCTION_ORDER_APPROVE]: {
+    name: SystemPermission.PRODUCTION_ORDER_APPROVE,
+    description: 'اعتماد أوامر الإنتاج الجاهزة وإعادتها للمسودة',
+    module: 'production',
+  },
 };
 
 export const ALL_SYSTEM_PERMISSION_DEFINITIONS: PermissionDefinition[] = Object.values(

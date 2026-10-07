@@ -13,8 +13,12 @@ import {
   ProductionOrderDto,
   PaginatedProductionOrdersResult,
   ProductionOrderListItemDto,
+  ProductionOrderListSummaryDto,
   ProductionOrderReadinessDto,
   ProductionOrderReadinessIssueDto,
+  SyncDraftLinePreviewDto,
+  SyncPreviewPatternDto,
+  SyncPreviewAvailableOptionDto,
 } from './production-order.types.js';
 import { ProductionOrderLineDto } from '../order-line/production-order-line.types.js';
 import { CreateProductionOrderDto } from './dto/create-production-order.dto.js';
@@ -24,6 +28,7 @@ import { AddProductionOrderLineDto } from '../order-line/dto/add-production-orde
 import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
 import { UpdateProductionOrderLineDto } from '../order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
+import { CommitProductionOrderDraftLinesDto } from '../order-line/dto/commit-production-order-draft-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
 import { hashLineConfiguration } from '../order-line/production-order-line-configuration.helper.js';
 import {
@@ -119,6 +124,7 @@ export class ProductionOrderService {
     const qb = this.orderRepo
       .createQueryBuilder('o')
       .leftJoinAndSelect('o.createdByUser', 'u')
+      .leftJoinAndSelect('o.approvedByUser', 'ap')
       .where('o.deleted_at IS NULL');
 
     if (query.search && query.search.trim()) {
@@ -162,6 +168,13 @@ export class ProductionOrderService {
         status: o.status,
         description: o.description,
         notes: o.notes,
+        approvedAt: o.approvedAt,
+        approvedByUser: o.approvedByUser
+          ? {
+              id: o.approvedByUser.id,
+              fullName: o.approvedByUser.fullName,
+            }
+          : null,
         createdAt: o.createdAt,
         updatedAt: o.updatedAt,
         createdByUser: o.createdByUser
@@ -174,12 +187,38 @@ export class ProductionOrderService {
       };
     });
 
+    // Compute global summary aggregate across ALL matching orders under current search filter
+    const summaryQb = this.orderRepo
+      .createQueryBuilder('o')
+      .leftJoin('production_order_line', 'l', 'l.order_id = o.id AND l.deleted_at IS NULL')
+      .where('o.deleted_at IS NULL');
+
+    if (query.search && query.search.trim()) {
+      const s = `%${query.search.trim()}%`;
+      summaryQb.andWhere('(o.order_number LIKE :s OR o.description LIKE :s)', { s });
+    }
+
+    const summaryRaw = await summaryQb
+      .select('COUNT(DISTINCT o.id)', 'totalOrders')
+      .addSelect("COUNT(DISTINCT CASE WHEN o.status = 'DRAFT' THEN o.id END)", 'draftOrders')
+      .addSelect("COUNT(DISTINCT CASE WHEN o.status = 'APPROVED' THEN o.id END)", 'approvedOrders')
+      .addSelect('COALESCE(SUM(l.quantity), 0)', 'totalQuantity')
+      .getRawOne();
+
+    const summary: ProductionOrderListSummaryDto = {
+      totalOrders: parseInt(summaryRaw?.totalOrders || '0', 10) || 0,
+      draftOrders: parseInt(summaryRaw?.draftOrders || '0', 10) || 0,
+      approvedOrders: parseInt(summaryRaw?.approvedOrders || '0', 10) || 0,
+      totalQuantity: parseInt(summaryRaw?.totalQuantity || '0', 10) || 0,
+    };
+
     return {
       items,
       total,
       page,
       limit,
       totalPages,
+      summary,
     };
   }
 
@@ -1027,7 +1066,422 @@ export class ProductionOrderService {
   }
 
   // ==========================================
-  // 4. READ-ONLY RELEASE READINESS VALIDATION
+  // 4. ATOMIC DRAFT LINES COMMIT
+  // ==========================================
+
+  /**
+   * Commits the entire target active line set of a DRAFT order atomically.
+   * Single HTTP request, Single DB transaction, Single pessimistic_write lock on order row.
+   * All-or-nothing: deletes omitted lines, updates existing lines, adds new lines, reorders dense 1..N.
+   */
+  async commitDraftLines(
+    orderId: string,
+    dto: CommitProductionOrderDraftLinesDto
+  ): Promise<ProductionOrderDto> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock order row (Unified Lock Root) - validates DRAFT status
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      const lineRepo = manager.getRepository(ProductionOrderLineEntity);
+      const selectionRepo = manager.getRepository(ProductionOrderLinePatternSelectionEntity);
+
+      // 2. Load all current active lines in DB
+      const currentLines = await lineRepo.find({
+        where: { orderId, deletedAt: IsNull() },
+        order: { sortOrder: 'ASC' },
+      });
+      const currentLineMap = new Map(currentLines.map((l) => [l.id, l]));
+
+      // 3. Validate existing IDs in payload
+      const seenPayloadIds = new Set<string>();
+      for (const lineItem of dto.lines) {
+        if (lineItem.id) {
+          if (seenPayloadIds.has(lineItem.id)) {
+            throw new BusinessRuleError(
+              'تكرار غير مسموح في معرفات البنود المرسلة',
+              'PRODUCTION_ORDER_LINE_DUPLICATE_ID'
+            );
+          }
+          seenPayloadIds.add(lineItem.id);
+
+          const existing = currentLineMap.get(lineItem.id);
+          if (!existing) {
+            throw new NotFoundError(
+              'بند الإنتاج غير موجود في هذا الطلب أو تم أرشفته',
+              'PRODUCTION_ORDER_LINE_NOT_FOUND'
+            );
+          }
+
+          if (lineItem.templateId !== existing.templateId) {
+            throw new BusinessRuleError(
+              'لا يمكن تغيير قالب تصنيع لبند إنتاج موجود',
+              'PRODUCTION_ORDER_LINE_TEMPLATE_IMMUTABLE'
+            );
+          }
+        }
+      }
+
+      // 4. Identify lines to remove (active in DB but omitted from payload)
+      const removedLines = currentLines.filter((l) => !seenPayloadIds.has(l.id));
+
+      // 5. Pre-validate and resolve entire target state before performing any mutations
+      interface ResolvedTargetLine {
+        lineDto: (typeof dto.lines)[number];
+        isExisting: boolean;
+        lineId?: string;
+        templateId: string;
+        quantity: number;
+        selectionsToCreate: Array<{ templatePatternId: string; selectedOptionId: string }>;
+        configHash: string;
+      }
+
+      const resolvedLines: ResolvedTargetLine[] = [];
+      const targetConfigHashes = new Set<string>();
+
+      for (const lineItem of dto.lines) {
+        const resolved = await this.resolveLineConfigurationInternal(
+          {
+            templateId: lineItem.templateId,
+            quantity: lineItem.quantity,
+            patternSelections: lineItem.patternSelections,
+          },
+          manager
+        );
+
+        if (targetConfigHashes.has(resolved.configHash)) {
+          throw new BusinessRuleError(
+            'يوجد تكرار لنفس القالب ونفس خيارات الأنماط في بنود طلب الإنتاج. لا يمكن إضافة نفس التكوين أكثر من مرة.',
+            'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+          );
+        }
+        targetConfigHashes.add(resolved.configHash);
+
+        resolvedLines.push({
+          lineDto: lineItem,
+          isExisting: Boolean(lineItem.id),
+          lineId: lineItem.id,
+          templateId: resolved.templateId,
+          quantity: resolved.quantity,
+          selectionsToCreate: resolved.selectionsToCreate,
+          configHash: resolved.configHash,
+        });
+      }
+
+      // 6. DB Mutations:
+      // Phase A: Set active_configuration_hash = null on all currently active lines to avoid unique key collisions during swaps
+      if (currentLines.length > 0) {
+        await lineRepo.update({ orderId, deletedAt: IsNull() }, { activeConfigurationHash: null });
+      }
+
+      // Phase B: Soft-delete removed lines and null their active_configuration_hash
+      for (const rem of removedLines) {
+        await lineRepo.update(rem.id, { activeConfigurationHash: null });
+        await lineRepo.softDelete(rem.id);
+      }
+
+      // Phase C: Apply updates to existing lines and insert new lines with dense sortOrder (1..N)
+      for (let i = 0; i < resolvedLines.length; i++) {
+        const r = resolvedLines[i];
+        const denseSortOrder = i + 1;
+
+        if (r.isExisting && r.lineId) {
+          // Existing line update
+          await lineRepo.update(r.lineId, {
+            quantity: r.quantity,
+            sortOrder: denseSortOrder,
+          });
+
+          // Delete existing selections and insert new
+          await selectionRepo.delete({ orderLineId: r.lineId });
+          if (r.selectionsToCreate.length > 0) {
+            const newSelections = r.selectionsToCreate.map((sel) =>
+              selectionRepo.create({
+                orderLineId: r.lineId!,
+                templatePatternId: sel.templatePatternId,
+                selectedOptionId: sel.selectedOptionId,
+              })
+            );
+            await selectionRepo.save(newSelections);
+          }
+        } else {
+          // New line insert
+          const newLine = lineRepo.create({
+            orderId,
+            templateId: r.templateId,
+            quantity: r.quantity,
+            sortOrder: denseSortOrder,
+            activeConfigurationHash: null,
+          });
+          const savedLine = await lineRepo.save(newLine);
+          r.lineId = savedLine.id;
+
+          if (r.selectionsToCreate.length > 0) {
+            const newSelections = r.selectionsToCreate.map((sel) =>
+              selectionRepo.create({
+                orderLineId: savedLine.id,
+                templatePatternId: sel.templatePatternId,
+                selectedOptionId: sel.selectedOptionId,
+              })
+            );
+            await selectionRepo.save(newSelections);
+          }
+        }
+      }
+
+      // Phase D: Write final configuration hashes
+      for (const r of resolvedLines) {
+        await lineRepo.update(r.lineId!, {
+          activeConfigurationHash: r.configHash,
+        });
+      }
+
+      // 7. Post-mutation invariant verification (Fail Closed)
+      const verifyActiveLines = await lineRepo.find({
+        where: { orderId, deletedAt: IsNull() },
+      });
+      if (verifyActiveLines.length !== dto.lines.length) {
+        throw new BusinessRuleError(
+          'خطأ في الاتساق بعد حفظ بنود المسودة',
+          'PRODUCTION_ORDER_COMMIT_INCONSISTENCY'
+        );
+      }
+      for (const val of verifyActiveLines) {
+        if (!val.activeConfigurationHash) {
+          throw new BusinessRuleError(
+            'خطأ: تم اكتشاف بند نشط بدون رمز تحقق تركيبي',
+            'PRODUCTION_ORDER_COMMIT_INCONSISTENCY'
+          );
+        }
+      }
+
+      return this.getOrderByIdInternal(orderId, manager);
+    });
+  }
+
+  // ==========================================
+  // 5. PATTERN SELECTIONS SYNC PREVIEW
+  // ==========================================
+
+  /**
+   * Previews the result of synchronizing a line's selections against the live template.
+   * STRICTLY READ-ONLY: Never writes or modifies DB state.
+   */
+  async previewSyncDraftLine(
+    orderId: string,
+    lineId: string
+  ): Promise<SyncDraftLinePreviewDto> {
+    const order = await this.guardService.requireExistingOrder(orderId);
+    this.guardService.requireDraftOrder(order);
+    const line = await this.guardService.requireExistingLine(orderId, lineId);
+
+    const template = await this.templateRepo.findOne({
+      where: { id: line.templateId, deletedAt: IsNull() },
+    });
+
+    if (!template || !template.isActive) {
+      throw new BusinessRuleError(
+        'قالب التصنيع المرتبط بهذا البند غير موجود أو غير فعال',
+        'PRODUCTION_ORDER_TEMPLATE_INACTIVE'
+      );
+    }
+
+    // Load active patterns and active options
+    const activePatterns = await this.patternRepo.find({
+      where: { templateId: line.templateId, deletedAt: IsNull() },
+      relations: { options: true },
+      order: { createdAt: 'ASC' },
+    });
+
+    const patternsWithOptions = activePatterns.map((p) => {
+      const activeOptions = (p.options || [])
+        .filter((opt) => !opt.deletedAt)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+      return {
+        pattern: p,
+        options: activeOptions,
+      };
+    });
+
+    // Load existing selections on this line
+    const existingSelections = await this.selectionRepo.find({
+      where: { orderLineId: lineId },
+    });
+
+    const existingOptionIds = existingSelections.map((s) => s.selectedOptionId);
+    const refOptions = existingOptionIds.length > 0
+      ? await this.optionRepo.find({
+          where: { id: In(existingOptionIds) },
+          withDeleted: true,
+        })
+      : [];
+    const refOptionMap = new Map(refOptions.map((o) => [o.id, o]));
+
+    const existingMap = new Map(existingSelections.map((s) => [s.templatePatternId, s]));
+    const resultingSelections: Array<{ patternId: string; optionId: string }> = [];
+    const patternsDto: SyncPreviewPatternDto[] = [];
+    const warnings: string[] = [];
+    let hasChanges = false;
+
+    for (const item of patternsWithOptions) {
+      const activeOptsDto: SyncPreviewAvailableOptionDto[] = item.options.map((o) => ({
+        id: o.id,
+        name: o.name,
+        sortOrder: o.sortOrder,
+        isActive: !o.deletedAt,
+      }));
+
+      const existingSel = existingMap.get(item.pattern.id);
+      let selectedOptionId: string;
+      let currentSelectionDto: SyncPreviewPatternDto['currentSelection'] | undefined = undefined;
+
+      if (existingSel) {
+        const refOpt = refOptionMap.get(existingSel.selectedOptionId);
+        const isArchived = !item.options.some((o) => o.id === existingSel.selectedOptionId);
+        currentSelectionDto = {
+          optionId: existingSel.selectedOptionId,
+          optionName: refOpt?.name || 'خيار غير معروف',
+          isArchived,
+        };
+
+        if (!isArchived) {
+          selectedOptionId = existingSel.selectedOptionId;
+        } else {
+          selectedOptionId = item.options.length > 0 ? item.options[0].id : '';
+          hasChanges = true;
+          warnings.push(
+            `الخيار السابق "${currentSelectionDto.optionName}" للنمط "${item.pattern.name}" لم يعد فعالاً وتم اقتراح الخيار الافتراضي`
+          );
+        }
+      } else {
+        selectedOptionId = item.options.length > 0 ? item.options[0].id : '';
+        hasChanges = true;
+        warnings.push(`النمط "${item.pattern.name}" نمط جديد تمت إضافته للقالب`);
+      }
+
+      if (selectedOptionId) {
+        resultingSelections.push({
+          patternId: item.pattern.id,
+          optionId: selectedOptionId,
+        });
+      }
+
+      patternsDto.push({
+        patternId: item.pattern.id,
+        patternName: item.pattern.name,
+        isRequired: true,
+        options: activeOptsDto,
+        currentSelection: currentSelectionDto,
+      });
+    }
+
+    const activePatIdSet = new Set(patternsWithOptions.map((p) => p.pattern.id));
+    for (const sel of existingSelections) {
+      if (!activePatIdSet.has(sel.templatePatternId)) {
+        hasChanges = true;
+        warnings.push(`يحتوي البند على نمط سابق لم يعد جزءاً من القالب الحالي وسيتم حذفه عند المزامنة`);
+      }
+    }
+
+    return {
+      lineId,
+      templateId: template.id,
+      templateName: template.name,
+      resultingSelections,
+      patterns: patternsDto,
+      patternSelections: patternsDto.map((p) => {
+        const sel = resultingSelections.find((s) => s.patternId === p.patternId);
+        return {
+          patternId: p.patternId,
+          patternName: p.patternName,
+          selectedOptionId: sel ? sel.optionId : null,
+          availableOptions: p.options,
+          isHistorical: p.currentSelection ? p.currentSelection.isArchived : false,
+          selectedOptionName: p.currentSelection ? p.currentSelection.optionName : null,
+        };
+      }),
+      warnings,
+      hasChanges,
+    };
+  }
+
+  // ==========================================
+  // 6. ORDER APPROVAL & REOPEN WORKFLOW
+  // ==========================================
+
+  /**
+   * Approves a DRAFT production order (Administrative Approval only).
+   * Requires:
+   * 1. Order is in DRAFT status.
+   * 2. Readiness check passes without any issues.
+   * Never creates runtime, units, snapshots, or releases order.
+   */
+  async approveOrder(
+    orderId: string,
+    currentUser: { id: string } | string
+  ): Promise<ProductionOrderDto> {
+    const userId = typeof currentUser === 'string' ? currentUser : currentUser?.id || 'system-user';
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock Order (checks status = DRAFT)
+      const order = await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Validate readiness internally
+      const readiness = await this.validateOrderReadinessInternal(orderId, manager);
+      if (!readiness.ready) {
+        throw new BusinessRuleError(
+          'طلب الإنتاج غير جاهز للاعتماد بسبب وجود ملاحظات في البنود أو القوالب',
+          'PRODUCTION_ORDER_NOT_READY_FOR_APPROVAL',
+          { issues: readiness.issues }
+        );
+      }
+
+      // 3. Set APPROVED
+      order.status = ProductionOrderStatus.APPROVED;
+      order.approvedAt = new Date();
+      order.approvedByUserId = userId;
+
+      await manager.save(order);
+
+      return this.getOrderByIdInternal(orderId, manager);
+    });
+  }
+
+  /**
+   * Reopens an APPROVED production order back to DRAFT for edits.
+   */
+  async reopenOrder(
+    orderId: string,
+    _currentUser?: { id: string } | string
+  ): Promise<ProductionOrderDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const orderRepo = manager.getRepository(ProductionOrderEntity);
+      const order = await orderRepo.findOne({
+        where: { id: orderId, deletedAt: IsNull() },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!order) {
+        throw new NotFoundError('طلب الإنتاج غير موجود أو تم أرشفته', 'PRODUCTION_ORDER_NOT_FOUND');
+      }
+
+      if (order.status !== ProductionOrderStatus.APPROVED) {
+        throw new BusinessRuleError(
+          'لا يمكن إعادة طلب إنتاج ليس في حالة معتمد إلى مسودة',
+          'PRODUCTION_ORDER_NOT_APPROVED'
+        );
+      }
+
+      order.status = ProductionOrderStatus.DRAFT;
+      order.approvedAt = null;
+      order.approvedByUserId = null;
+
+      await manager.save(order);
+
+      return this.getOrderByIdInternal(orderId, manager);
+    });
+  }
+
+  // ==========================================
+  // 7. READ-ONLY RELEASE READINESS VALIDATION
   // ==========================================
 
   /**
@@ -1037,11 +1491,22 @@ export class ProductionOrderService {
   async validateDraftForRelease(
     orderId: string
   ): Promise<ProductionOrderReadinessDto> {
+    return this.validateOrderReadinessInternal(orderId, undefined, true);
+  }
+
+  /**
+   * Internal reusable readiness validation engine.
+   */
+  private async validateOrderReadinessInternal(
+    orderId: string,
+    manager?: EntityManager,
+    allowApproved = false
+  ): Promise<ProductionOrderReadinessDto> {
     const issues: ProductionOrderReadinessIssueDto[] = [];
 
-    // 1. Order exists and is DRAFT
-    const order = await this.guardService.requireExistingOrder(orderId);
-    if (order.status !== ProductionOrderStatus.DRAFT) {
+    // 1. Order exists
+    const order = await this.guardService.requireExistingOrder(orderId, manager);
+    if (!allowApproved && order.status !== ProductionOrderStatus.DRAFT) {
       issues.push({
         code: 'PRODUCTION_ORDER_NOT_DRAFT',
         message: 'طلب الإنتاج ليس في حالة مسودة',
@@ -1049,8 +1514,19 @@ export class ProductionOrderService {
       return { ready: false, issues };
     }
 
+    const lineRepo = manager ? manager.getRepository(ProductionOrderLineEntity) : this.lineRepo;
+    const templateRepo = manager ? manager.getRepository(ProductionTemplateEntity) : this.templateRepo;
+    const patternRepo = manager ? manager.getRepository(ProductionTemplatePatternEntity) : this.patternRepo;
+    const optionRepo = manager ? manager.getRepository(ProductionTemplatePatternOptionEntity) : this.optionRepo;
+    const workflowItemRepo = manager
+      ? manager.getRepository(ProductionTemplateWorkflowItemEntity)
+      : this.workflowItemRepo;
+    const selectionRepo = manager
+      ? manager.getRepository(ProductionOrderLinePatternSelectionEntity)
+      : this.selectionRepo;
+
     // 2. Load active lines
-    const activeLines = await this.lineRepo.find({
+    const activeLines = await lineRepo.find({
       where: { orderId, deletedAt: IsNull() },
       order: { sortOrder: 'ASC', createdAt: 'ASC' },
     });
@@ -1065,14 +1541,14 @@ export class ProductionOrderService {
 
     // 3. Batch load templates, patterns, options, workflow items, and selections
     const templateIds = Array.from(new Set(activeLines.map((l) => l.templateId)));
-    const templates = await this.templateRepo.find({
+    const templates = await templateRepo.find({
       where: { id: In(templateIds) },
       withDeleted: true,
     });
     const templateMap = new Map(templates.map((t) => [t.id, t]));
 
     // Batch load active workflow items for templates
-    const workflowItems = await this.workflowItemRepo.find({
+    const workflowItems = await workflowItemRepo.find({
       where: { templateId: In(templateIds), deletedAt: IsNull() },
     });
     const workflowCountMap = new Map<string, number>();
@@ -1081,7 +1557,7 @@ export class ProductionOrderService {
     }
 
     // Batch load active patterns and options
-    const patterns = await this.patternRepo.find({
+    const patterns = await patternRepo.find({
       where: { templateId: In(templateIds), deletedAt: IsNull() },
       relations: { options: true },
     });
@@ -1094,7 +1570,7 @@ export class ProductionOrderService {
 
     // Batch load all selections for the lines
     const lineIds = activeLines.map((l) => l.id);
-    const selections = await this.selectionRepo.find({
+    const selections = await selectionRepo.find({
       where: { orderLineId: In(lineIds) },
     });
     const lineSelectionsMap = new Map<string, ProductionOrderLinePatternSelectionEntity[]>();
@@ -1109,13 +1585,13 @@ export class ProductionOrderService {
       const referencedPatternIds = Array.from(new Set(selections.map((s) => s.templatePatternId)));
       const referencedOptionIds = Array.from(new Set(selections.map((s) => s.selectedOptionId)));
 
-      const referencedPatterns = await this.patternRepo.find({
+      const referencedPatterns = await patternRepo.find({
         where: { id: In(referencedPatternIds) },
         withDeleted: true,
       });
       const refPatternMap = new Map(referencedPatterns.map((p) => [p.id, p]));
 
-      const referencedOptions = await this.optionRepo.find({
+      const referencedOptions = await optionRepo.find({
         where: { id: In(referencedOptionIds) },
         withDeleted: true,
       });
@@ -1247,7 +1723,7 @@ export class ProductionOrderService {
     // 1. Fetch Order with User
     const order = await orderRepo.findOne({
       where: { id: orderId, deletedAt: IsNull() },
-      relations: { createdByUser: true },
+      relations: { createdByUser: true, approvedByUser: true },
     });
 
     if (!order) {
@@ -1267,6 +1743,13 @@ export class ProductionOrderService {
         status: order.status,
         description: order.description,
         notes: order.notes,
+        approvedAt: order.approvedAt,
+        approvedByUser: order.approvedByUser
+          ? {
+              id: order.approvedByUser.id,
+              fullName: order.approvedByUser.fullName,
+            }
+          : null,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         createdByUser: order.createdByUser
@@ -1437,6 +1920,14 @@ export class ProductionOrderService {
       status: order.status,
       description: order.description,
       notes: order.notes,
+      approvedAt: order.approvedAt || null,
+      approvedByUserId: order.approvedByUserId || null,
+      approvedByUser: order.approvedByUser
+        ? {
+            id: order.approvedByUser.id,
+            fullName: order.approvedByUser.fullName,
+          }
+        : null,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       createdByUser: order.createdByUser

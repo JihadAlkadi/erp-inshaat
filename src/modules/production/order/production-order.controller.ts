@@ -8,6 +8,7 @@ import { AddProductionOrderLineDto } from '../order-line/dto/add-production-orde
 import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
 import { UpdateProductionOrderLineDto } from '../order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
+import { CommitProductionOrderDraftLinesDto } from '../order-line/dto/commit-production-order-draft-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
 
 export class ProductionOrderController {
@@ -185,6 +186,76 @@ export class ProductionOrderController {
       const { orderId } = req.params;
       const readiness = await this.orderService.validateDraftForRelease(orderId as string);
       res.status(200).json(ApiResponse.success(readiness));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 5. ATOMIC DRAFT COMMIT & SYNC PREVIEW
+  // ==========================================
+
+  commitDraftLines = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const { orderId } = req.params;
+      const dto = req.body as CommitProductionOrderDraftLinesDto;
+      const order = await this.orderService.commitDraftLines(orderId as string, dto);
+      res.status(200).json(ApiResponse.success(order, 'تم حفظ أمر الإنتاج بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  previewSyncDraftLine = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const { orderId, lineId } = req.params;
+      const preview = await this.orderService.previewSyncDraftLine(
+        orderId as string,
+        lineId as string
+      );
+      res.status(200).json(ApiResponse.success(preview));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 6. ORDER APPROVAL & REOPEN WORKFLOW
+  // ==========================================
+
+  approveOrder = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const { orderId } = req.params;
+      const currentUser = (req as any).user;
+      const order = await this.orderService.approveOrder(orderId as string, currentUser);
+      res.status(200).json(ApiResponse.success(order, 'تم اعتماد أمر الإنتاج بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  reopenOrder = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const { orderId } = req.params;
+      const currentUser = (req as any).user;
+      const order = await this.orderService.reopenOrder(orderId as string, currentUser);
+      res.status(200).json(ApiResponse.success(order, 'تمت إعادة أمر الإنتاج إلى المسودة بنجاح'));
     } catch (error) {
       next(error);
     }

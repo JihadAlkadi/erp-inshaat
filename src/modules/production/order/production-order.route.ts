@@ -13,6 +13,7 @@ import { AddProductionOrderLineDto } from '../order-line/dto/add-production-orde
 import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
 import { UpdateProductionOrderLineDto } from '../order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
+import { CommitProductionOrderDraftLinesDto } from '../order-line/dto/commit-production-order-draft-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
 
 const productionOrderApiRouter: Router = Router();
@@ -144,6 +145,48 @@ productionOrderApiRouter.post(
   validateUuidParam('orderId'),
   validateUuidParam('lineId'),
   productionOrderController.syncDraftLineSelections
+);
+
+// GET /api/production/orders/:orderId/lines/:lineId/sync-preview - Sync preview (Read-Only)
+productionOrderApiRouter.get(
+  '/:orderId/lines/:lineId/sync-preview',
+  requirePermission(SystemPermission.PRODUCTION_ORDER_UPDATE),
+  validateUuidParam('orderId'),
+  validateUuidParam('lineId'),
+  productionOrderController.previewSyncDraftLine
+);
+
+// ==========================================
+// 4. ATOMIC DRAFT LINES COMMIT
+// ==========================================
+
+// PUT /api/production/orders/:orderId/draft-lines - Commit entire draft line target set atomically
+productionOrderApiRouter.put(
+  '/:orderId/draft-lines',
+  requirePermission(SystemPermission.PRODUCTION_ORDER_UPDATE),
+  validateUuidParam('orderId'),
+  validateDto(CommitProductionOrderDraftLinesDto),
+  productionOrderController.commitDraftLines
+);
+
+// ==========================================
+// 5. ORDER APPROVAL & REOPEN WORKFLOW
+// ==========================================
+
+// POST /api/production/orders/:orderId/approve - Administrative approval of ready order
+productionOrderApiRouter.post(
+  '/:orderId/approve',
+  requirePermission(SystemPermission.PRODUCTION_ORDER_APPROVE),
+  validateUuidParam('orderId'),
+  productionOrderController.approveOrder
+);
+
+// POST /api/production/orders/:orderId/reopen - Reopen approved order back to draft
+productionOrderApiRouter.post(
+  '/:orderId/reopen',
+  requirePermission(SystemPermission.PRODUCTION_ORDER_APPROVE),
+  validateUuidParam('orderId'),
+  productionOrderController.reopenOrder
 );
 
 export { productionOrderApiRouter };

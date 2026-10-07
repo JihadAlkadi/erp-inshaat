@@ -15,6 +15,7 @@ import { ProductionOrderLineEntity } from '../order-line/production-order-line.e
 
 export enum ProductionOrderStatus {
   DRAFT = 'DRAFT',
+  APPROVED = 'APPROVED',
 }
 
 @Entity('production_order')
@@ -38,6 +39,17 @@ export class ProductionOrderEntity {
 
   @Column({ type: 'text', nullable: true })
   notes!: string | null;
+
+  @Column({ name: 'approved_at', type: 'datetime', precision: 6, nullable: true })
+  approvedAt?: Date | null;
+
+  @Index('IDX_production_order_approved_by')
+  @Column({ name: 'approved_by_user_id', type: 'varchar', length: 36, nullable: true })
+  approvedByUserId?: string | null;
+
+  @ManyToOne(() => UserEntity, { eager: false, onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'approved_by_user_id' })
+  approvedByUser?: UserEntity;
 
   @Index('IDX_production_order_created_by')
   @Column({ name: 'created_by_user_id', type: 'varchar', length: 36 })

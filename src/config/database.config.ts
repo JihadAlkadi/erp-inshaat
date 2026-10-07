@@ -43,6 +43,7 @@ import { AddProductionTemplateMixedWorkflowPatterns1710000000011 } from '../data
 import { HardenProductionTemplateMixedWorkflow1710000000012 } from '../database/migrations/1710000000012-HardenProductionTemplateMixedWorkflow.js';
 import { CreateProductionOrderDraftingFoundation1710000000013 } from '../database/migrations/1710000000013-CreateProductionOrderDraftingFoundation.js';
 import { AddProductionOrderLineConfigurationUniqueness1710000000014 } from '../database/migrations/1710000000014-AddProductionOrderLineConfigurationUniqueness.js';
+import { AddProductionOrderApprovalStatus1710000000015 } from '../database/migrations/1710000000015-AddProductionOrderApprovalStatus.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -99,6 +100,7 @@ export const databaseConfig: DataSourceOptions = {
     HardenProductionTemplateMixedWorkflow1710000000012,
     CreateProductionOrderDraftingFoundation1710000000013,
     AddProductionOrderLineConfigurationUniqueness1710000000014,
+    AddProductionOrderApprovalStatus1710000000015,
   ],
   subscribers: [],
 };

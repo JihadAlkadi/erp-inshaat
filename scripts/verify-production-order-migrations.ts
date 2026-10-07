@@ -316,13 +316,178 @@ async function runScenario3DuplicateFailLoud(): Promise<void> {
   }
 }
 
+async function runScenario4Upgrade0015(): Promise<void> {
+  console.log('\n======================================================');
+  console.log('--- Scenario 4: Upgrade Migration 0014 -> 0015 ---');
+  console.log('======================================================');
+
+  const rawConn = await createRawConnection();
+  const dbName = `test_po_upgrade_0015_${Date.now()}`;
+
+  try {
+    await rawConn.query(`CREATE DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    console.log(`Created disposable database: ${dbName}`);
+
+    const allMigrations = databaseConfig.migrations as Function[];
+    const pre0015Migrations = allMigrations.filter((m) => m.name !== 'AddProductionOrderApprovalStatus1710000000015');
+
+    const preDs = new DataSource({
+      ...databaseConfig,
+      database: dbName,
+      migrations: pre0015Migrations,
+      logging: false,
+    });
+
+    await preDs.initialize();
+    await preDs.runMigrations();
+    console.log('Migrations 0001 -> 0014 applied successfully.');
+
+    // Seed data under 0014
+    const roleId = '00000000-0000-0000-0000-000000000040';
+    const userId = '00000000-0000-0000-0000-000000000041';
+    const orderId = '00000000-0000-0000-0000-000000000042';
+
+    await preDs.query(`INSERT INTO system_role (id, name, code) VALUES (?, 'Admin', 'ADMIN')`, [roleId]);
+    await preDs.query(`INSERT INTO system_user (id, full_name, phone, password_hash, role_id, is_active) VALUES (?, 'User', '1234567890', 'hash', ?, 1)`, [userId, roleId]);
+    await preDs.query(`INSERT INTO production_order (id, order_number, status, created_by_user_id) VALUES (?, 'PO-UPG15', 'DRAFT', ?)`, [orderId, userId]);
+
+    await preDs.destroy();
+
+    // Now run migration 0015
+    const upDs = new DataSource({
+      ...databaseConfig,
+      database: dbName,
+      logging: false,
+    });
+
+    await upDs.initialize();
+    await upDs.runMigrations();
+    console.log('Migration 0015 applied successfully.');
+
+    // Verify columns exist
+    const [approvedAtCol] = await upDs.query(
+      `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'production_order' AND COLUMN_NAME = 'approved_at'`,
+      [dbName]
+    );
+    if (!approvedAtCol) throw new Error('Assertion failed: approved_at column missing on production_order');
+
+    const [approvedByCol] = await upDs.query(
+      `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'production_order' AND COLUMN_NAME = 'approved_by_user_id'`,
+      [dbName]
+    );
+    if (!approvedByCol) throw new Error('Assertion failed: approved_by_user_id column missing on production_order');
+
+    console.log('✔ approved_at and approved_by_user_id columns verified on production_order');
+
+    // Test check constraint allows APPROVED
+    await upDs.query(
+      `UPDATE production_order SET status = 'APPROVED', approved_at = NOW(), approved_by_user_id = ? WHERE id = ?`,
+      [userId, orderId]
+    );
+    console.log('✔ status = APPROVED successfully allowed by CHK_production_order_status');
+
+    let invalidRejected = false;
+    try {
+      await upDs.query(
+        `UPDATE production_order SET status = 'INVALID_STATUS' WHERE id = ?`,
+        [orderId]
+      );
+    } catch (err: any) {
+      if (
+        err.code === 'ER_CHECK_CONSTRAINT_VIOLATED' ||
+        err.code === 'ER_CONSTRAINT_FAILED' ||
+        err.errno === 4025 ||
+        err.errno === 3819 ||
+        (err.message && err.message.toLowerCase().includes('constraint'))
+      ) {
+        invalidRejected = true;
+        console.log('✔ Invalid status correctly rejected by CHK_production_order_status');
+      } else {
+        console.error('Unexpected error on check constraint test:', err);
+      }
+    }
+    if (!invalidRejected) throw new Error('Assertion failed: invalid status should have violated check constraint');
+
+    await upDs.destroy();
+  } finally {
+    await rawConn.query(`DROP DATABASE IF EXISTS \`${dbName}\``);
+    await rawConn.end();
+    console.log(`Cleaned up disposable database: ${dbName}`);
+  }
+}
+
+async function runScenario5Down0015FailLoud(): Promise<void> {
+  console.log('\n======================================================');
+  console.log('--- Scenario 5: Migration 0015 Down Fails Loudly on APPROVED Data ---');
+  console.log('======================================================');
+
+  const rawConn = await createRawConnection();
+  const dbName = `test_po_down_fail_${Date.now()}`;
+
+  try {
+    await rawConn.query(`CREATE DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    console.log(`Created disposable database: ${dbName}`);
+
+    const ds = new DataSource({
+      ...databaseConfig,
+      database: dbName,
+      logging: false,
+    });
+
+    await ds.initialize();
+    await ds.runMigrations();
+
+    // Insert an APPROVED order
+    const roleId = '00000000-0000-0000-0000-000000000050';
+    const userId = '00000000-0000-0000-0000-000000000051';
+    const orderId = '00000000-0000-0000-0000-000000000052';
+
+    await ds.query(`INSERT INTO system_role (id, name, code) VALUES (?, 'Admin', 'ADMIN')`, [roleId]);
+    await ds.query(`INSERT INTO system_user (id, full_name, phone, password_hash, role_id, is_active) VALUES (?, 'User', '1234567890', 'hash', ?, 1)`, [userId, roleId]);
+    await ds.query(`INSERT INTO production_order (id, order_number, status, created_by_user_id, approved_at, approved_by_user_id) VALUES (?, 'PO-APP5', 'APPROVED', ?, NOW(), ?)`, [orderId, userId, userId]);
+
+    // Now try to undo last migration (0015) -> MUST fail loudly because of APPROVED rows!
+    let downFailedLoudly = false;
+    try {
+      await ds.undoLastMigration();
+    } catch (err: any) {
+      if (
+        err.message?.includes('APPROVED production orders exist in database') ||
+        err.message?.includes('Cannot revert')
+      ) {
+        downFailedLoudly = true;
+        console.log('✔ Down migration 0015 failed loudly as expected when APPROVED rows exist');
+      } else {
+        console.error('Down migration threw unexpected error:', err);
+      }
+    }
+
+    if (!downFailedLoudly) {
+      throw new Error('Assertion failed: Migration 0015 down must fail loudly when APPROVED rows exist');
+    }
+
+    // Now update order to DRAFT and clear approved metadata -> down migration should now succeed!
+    await ds.query(`UPDATE production_order SET status = 'DRAFT', approved_at = NULL, approved_by_user_id = NULL WHERE id = ?`, [orderId]);
+    await ds.undoLastMigration();
+    console.log('✔ Down migration 0015 succeeded cleanly after clearing APPROVED rows');
+
+    await ds.destroy();
+  } finally {
+    await rawConn.query(`DROP DATABASE IF EXISTS \`${dbName}\``);
+    await rawConn.end();
+    console.log(`Cleaned up disposable database: ${dbName}`);
+  }
+}
+
 async function main() {
-  console.log('Starting Migration 0014 Verification Tests on MySQL...');
+  console.log('Starting Migration 0014 and 0015 Verification Tests on MySQL...');
   await runScenario1Fresh();
   await runScenario2Upgrade();
   await runScenario3DuplicateFailLoud();
+  await runScenario4Upgrade0015();
+  await runScenario5Down0015FailLoud();
   console.log('\n======================================================');
-  console.log('ALL MIGRATION 0014 SCENARIOS PASSED SUCCESSFULLY!');
+  console.log('ALL MIGRATION SCENARIOS (0001 -> 0015) PASSED SUCCESSFULLY!');
   console.log('======================================================');
 }
 
@@ -330,3 +495,4 @@ main().catch((err) => {
   console.error('\nVerification failed:', err);
   process.exit(1);
 });
+

@@ -81,6 +81,10 @@ export class ProductionOrderWebController {
         currentUser,
         SystemPermission.PRODUCTION_ORDER_UPDATE
       );
+      const canApproveOrder = await authorizationService.hasPermission(
+        currentUser,
+        SystemPermission.PRODUCTION_ORDER_APPROVE
+      );
 
       res.render('dashboard/production/orders/show', {
         layout: 'dashboard/production/layout',
@@ -92,6 +96,7 @@ export class ProductionOrderWebController {
         activeTab: 'orders',
         user: currentUser,
         canUpdateOrder,
+        canApproveOrder,
         order,
         readiness,
         initialOrderJson: safeJsonStringify(order),

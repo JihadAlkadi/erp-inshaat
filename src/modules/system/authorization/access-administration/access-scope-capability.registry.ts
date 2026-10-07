@@ -84,6 +84,9 @@ export const PERMISSION_SCOPE_CAPABILITIES: Record<string, AccessScopePresetType
   'production.order.delete': [
     AccessScopePreset.ALL,
   ],
+  'production.order.approve': [
+    AccessScopePreset.ALL,
+  ],
 };
 
 export class AccessScopeCapabilityRegistry {

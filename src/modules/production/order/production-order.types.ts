@@ -18,11 +18,21 @@ export interface ProductionOrderDto {
   status: string;
   description: string | null;
   notes: string | null;
+  approvedAt?: Date | null;
+  approvedByUserId?: string | null;
+  approvedByUser?: ProductionOrderUserSummaryDto | null;
   createdAt: Date;
   updatedAt: Date;
   createdByUser?: ProductionOrderUserSummaryDto;
   summary: ProductionOrderSummaryDto;
   lines?: ProductionOrderLineDto[];
+}
+
+export interface ProductionOrderListSummaryDto {
+  totalOrders: number;
+  draftOrders: number;
+  approvedOrders: number;
+  totalQuantity: number;
 }
 
 export interface ProductionOrderListItemDto {
@@ -31,6 +41,8 @@ export interface ProductionOrderListItemDto {
   status: string;
   description: string | null;
   notes: string | null;
+  approvedAt?: Date | null;
+  approvedByUser?: ProductionOrderUserSummaryDto | null;
   createdAt: Date;
   updatedAt: Date;
   createdByUser?: ProductionOrderUserSummaryDto;
@@ -43,6 +55,7 @@ export interface PaginatedProductionOrdersResult {
   page: number;
   limit: number;
   totalPages: number;
+  summary: ProductionOrderListSummaryDto;
 }
 
 export interface ProductionOrderReadinessIssueDto {
@@ -55,6 +68,45 @@ export interface ProductionOrderReadinessIssueDto {
 export interface ProductionOrderReadinessDto {
   ready: boolean;
   issues: ProductionOrderReadinessIssueDto[];
+}
+
+export interface SyncPreviewAvailableOptionDto {
+  id: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface SyncPreviewPatternDto {
+  patternId: string;
+  patternName: string;
+  isRequired: boolean;
+  options: SyncPreviewAvailableOptionDto[];
+  currentSelection?: {
+    optionId: string;
+    optionName: string;
+    isArchived: boolean;
+  };
+}
+
+export interface SyncPreviewLinePatternSelectionDto {
+  patternId: string;
+  patternName: string;
+  selectedOptionId: string | null;
+  availableOptions: SyncPreviewAvailableOptionDto[];
+  isHistorical: boolean;
+  selectedOptionName: string | null;
+}
+
+export interface SyncDraftLinePreviewDto {
+  lineId: string;
+  templateId: string;
+  templateName: string;
+  resultingSelections: Array<{ patternId: string; optionId: string }>;
+  patternSelections?: SyncPreviewLinePatternSelectionDto[];
+  patterns: SyncPreviewPatternDto[];
+  warnings: string[];
+  hasChanges: boolean;
 }
 
 /**

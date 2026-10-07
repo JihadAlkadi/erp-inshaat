@@ -35,6 +35,7 @@ export enum SystemPermission {
   PRODUCTION_ORDER_CREATE = 'production.order.create',
   PRODUCTION_ORDER_UPDATE = 'production.order.update',
   PRODUCTION_ORDER_DELETE = 'production.order.delete',
+  PRODUCTION_ORDER_APPROVE = 'production.order.approve',
 }
 
 
