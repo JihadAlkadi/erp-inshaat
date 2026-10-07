@@ -15,6 +15,7 @@ import { inventoryCategoryWebController } from '../modules/inventory/category/in
 import { inventoryProductWebController } from '../modules/inventory/product/inventory-product.web.controller.js';
 import { inventoryHomeWebController } from '../modules/inventory/inventory.web.controller.js';
 import { productionTemplateWebController } from '../modules/production/template/production-template.web.controller.js';
+import { productionOrderWebController } from '../modules/production/order/production-order.web.controller.js';
 
 const webRouter: Router = Router();
 
@@ -341,13 +342,33 @@ webRouter.get(
   productionTemplateWebController.renderTemplateShow
 );
 
-// GET /production/templates/:id/edit - Edit Template Page (Protected)
+// ==========================================
+// Production Orders Web Routes (/production/orders)
+// ==========================================
+
+// GET /production/orders - Orders List (Protected)
 webRouter.get(
-  '/production/templates/:id/edit',
+  '/production/orders',
   requireWebAuth,
-  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_UPDATE),
+  requirePermission(SystemPermission.PRODUCTION_ORDER_VIEW),
+  productionOrderWebController.renderOrdersList
+);
+
+// GET /production/orders/create - Create Order Page (Protected) - Must precede :id
+webRouter.get(
+  '/production/orders/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_ORDER_CREATE),
+  productionOrderWebController.renderOrderCreate
+);
+
+// GET /production/orders/:id - Order Builder Page (Protected)
+webRouter.get(
+  '/production/orders/:id',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_ORDER_VIEW),
   validateUuidParam('id'),
-  productionTemplateWebController.renderTemplateEdit
+  productionOrderWebController.renderOrderShow
 );
 
 export { webRouter };
