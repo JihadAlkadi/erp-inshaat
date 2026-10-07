@@ -363,6 +363,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const specCountEl = document.getElementById('headerSpecCount');
     if (specCountEl) specCountEl.textContent = currentSpecifications.length;
+    const navSpecBadge = document.getElementById('navSpecCountBadge');
+    if (navSpecBadge) navSpecBadge.textContent = currentSpecifications.length;
 
     if (currentSpecifications.length === 0) {
       const emptyDiv = document.createElement('div');
@@ -652,6 +654,8 @@ document.addEventListener('DOMContentLoaded', () => {
     workflowContainer.replaceChildren();
 
     if (headerStageCount) headerStageCount.textContent = currentStages.length;
+    const navStageBadge = document.getElementById('navStageCountBadge');
+    if (navStageBadge) navStageBadge.textContent = currentStages.length;
     if (emptyStagesNotice) {
       if (currentStages.length === 0) {
         emptyStagesNotice.classList.remove('d-none');
@@ -986,11 +990,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ========================================================
-  // 5. UNIFIED STAGE DRAWER (OFFCANVAS)
+  // 5. UNIFIED STAGE WORKSPACE MODAL
   // ========================================================
 
-  const stageDrawerEl = document.getElementById('stageDrawer');
-  const stageDrawer = stageDrawerEl ? new bootstrap.Offcanvas(stageDrawerEl) : null;
+  const stageModalEl = document.getElementById('stageModal') || document.getElementById('stageDrawer');
+  const stageModal = stageModalEl ? new bootstrap.Modal(stageModalEl) : null;
+  const stageDrawer = stageModal; // backward compatible alias for all operations
 
   const stageDrawerTitle = document.getElementById('stageDrawerTitle');
   const stageDrawerOrderBadge = document.getElementById('stageDrawerOrderBadge');
@@ -1781,7 +1786,54 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ========================================================
-  // 8. INITIAL RENDERING
+  // 8. WORKSPACE TABS & URL HASH SYNCHRONIZATION
+  // ========================================================
+  const workspaceTabs = document.getElementById('templateWorkspaceTabs');
+  if (workspaceTabs) {
+    // Sync tab switch with URL hash
+    const tabTriggers = workspaceTabs.querySelectorAll('button[data-bs-toggle="pill"]');
+    tabTriggers.forEach((trigger) => {
+      trigger.addEventListener('shown.bs.tab', (e) => {
+        const targetId = e.target.getAttribute('data-bs-target');
+        if (targetId === '#pane-template-workflow') {
+          history.replaceState(null, '', '#workflow');
+        } else if (targetId === '#pane-template-specifications') {
+          history.replaceState(null, '', '#specifications');
+        } else if (targetId === '#pane-template-info') {
+          history.replaceState(null, '', '#info');
+        }
+      });
+    });
+
+    // Handle deep linking from URL hash
+    const currentHash = window.location.hash.toLowerCase();
+    if (currentHash === '#workflow' || currentHash === '#stages') {
+      const tab = document.getElementById('tab-template-workflow');
+      if (tab) bootstrap.Tab.getOrCreateInstance(tab).show();
+    } else if (currentHash === '#specifications' || currentHash === '#specs') {
+      const tab = document.getElementById('tab-template-specifications');
+      if (tab) bootstrap.Tab.getOrCreateInstance(tab).show();
+    } else if (currentHash === '#info') {
+      const tab = document.getElementById('tab-template-info');
+      if (tab) bootstrap.Tab.getOrCreateInstance(tab).show();
+    }
+
+    // Header stat links click to switch tabs
+    document.querySelectorAll('.header-stat-link').forEach((el) => {
+      el.addEventListener('click', () => {
+        const targetTabSelector = el.getAttribute('data-tab-target');
+        if (targetTabSelector) {
+          const tabBtn = document.querySelector(targetTabSelector);
+          if (tabBtn) {
+            bootstrap.Tab.getOrCreateInstance(tabBtn).show();
+          }
+        }
+      });
+    });
+  }
+
+  // ========================================================
+  // 9. INITIAL RENDERING
   // ========================================================
   renderSpecifications();
   renderWorkflow();
