@@ -3,6 +3,8 @@ import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionTemplateWorkflowItemEntity, ProductionTemplateWorkflowItemType } from './production-template-workflow-item.entity.js';
 import { ProductionTemplateStageEntity } from '../template-stage/production-template-stage.entity.js';
 import { ProductionTemplatePatternEntity } from '../template-pattern/production-template-pattern.entity.js';
+import { ProductionTemplateStageMaterialEntity } from '../template-stage-material/production-template-stage-material.entity.js';
+import { ProductionTemplateStageAttachmentEntity } from '../template-stage-attachment/production-template-stage-attachment.entity.js';
 import { ProductionTemplateGuardService, productionTemplateGuardService } from '../template/production-template-guard.service.js';
 import {
   ProductionTemplateWorkflowItemDto,
@@ -25,17 +27,23 @@ export class ProductionTemplateWorkflowService {
   /**
    * Lists all top-level workflow items for an active template.
    * Performs strict polymorphic integrity checks and fails closed if corrupted.
+   * Stage reference counts are loaded in batch (zero N+1, no relation over-fetch).
    */
-  async listWorkflowItems(templateId: string): Promise<ProductionTemplateWorkflowItemDto[]> {
-    await this.guardService.requireExistingTemplate(templateId);
+  async listWorkflowItems(
+    templateId: string,
+    manager?: EntityManager
+  ): Promise<ProductionTemplateWorkflowItemDto[]> {
+    await this.guardService.requireExistingTemplate(templateId, manager);
 
-    const items = await this.workflowRepo.find({
+    const repo = manager
+      ? manager.getRepository(ProductionTemplateWorkflowItemEntity)
+      : this.workflowRepo;
+
+    const items = await repo.find({
       where: { templateId, deletedAt: IsNull() },
       relations: {
         stage: {
           department: true,
-          plannedMaterials: true,
-          attachments: true,
         },
         pattern: {
           options: true,
@@ -43,6 +51,50 @@ export class ProductionTemplateWorkflowService {
       },
       order: { sortOrder: 'ASC' },
     });
+
+    const stageIds: string[] = [];
+    for (const item of items) {
+      if (item.itemType === 'STAGE' && item.stageId) {
+        stageIds.push(item.stageId);
+      }
+    }
+
+    const stageMatCountMap = new Map<string, number>();
+    const stageAttCountMap = new Map<string, number>();
+
+    if (stageIds.length > 0) {
+      const stageMatRepo = manager
+        ? manager.getRepository(ProductionTemplateStageMaterialEntity)
+        : this.dataSource.getRepository(ProductionTemplateStageMaterialEntity);
+
+      const matCounts = await stageMatRepo
+        .createQueryBuilder('mat')
+        .select('mat.stageId', 'stageId')
+        .addSelect('COUNT(*)', 'cnt')
+        .where('mat.stageId IN (:...stageIds)', { stageIds })
+        .groupBy('mat.stageId')
+        .getRawMany<{ stageId: string; cnt: string | number }>();
+
+      for (const row of matCounts) {
+        stageMatCountMap.set(row.stageId, Number(row.cnt));
+      }
+
+      const stageAttRepo = manager
+        ? manager.getRepository(ProductionTemplateStageAttachmentEntity)
+        : this.dataSource.getRepository(ProductionTemplateStageAttachmentEntity);
+
+      const attCounts = await stageAttRepo
+        .createQueryBuilder('att')
+        .select('att.stageId', 'stageId')
+        .addSelect('COUNT(*)', 'cnt')
+        .where('att.stageId IN (:...stageIds) AND att.deletedAt IS NULL', { stageIds })
+        .groupBy('att.stageId')
+        .getRawMany<{ stageId: string; cnt: string | number }>();
+
+      for (const row of attCounts) {
+        stageAttCountMap.set(row.stageId, Number(row.cnt));
+      }
+    }
 
     const result: ProductionTemplateWorkflowItemDto[] = [];
 
@@ -63,8 +115,8 @@ export class ProductionTemplateWorkflowService {
         }
 
         const stage = item.stage;
-        const plannedMaterialsCount = (stage.plannedMaterials || []).length;
-        const attachmentsCount = (stage.attachments || []).filter((a: any) => !a.deletedAt).length;
+        const plannedMaterialsCount = stageMatCountMap.get(stage.id) ?? 0;
+        const attachmentsCount = stageAttCountMap.get(stage.id) ?? 0;
 
         result.push(
           toProductionTemplateWorkflowItemDto(item, {
@@ -252,7 +304,7 @@ export class ProductionTemplateWorkflowService {
       }
 
       // 4. Return refreshed workflow list
-      return await this.listWorkflowItems(templateId);
+      return await this.listWorkflowItems(templateId, manager);
     });
   }
 

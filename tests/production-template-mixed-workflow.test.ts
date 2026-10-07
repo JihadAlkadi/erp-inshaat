@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { describe, it } from 'node:test';
+import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,6 +7,7 @@ import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 
 import { databaseConfig } from '../src/config/database.config.js';
+import { NotFoundError } from '../src/common/errors/not-found.error.js';
 
 // DTOs
 import { ReorderWorkflowItemsDto } from '../src/modules/production/template-workflow-item/dto/reorder-workflow-items.dto.js';
@@ -62,11 +63,15 @@ import { ProductionTemplatePatternOptionTaskEntity } from '../src/modules/produc
 import { ProductionTemplatePatternOptionTaskMaterialEntity } from '../src/modules/production/template-pattern-option-task-material/production-template-pattern-option-task-material.entity.js';
 import { ProductionTemplatePatternOptionTaskAttachmentEntity } from '../src/modules/production/template-pattern-option-task-attachment/production-template-pattern-option-task-attachment.entity.js';
 
+import { ProductionTemplateStageAttachmentEntity } from '../src/modules/production/template-stage-attachment/production-template-stage-attachment.entity.js';
+import { ProductionTemplateStageMaterialEntity } from '../src/modules/production/template-stage-material/production-template-stage-material.entity.js';
+import { loadTaskReferenceCounts } from '../src/modules/production/template-pattern-option-task/production-template-pattern-option-task.service.js';
+
 describe('Production Template Mixed Workflow, Patterns & Options Architecture Invariants', () => {
   // ========================================================
-  // 1. MIGRATION 0011 & DATABASE REGISTRATION
+  // 1. MIGRATION 0011 & 0012 & DATABASE REGISTRATION
   // ========================================================
-  describe('1. Migration 0011 & Entity Registration', () => {
+  describe('1. Migration 0011 & 0012 & Entity Registration', () => {
     it('verifies migration 0011 file exists and is registered in databaseConfig.migrations', () => {
       const migrationFilePath = path.join(
         process.cwd(),
@@ -81,6 +86,22 @@ describe('Production Template Mixed Workflow, Patterns & Options Architecture In
           m.name === 'AddProductionTemplateMixedWorkflowPatterns1710000000011'
       );
       assert.strictEqual(hasMigration0011, true);
+    });
+
+    it('verifies migration 0012 file exists and is registered in databaseConfig.migrations', () => {
+      const migrationFilePath = path.join(
+        process.cwd(),
+        'src/database/migrations/1710000000012-HardenProductionTemplateMixedWorkflow.ts'
+      );
+      assert.strictEqual(fs.existsSync(migrationFilePath), true);
+
+      const migrations = (databaseConfig.migrations as any[]) || [];
+      const hasMigration0012 = migrations.some(
+        (m) =>
+          typeof m === 'function' &&
+          m.name === 'HardenProductionTemplateMixedWorkflow1710000000012'
+      );
+      assert.strictEqual(hasMigration0012, true);
     });
 
     it('verifies all 6 new entities are registered in databaseConfig.entities', () => {
@@ -102,6 +123,25 @@ describe('Production Template Mixed Workflow, Patterns & Options Architecture In
         (c) => c.propertyName === 'sortOrder' || (c.options && (c.options as any).name === 'sort_order')
       );
       assert.strictEqual(hasSortOrderColumn, false);
+    });
+
+    it('verifies ProductionTemplatePatternOptionTaskMaterialEntity metadata has precision 18 scale 6 and unique index', () => {
+      const matColumns = getMetadataArgsStorage().columns.filter(
+        (c) => c.target === ProductionTemplatePatternOptionTaskMaterialEntity
+      );
+      const plannedQtyCol = matColumns.find(
+        (c) => c.propertyName === 'plannedQuantity' || (c.options && (c.options as any).name === 'planned_quantity')
+      );
+      assert.ok(plannedQtyCol, 'plannedQuantity column must exist');
+      assert.strictEqual(plannedQtyCol.options.precision, 18);
+      assert.strictEqual(plannedQtyCol.options.scale, 6);
+
+      const indices = getMetadataArgsStorage().indices.filter(
+        (idx) => idx.target === ProductionTemplatePatternOptionTaskMaterialEntity
+      );
+      const uqIdx = indices.find((idx) => idx.name === 'UQ_production_pattern_task_material_task_unit');
+      assert.ok(uqIdx, 'Unique index UQ_production_pattern_task_material_task_unit must exist in metadata');
+      assert.strictEqual(uqIdx.unique, true);
     });
   });
 
@@ -496,4 +536,942 @@ describe('Production Template Mixed Workflow, Patterns & Options Architecture In
       );
     });
   });
+
+  // ========================================================
+  // 9. REORDER RESPONSE CONSISTENCY & MANAGER-AWARE READS
+  // ========================================================
+  describe('9. Reorder Response Consistency & Manager-Aware Reads', () => {
+    const createBaseRepo = (overrides: any = {}) => ({
+      findOne: async () => ({
+        id: 'mock-id',
+        templateId: 'tmpl-1',
+        patternId: 'pat-1',
+        optionId: 'opt-1',
+        taskId: 'tsk-1',
+        deletedAt: null,
+      }),
+      find: async () => [],
+      count: async () => 0,
+      createQueryBuilder: () => ({
+        select: () => ({
+          addSelect: () => ({
+            where: () => ({
+              groupBy: () => ({
+                getRawMany: async () => [],
+              }),
+            }),
+          }),
+        }),
+      }),
+      ...overrides,
+    });
+
+    it('reorderWorkflow returns updated sortOrder 1..N reflecting new order [C, A, B] using same manager', async () => {
+      const itemsMap: Record<string, any> = {
+        'wf-A': { id: 'wf-A', templateId: 'tmpl-1', itemType: 'STAGE', stageId: 'stg-A', patternId: null, sortOrder: 1, deletedAt: null, stage: { id: 'stg-A', templateId: 'tmpl-1', name: 'Stage A', departmentId: 'dept-1', deletedAt: null } },
+        'wf-B': { id: 'wf-B', templateId: 'tmpl-1', itemType: 'STAGE', stageId: 'stg-B', patternId: null, sortOrder: 2, deletedAt: null, stage: { id: 'stg-B', templateId: 'tmpl-1', name: 'Stage B', departmentId: 'dept-1', deletedAt: null } },
+        'wf-C': { id: 'wf-C', templateId: 'tmpl-1', itemType: 'STAGE', stageId: 'stg-C', patternId: null, sortOrder: 3, deletedAt: null, stage: { id: 'stg-C', templateId: 'tmpl-1', name: 'Stage C', departmentId: 'dept-1', deletedAt: null } },
+      };
+
+      let managerUsedInRead = false;
+      const mockManager = {
+        findOne: async (_entity: any, opts: any) => {
+          if (opts?.lock?.mode === 'pessimistic_write') {
+            return { id: 'tmpl-1', deletedAt: null };
+          }
+          return null;
+        },
+        find: async () => Object.values(itemsMap),
+        update: async (_entity: any, criteria: any, updateObj: any) => {
+          if (itemsMap[criteria.id]) {
+            itemsMap[criteria.id].sortOrder = updateObj.sortOrder;
+          }
+        },
+        getRepository: (entity: any) => {
+          managerUsedInRead = true;
+          if (entity === ProductionTemplateEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'tmpl-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplateWorkflowItemEntity) {
+            return createBaseRepo({
+              find: async () => Object.values(itemsMap).slice().sort((a, b) => a.sortOrder - b.sortOrder),
+            });
+          }
+          return createBaseRepo();
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => createBaseRepo({
+          find: async () => {
+            throw new Error('Global repository must not be called inside transaction');
+          },
+        }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const wfService = new ProductionTemplateWorkflowService(mockDs, guard);
+
+      const result = await wfService.reorderWorkflow('tmpl-1', ['wf-C', 'wf-A', 'wf-B']);
+      assert.strictEqual(managerUsedInRead, true);
+      assert.strictEqual(result.length, 3);
+      assert.strictEqual(result[0].id, 'wf-C');
+      assert.strictEqual(result[0].sortOrder, 1);
+      assert.strictEqual(result[1].id, 'wf-A');
+      assert.strictEqual(result[1].sortOrder, 2);
+      assert.strictEqual(result[2].id, 'wf-B');
+      assert.strictEqual(result[2].sortOrder, 3);
+    });
+
+    it('reorderOptions returns updated sortOrder 1..N reflecting new order [C, A, B] using same manager', async () => {
+      const optionsMap: Record<string, any> = {
+        'opt-A': { id: 'opt-A', patternId: 'pat-1', name: 'Option A', sortOrder: 1, deletedAt: null, tasks: [] },
+        'opt-B': { id: 'opt-B', patternId: 'pat-1', name: 'Option B', sortOrder: 2, deletedAt: null, tasks: [] },
+        'opt-C': { id: 'opt-C', patternId: 'pat-1', name: 'Option C', sortOrder: 3, deletedAt: null, tasks: [] },
+      };
+
+      let managerUsedInRead = false;
+      const mockManager = {
+        findOne: async (_entity: any, opts: any) => {
+          if (opts?.lock?.mode === 'pessimistic_write') {
+            return { id: 'tmpl-1', deletedAt: null };
+          }
+          return null;
+        },
+        find: async () => Object.values(optionsMap),
+        update: async (_entity: any, criteria: any, updateObj: any) => {
+          if (optionsMap[criteria.id]) {
+            optionsMap[criteria.id].sortOrder = updateObj.sortOrder;
+          }
+        },
+        getRepository: (entity: any) => {
+          managerUsedInRead = true;
+          if (entity === ProductionTemplateEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'tmpl-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'pat-1', templateId: 'tmpl-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternOptionEntity) {
+            return createBaseRepo({
+              find: async () => Object.values(optionsMap).slice().sort((a, b) => a.sortOrder - b.sortOrder),
+            });
+          }
+          return createBaseRepo();
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => createBaseRepo({
+          find: async () => {
+            throw new Error('Global repository must not be called inside transaction');
+          },
+        }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const optionService = new ProductionTemplatePatternOptionService(mockDs, guard);
+
+      const result = await optionService.reorderOptions('tmpl-1', 'pat-1', {
+        optionIds: ['opt-C', 'opt-A', 'opt-B'],
+      });
+      assert.strictEqual(managerUsedInRead, true);
+      assert.strictEqual(result.length, 3);
+      assert.strictEqual(result[0].id, 'opt-C');
+      assert.strictEqual(result[0].sortOrder, 1);
+      assert.strictEqual(result[1].id, 'opt-A');
+      assert.strictEqual(result[1].sortOrder, 2);
+      assert.strictEqual(result[2].id, 'opt-B');
+      assert.strictEqual(result[2].sortOrder, 3);
+    });
+
+    it('reorderTasks returns updated sortOrder 1..N reflecting new order [C, A, B] using same manager', async () => {
+      const tasksMap: Record<string, any> = {
+        'tsk-A': { id: 'tsk-A', optionId: 'opt-1', name: 'Task A', departmentId: 'dept-1', sortOrder: 1, deletedAt: null },
+        'tsk-B': { id: 'tsk-B', optionId: 'opt-1', name: 'Task B', departmentId: 'dept-1', sortOrder: 2, deletedAt: null },
+        'tsk-C': { id: 'tsk-C', optionId: 'opt-1', name: 'Task C', departmentId: 'dept-1', sortOrder: 3, deletedAt: null },
+      };
+
+      let managerUsedInRead = false;
+      const mockManager = {
+        findOne: async (_entity: any, opts: any) => {
+          if (opts?.lock?.mode === 'pessimistic_write') {
+            return { id: 'tmpl-1', deletedAt: null };
+          }
+          return null;
+        },
+        find: async () => Object.values(tasksMap),
+        update: async (_entity: any, criteria: any, updateObj: any) => {
+          if (tasksMap[criteria.id]) {
+            tasksMap[criteria.id].sortOrder = updateObj.sortOrder;
+          }
+        },
+        getRepository: (entity: any) => {
+          managerUsedInRead = true;
+          if (entity === ProductionTemplateEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'tmpl-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'pat-1', templateId: 'tmpl-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternOptionEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'opt-1', patternId: 'pat-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternOptionTaskEntity) {
+            return createBaseRepo({
+              find: async () => Object.values(tasksMap).slice().sort((a, b) => a.sortOrder - b.sortOrder),
+            });
+          }
+          return createBaseRepo();
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => createBaseRepo({
+          find: async () => {
+            throw new Error('Global repository must not be called inside transaction');
+          },
+        }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const taskService = new ProductionTemplatePatternOptionTaskService(
+        mockDs,
+        { validateDepartmentForStage: async () => {} } as any,
+        guard
+      );
+
+      const result = await taskService.reorderTasks('tmpl-1', 'pat-1', 'opt-1', {
+        taskIds: ['tsk-C', 'tsk-A', 'tsk-B'],
+      });
+      assert.strictEqual(managerUsedInRead, true);
+      assert.strictEqual(result.length, 3);
+      assert.strictEqual(result[0].id, 'tsk-C');
+      assert.strictEqual(result[0].sortOrder, 1);
+      assert.strictEqual(result[1].id, 'tsk-A');
+      assert.strictEqual(result[1].sortOrder, 2);
+      assert.strictEqual(result[2].id, 'tsk-B');
+      assert.strictEqual(result[2].sortOrder, 3);
+    });
+
+    it('reorderTaskAttachments returns updated sortOrder 1..N reflecting new order [C, A, B] using same manager', async () => {
+      const attMap: Record<string, any> = {
+        'att-A': { id: 'att-A', taskId: 'tsk-1', originalFileName: 'a.pdf', sortOrder: 1, deletedAt: null },
+        'att-B': { id: 'att-B', taskId: 'tsk-1', originalFileName: 'b.pdf', sortOrder: 2, deletedAt: null },
+        'att-C': { id: 'att-C', taskId: 'tsk-1', originalFileName: 'c.pdf', sortOrder: 3, deletedAt: null },
+      };
+
+      let managerUsedInRead = false;
+      const mockManager = {
+        findOne: async (_entity: any, opts: any) => {
+          if (opts?.lock?.mode === 'pessimistic_write') {
+            return { id: 'tmpl-1', deletedAt: null };
+          }
+          return null;
+        },
+        find: async () => Object.values(attMap),
+        update: async (_entity: any, criteria: any, updateObj: any) => {
+          if (attMap[criteria.id]) {
+            attMap[criteria.id].sortOrder = updateObj.sortOrder;
+          }
+        },
+        getRepository: (entity: any) => {
+          managerUsedInRead = true;
+          if (entity === ProductionTemplateEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'tmpl-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'pat-1', templateId: 'tmpl-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternOptionEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'opt-1', patternId: 'pat-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternOptionTaskEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'tsk-1', optionId: 'opt-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplatePatternOptionTaskAttachmentEntity) {
+            return createBaseRepo({
+              find: async () => Object.values(attMap).slice().sort((a, b) => a.sortOrder - b.sortOrder),
+            });
+          }
+          return createBaseRepo();
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => createBaseRepo({
+          find: async () => {
+            throw new Error('Global repository must not be called inside transaction');
+          },
+        }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const attService = new ProductionTemplatePatternOptionTaskAttachmentService(
+        mockDs,
+        new ProductionTemplateReferenceFileStorageService(),
+        guard
+      );
+
+      const result = await attService.reorderTaskAttachments('tmpl-1', 'pat-1', 'opt-1', 'tsk-1', {
+        attachmentIds: ['att-C', 'att-A', 'att-B'],
+      });
+      assert.strictEqual(managerUsedInRead, true);
+      assert.strictEqual(result.length, 3);
+      assert.strictEqual(result[0].id, 'att-C');
+      assert.strictEqual(result[0].sortOrder, 1);
+      assert.strictEqual(result[1].id, 'att-A');
+      assert.strictEqual(result[1].sortOrder, 2);
+      assert.strictEqual(result[2].id, 'att-B');
+      assert.strictEqual(result[2].sortOrder, 3);
+    });
+
+    it('reorderStages (legacy) returns updated sortOrder 1..N reflecting new order [C, A, B] using same manager', async () => {
+      const wfMap: Record<string, any> = {
+        'stg-A': { id: 'wf-A', templateId: 'tmpl-1', itemType: 'STAGE', stageId: 'stg-A', sortOrder: 1, deletedAt: null },
+        'stg-B': { id: 'wf-B', templateId: 'tmpl-1', itemType: 'STAGE', stageId: 'stg-B', sortOrder: 2, deletedAt: null },
+        'stg-C': { id: 'wf-C', templateId: 'tmpl-1', itemType: 'STAGE', stageId: 'stg-C', sortOrder: 3, deletedAt: null },
+      };
+
+      const stagesMap: Record<string, any> = {
+        'stg-A': { id: 'stg-A', templateId: 'tmpl-1', name: 'Stage A', departmentId: 'dept-1', deletedAt: null, get workflowItem() { return wfMap['stg-A']; } },
+        'stg-B': { id: 'stg-B', templateId: 'tmpl-1', name: 'Stage B', departmentId: 'dept-1', deletedAt: null, get workflowItem() { return wfMap['stg-B']; } },
+        'stg-C': { id: 'stg-C', templateId: 'tmpl-1', name: 'Stage C', departmentId: 'dept-1', deletedAt: null, get workflowItem() { return wfMap['stg-C']; } },
+      };
+
+      let managerUsedInRead = false;
+      const mockManager = {
+        findOne: async (_entity: any, opts: any) => {
+          if (opts?.lock?.mode === 'pessimistic_write') {
+            return { id: 'tmpl-1', deletedAt: null };
+          }
+          return null;
+        },
+        find: async (entity: any) => {
+          if (entity === ProductionTemplateWorkflowItemEntity) {
+            return Object.values(wfMap);
+          }
+          return Object.values(stagesMap);
+        },
+        update: async (_entity: any, criteria: any, updateObj: any) => {
+          for (const item of Object.values(wfMap)) {
+            if (item.id === criteria.id) {
+              item.sortOrder = updateObj.sortOrder;
+            }
+          }
+        },
+        getRepository: (entity: any) => {
+          managerUsedInRead = true;
+          if (entity === ProductionTemplateEntity) {
+            return createBaseRepo({ findOne: async () => ({ id: 'tmpl-1', deletedAt: null }) });
+          }
+          if (entity === ProductionTemplateWorkflowItemEntity) {
+            return createBaseRepo({
+              count: async () => 0, // No patterns
+            });
+          }
+          if (entity === ProductionTemplateStageEntity) {
+            return createBaseRepo({
+              find: async () => {
+                return Object.values(stagesMap).slice().sort((a, b) => {
+                  return (a.workflowItem?.sortOrder || 0) - (b.workflowItem?.sortOrder || 0);
+                });
+              },
+            });
+          }
+          return createBaseRepo();
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => createBaseRepo({
+          find: async () => {
+            throw new Error('Global repository must not be called inside transaction');
+          },
+        }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const wfService = new ProductionTemplateWorkflowService(mockDs, guard);
+      const stageService = new ProductionTemplateStageService(
+        mockDs,
+        { validateDepartmentForStage: async () => {} } as any,
+        guard,
+        wfService
+      );
+
+      const result = await stageService.reorderStages('tmpl-1', {
+        stageIds: ['stg-C', 'stg-A', 'stg-B'],
+      });
+      assert.strictEqual(managerUsedInRead, true);
+      assert.strictEqual(result.length, 3);
+      assert.strictEqual(result[0].id, 'stg-C');
+      assert.strictEqual(result[0].sortOrder, 1);
+      assert.strictEqual(result[1].id, 'stg-A');
+      assert.strictEqual(result[1].sortOrder, 2);
+      assert.strictEqual(result[2].id, 'stg-B');
+      assert.strictEqual(result[2].sortOrder, 3);
+    });
+  });
+
+  // ========================================================
+  // 10. BATCHED REFERENCE COUNTS & ZERO ARRAY OVER-FETCH
+  // ========================================================
+  describe('10. Batched Reference Counts & Zero Array Over-Fetch', () => {
+    it('loadTaskReferenceCounts batches queries by task_id and ignores soft-deleted attachments', async () => {
+      let matWhereClause = '';
+      let attWhereClause = '';
+
+      const mockDs = {
+        getRepository: (entity: any) => {
+          if (entity === ProductionTemplatePatternOptionTaskMaterialEntity) {
+            return {
+              createQueryBuilder: () => ({
+                select: () => ({
+                  addSelect: () => ({
+                    where: (w: string) => {
+                      matWhereClause = w;
+                      return {
+                        groupBy: () => ({
+                          getRawMany: async () => [
+                            { taskId: 'task-1', cnt: '2' },
+                          ],
+                        }),
+                      };
+                    },
+                  }),
+                }),
+              }),
+            };
+          }
+          if (entity === ProductionTemplatePatternOptionTaskAttachmentEntity) {
+            return {
+              createQueryBuilder: () => ({
+                select: () => ({
+                  addSelect: () => ({
+                    where: (w: string) => {
+                      attWhereClause = w;
+                      return {
+                        groupBy: () => ({
+                          getRawMany: async () => [
+                            { taskId: 'task-1', cnt: '3' }, // 3 active, 1 archived ignored
+                            { taskId: 'task-2', cnt: '1' },
+                          ],
+                        }),
+                      };
+                    },
+                  }),
+                }),
+              }),
+            };
+          }
+          return {} as any;
+        },
+      } as any;
+
+      const counts = await loadTaskReferenceCounts(['task-1', 'task-2'], mockDs);
+      assert.ok(matWhereClause.includes('mat.taskId IN (:...taskIds)'));
+      assert.ok(attWhereClause.includes('att.taskId IN (:...taskIds) AND att.deletedAt IS NULL'));
+
+      const t1 = counts.get('task-1');
+      assert.ok(t1);
+      assert.strictEqual(t1.plannedMaterialsCount, 2);
+      assert.strictEqual(t1.attachmentsCount, 3);
+
+      const t2 = counts.get('task-2');
+      assert.ok(t2);
+      assert.strictEqual(t2.plannedMaterialsCount, 0);
+      assert.strictEqual(t2.attachmentsCount, 1);
+    });
+
+    it('listWorkflowItems calculates stage counts in batch without loading full material/attachment arrays', async () => {
+      const mockItems = [
+        {
+          id: 'wf-1',
+          templateId: 'tmpl-1',
+          itemType: 'STAGE',
+          sortOrder: 1,
+          stageId: 'stg-1',
+          patternId: null,
+          deletedAt: null,
+          stage: {
+            id: 'stg-1',
+            templateId: 'tmpl-1',
+            name: 'Stage 1',
+            departmentId: 'dept-1',
+            deletedAt: null,
+            department: { id: 'dept-1', name: 'الصب', code: 'CAST' },
+            // Notice: plannedMaterials and attachments are NOT loaded as arrays
+          },
+        },
+      ];
+
+      const mockDs = {
+        getRepository: (entity: any) => {
+          if (entity === ProductionTemplateEntity) {
+            return {
+              findOne: async () => ({ id: 'tmpl-1', deletedAt: null }),
+            };
+          }
+          if (entity === ProductionTemplateWorkflowItemEntity) {
+            return {
+              find: async () => mockItems,
+            };
+          }
+          if (entity === ProductionTemplateStageMaterialEntity) {
+            return {
+              createQueryBuilder: () => ({
+                select: () => ({
+                  addSelect: () => ({
+                    where: () => ({
+                      groupBy: () => ({
+                        getRawMany: async () => [
+                          { stageId: 'stg-1', cnt: '4' },
+                        ],
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (entity === ProductionTemplateStageAttachmentEntity) {
+            return {
+              createQueryBuilder: () => ({
+                select: () => ({
+                  addSelect: () => ({
+                    where: () => ({
+                      groupBy: () => ({
+                        getRawMany: async () => [
+                          { stageId: 'stg-1', cnt: '2' },
+                        ],
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return { findOne: async () => null } as any;
+        },
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const wfService = new ProductionTemplateWorkflowService(mockDs, guard);
+
+      const result = await wfService.listWorkflowItems('tmpl-1');
+      assert.strictEqual(result.length, 1);
+      assert.strictEqual(result[0].stage?.plannedMaterialsCount, 4);
+      assert.strictEqual(result[0].stage?.attachmentsCount, 2);
+      assert.strictEqual((result[0].stage as any).plannedMaterials, undefined);
+      assert.strictEqual((result[0].stage as any).attachments, undefined);
+    });
+
+    it('listPatterns populates initial builder pattern tasks with batched counts (no 0 badges)', async () => {
+      const mockPattern = {
+        id: 'pat-1',
+        templateId: 'tmpl-1',
+        name: 'نوع الصب',
+        deletedAt: null,
+        options: [
+          {
+            id: 'opt-1',
+            patternId: 'pat-1',
+            name: 'صب مسبق',
+            sortOrder: 1,
+            deletedAt: null,
+            tasks: [
+              {
+                id: 'task-1',
+                optionId: 'opt-1',
+                name: 'تجهيز القالب',
+                departmentId: 'dept-1',
+                sortOrder: 1,
+                deletedAt: null,
+              },
+            ],
+          },
+        ],
+      };
+
+      const mockDs = {
+        getRepository: (entity: any) => {
+          if (entity === ProductionTemplatePatternEntity) {
+            return {
+              find: async () => [mockPattern],
+            };
+          }
+          if (entity === ProductionTemplatePatternOptionTaskMaterialEntity) {
+            return {
+              createQueryBuilder: () => ({
+                select: () => ({
+                  addSelect: () => ({
+                    where: () => ({
+                      groupBy: () => ({
+                        getRawMany: async () => [{ taskId: 'task-1', cnt: '2' }],
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (entity === ProductionTemplatePatternOptionTaskAttachmentEntity) {
+            return {
+              createQueryBuilder: () => ({
+                select: () => ({
+                  addSelect: () => ({
+                    where: () => ({
+                      groupBy: () => ({
+                        getRawMany: async () => [{ taskId: 'task-1', cnt: '3' }],
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return { findOne: async () => ({ id: 'tmpl-1', deletedAt: null }) } as any;
+        },
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const patternService = new ProductionTemplatePatternService(
+        mockDs,
+        guard,
+        new ProductionTemplateWorkflowService(mockDs, guard)
+      );
+
+      const patterns = await patternService.listPatterns('tmpl-1');
+      assert.strictEqual(patterns.length, 1);
+      const taskDto = patterns[0].options?.[0]?.tasks?.[0];
+      assert.ok(taskDto);
+      assert.strictEqual(taskDto.plannedMaterialsCount, 2);
+      assert.strictEqual(taskDto.attachmentsCount, 3);
+    });
+  });
+
+  // ========================================================
+  // 11. PLANNED MATERIAL QUANTITY PRECISION INVARIANTS
+  // ========================================================
+  describe('11. Task Planned Material Quantity 6-Decimal Precision Invariants', () => {
+    it('AddTemplatePatternOptionTaskMaterialDto allows 6 decimal places (0.000001)', async () => {
+      const dto = plainToInstance(AddTemplatePatternOptionTaskMaterialDto, {
+        productId: '11111111-1111-4111-8111-111111111111',
+        productUnitId: '22222222-2222-4222-8222-222222222222',
+        plannedQuantity: '0.000001',
+      });
+      const errors = await validate(dto);
+      assert.strictEqual(errors.length, 0);
+    });
+
+    it('AddTemplatePatternOptionTaskMaterialDto rejects more than 6 decimal places (0.0000001)', async () => {
+      const dto = plainToInstance(AddTemplatePatternOptionTaskMaterialDto, {
+        productId: '11111111-1111-4111-8111-111111111111',
+        productUnitId: '22222222-2222-4222-8222-222222222222',
+        plannedQuantity: '0.0000001',
+      });
+      const errors = await validate(dto);
+      assert.strictEqual(errors.length > 0, true);
+    });
+
+    it('AddTemplatePatternOptionTaskMaterialDto allows up to 12 integer digits with 6 decimals', async () => {
+      const dto = plainToInstance(AddTemplatePatternOptionTaskMaterialDto, {
+        productId: '11111111-1111-4111-8111-111111111111',
+        productUnitId: '22222222-2222-4222-8222-222222222222',
+        plannedQuantity: '999999999999.999999',
+      });
+      const errors = await validate(dto);
+      assert.strictEqual(errors.length, 0);
+    });
+
+    it('AddTemplatePatternOptionTaskMaterialDto rejects more than 12 integer digits', async () => {
+      const dto = plainToInstance(AddTemplatePatternOptionTaskMaterialDto, {
+        productId: '11111111-1111-4111-8111-111111111111',
+        productUnitId: '22222222-2222-4222-8222-222222222222',
+        plannedQuantity: '1000000000000.000000',
+      });
+      const errors = await validate(dto);
+      assert.strictEqual(errors.length > 0, true);
+    });
+  });
+
+  // ========================================================
+  // 12. TASK ATTACHMENT SECURITY & STORAGE LIFECYCLE INVARIANTS
+  // ========================================================
+  describe('12. Task Attachment Security & Storage Lifecycle Invariants', () => {
+    const tempDir = path.join(process.cwd(), 'storage', 'test-temp-task-att');
+
+    before(() => {
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+    });
+
+    it('addTaskAttachment rejects MIME/extension mismatch and cleans temporary file', async () => {
+      const tempFile = path.join(tempDir, 'mismatch-test.pdf');
+      fs.writeFileSync(tempFile, 'fake pdf content');
+
+      const storageService = new ProductionTemplateReferenceFileStorageService();
+      const mockDs = {
+        getRepository: () => ({}),
+        transaction: async (cb: any) =>
+          cb({
+            findOne: async () => ({ id: 'tmpl-1', deletedAt: null }),
+            count: async () => 0,
+          }),
+      } as any;
+      const guard = {
+        lockMutableTemplate: async () => {},
+        requireTaskBelongsToOption: async () => {},
+      } as any;
+      const attService = new ProductionTemplatePatternOptionTaskAttachmentService(
+        mockDs,
+        storageService,
+        guard
+      );
+
+      await assert.rejects(
+        async () =>
+          attService.addTaskAttachment(
+            'tmpl-1',
+            'pat-1',
+            'opt-1',
+            'task-1',
+            {
+              originalname: 'mismatch-test.pdf',
+              mimetype: 'image/png', // Mismatch with .pdf extension
+              size: 100,
+              path: tempFile,
+            }
+          ),
+        { code: 'ATTACHMENT_MIME_EXTENSION_MISMATCH' }
+      );
+
+      // Temp file must be unlinked
+      assert.strictEqual(fs.existsSync(tempFile), false);
+    });
+
+    it('addTaskAttachment cleans temporary file and deletes final stored file on DB failure', async () => {
+      const tempFile = path.join(tempDir, 'db-fail-test.pdf');
+      fs.writeFileSync(tempFile, 'valid pdf buffer');
+
+      let savedStorageKey = '';
+      const storageService = new ProductionTemplateReferenceFileStorageService();
+      const originalSave = storageService.saveFileWithPrefix.bind(storageService);
+      storageService.saveFileWithPrefix = async (...args) => {
+        const res = await originalSave(...args);
+        savedStorageKey = res.storageKey;
+        return res;
+      };
+
+      const mockManager = {
+        findOne: async () => ({ id: 'tmpl-1', deletedAt: null }),
+        count: async () => 0,
+        create: (_entity: any, data: any) => data,
+        save: async () => {
+          throw new Error('Simulated DB failure after file write');
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({
+          findOne: async () => ({ id: 'tmpl-1', deletedAt: null }),
+        }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = {
+        lockMutableTemplate: async () => {},
+        requireTaskBelongsToOption: async () => {},
+      } as any;
+
+      const attService = new ProductionTemplatePatternOptionTaskAttachmentService(
+        mockDs,
+        storageService,
+        guard
+      );
+
+      await assert.rejects(
+        async () =>
+          attService.addTaskAttachment('tmpl-1', 'pat-1', 'opt-1', 'task-1', {
+            originalname: 'db-fail-test.pdf',
+            mimetype: 'application/pdf',
+            size: 16,
+            path: tempFile,
+            buffer: Buffer.from('valid pdf buffer'),
+          }),
+        /Simulated DB failure/
+      );
+
+      // Both temp file and final stored file must be deleted
+      assert.strictEqual(fs.existsSync(tempFile), false);
+      assert.strictEqual(storageService.fileExists(savedStorageKey), false);
+    });
+
+    it('addTaskAttachment successful upload persists final file, cleans temp, and returns DTO', async () => {
+      const tempFile = path.join(tempDir, 'success-test.pdf');
+      fs.writeFileSync(tempFile, 'successful pdf content');
+
+      const storageService = new ProductionTemplateReferenceFileStorageService();
+      let createdEntity: any = null;
+
+      const mockManager = {
+        findOne: async () => ({ id: 'tmpl-1', deletedAt: null }),
+        count: async () => 0,
+        create: (_entity: any, data: any) => {
+          createdEntity = { ...data, id: 'att-created-1', createdAt: new Date(), updatedAt: new Date() };
+          return createdEntity;
+        },
+        save: async (entity: any) => entity,
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({
+          findOne: async () => ({ id: 'tmpl-1', deletedAt: null }),
+        }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = {
+        lockMutableTemplate: async () => {},
+        requireTaskBelongsToOption: async () => {},
+      } as any;
+
+      const attService = new ProductionTemplatePatternOptionTaskAttachmentService(
+        mockDs,
+        storageService,
+        guard
+      );
+
+      const dto = await attService.addTaskAttachment('tmpl-1', 'pat-1', 'opt-1', 'task-1', {
+        originalname: 'success-test.pdf',
+        mimetype: 'application/pdf',
+        size: 23,
+        path: tempFile,
+        buffer: Buffer.from('successful pdf content'),
+      });
+
+      assert.strictEqual(dto.id, 'att-created-1');
+      assert.strictEqual(dto.originalFileName, 'success-test.pdf');
+      assert.strictEqual(fs.existsSync(tempFile), false); // Temp cleaned
+      assert.strictEqual(storageService.fileExists(createdEntity.storageKey), true); // Final file exists
+
+      // Cleanup final file
+      await storageService.deleteStoredFile(createdEntity.storageKey);
+    });
+
+    it('softDeleteTaskAttachment retains physical file on disk while setting deletedAt', async () => {
+      const storageService = new ProductionTemplateReferenceFileStorageService();
+      const saved = await storageService.saveFileWithPrefix('production-template-pattern-task', 'task-1', {
+        originalname: 'soft-del.pdf',
+        mimetype: 'application/pdf',
+        size: 10,
+        buffer: Buffer.from('soft-del-data'),
+      });
+
+      let softDeleteCalled = false;
+      const mockManager = {
+        findOne: async () => ({
+          id: 'att-1',
+          taskId: 'task-1',
+          storageKey: saved.storageKey,
+          deletedAt: null,
+        }),
+        softDelete: async (_entity: any, id: string) => {
+          if (id === 'att-1') softDeleteCalled = true;
+        },
+        find: async () => [],
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({
+          findOne: async () => ({ id: 'tmpl-1', deletedAt: null }),
+        }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = {
+        lockMutableTemplate: async () => {},
+        requireTaskBelongsToOption: async () => {},
+      } as any;
+
+      const attService = new ProductionTemplatePatternOptionTaskAttachmentService(
+        mockDs,
+        storageService,
+        guard
+      );
+
+      await attService.softDeleteTaskAttachment('tmpl-1', 'pat-1', 'opt-1', 'task-1', 'att-1');
+      assert.strictEqual(softDeleteCalled, true);
+      // Physical file MUST still exist after soft delete!
+      assert.strictEqual(storageService.fileExists(saved.storageKey), true);
+
+      // Cleanup
+      await storageService.deleteStoredFile(saved.storageKey);
+    });
+
+    it('getTaskAttachmentForDownload throws ATTACHMENT_FILE_MISSING when physical file is missing', async () => {
+      const storageService = new ProductionTemplateReferenceFileStorageService();
+      const mockRepo = {
+        findOne: async () => ({
+          id: 'att-1',
+          taskId: 'task-1',
+          originalFileName: 'missing.pdf',
+          storageKey: 'production-template-pattern-task/task-1/non-existent-file.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 1024,
+          deletedAt: null,
+        }),
+      };
+
+      const mockDs = {
+        getRepository: () => mockRepo,
+      } as any;
+
+      const guard = {
+        requireExistingTemplate: async () => {},
+        requireTaskBelongsToOption: async () => {},
+      } as any;
+
+      const attService = new ProductionTemplatePatternOptionTaskAttachmentService(
+        mockDs,
+        storageService,
+        guard
+      );
+
+      await assert.rejects(
+        async () =>
+          attService.getTaskAttachmentForDownload('tmpl-1', 'pat-1', 'opt-1', 'task-1', 'att-1'),
+        { code: 'ATTACHMENT_FILE_MISSING' }
+      );
+    });
+
+    it('getTaskAttachmentForDownload fails closed when parent template is archived', async () => {
+      const guard = {
+        requireExistingTemplate: async () => {
+          throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+        },
+        requireTaskBelongsToOption: async () => {},
+      } as any;
+
+      const attService = new ProductionTemplatePatternOptionTaskAttachmentService(
+        { getRepository: () => ({}) } as any,
+        new ProductionTemplateReferenceFileStorageService(),
+        guard
+      );
+
+      await assert.rejects(
+        async () =>
+          attService.getTaskAttachmentForDownload('tmpl-archived', 'pat-1', 'opt-1', 'task-1', 'att-1'),
+        { code: 'PRODUCTION_TEMPLATE_NOT_FOUND' }
+      );
+    });
+  });
 });
+

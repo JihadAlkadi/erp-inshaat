@@ -45,8 +45,8 @@
       - الترتيب مكثف ومتسلسل `sortOrder: 1..N`.
       - كل عنصر في سير العمل هو إما مرحلة مباشرة `STAGE` (`stage_id IS NOT NULL AND pattern_id IS NULL`) أو عقدة قرار/نمط `PATTERN` (`pattern_id IS NOT NULL AND stage_id IS NULL`).
       - محمي على مستوى قاعدة البيانات عبر Check Constraint: `CHK_prod_tmpl_wf_item_polymorphic`.
-      - فرادة الترتيب مضمونة بقيد فريد مركب: `UQ_prod_tmpl_wf_item_order (template_id, sort_order)`.
-      - كل مرحلة وكل نمط يرتبط بعنصر سير عمل واحد حصراً عبر قيود فريدة `UQ_prod_tmpl_wf_item_stage` و `UQ_prod_tmpl_wf_item_pattern`.
+      - سلامة وتتابع الترتيب مضمونان حصراً عبر قفل التزامن التشاؤمي لسجل القالب الأب (`ProductionTemplateEntity pessimistic write lock`) مع التحقق الدقيق من التبديل الكامل لعناصر الترتيب (`exact permutation validation`) وإعادة الترتيب المكثف (`dense reorder/compaction`). لا يوجد قيد UNIQUE مركب على `(template_id, sort_order)` على مستوى قاعدة البيانات لتفادي التعارض مع السجلات المؤرشفة ناعماً والاصطدام المؤقت أثناء التحديثات.
+      - كل مرحلة وكل نمط يرتبط بعنصر سير عمل واحد حصراً عبر قيود فريدة `UQ_production_workflow_item_stage` و `UQ_production_workflow_item_pattern`.
       - تم حذف عمود `sort_order` نهائياً من جدول `production_template_stage`؛ وأي ترتيب قديم للمراحل أصبح مشتقاً بصرياً ودلالياً من `workflowItem.sortOrder`.
   - **مجال الأنماط والخيارات والمهام (Pattern Domain: Pattern -> Options -> Tasks)**:
     > Pattern and Option have NO departmentId.
@@ -68,9 +68,9 @@
     - دالة `deriveMixedWorkflowGroups` تحافظ على منطق تجميع المراحل المتتالية التي تملك نفس `departmentId`.
     - وجود أي نمط (`Pattern`) يمثل فاصلاً بنيوياً صريحاً (Decision Node)، فيقطع التجميع فوراً؛ فلا يمكن دمج مرحلة صب تسبق النمط مع مرحلة صب تليه في نفس الكتلة البصرية.
   - **إعادة الترتيب وحماية المسار القديم (Workflow Reorder & Legacy Reorder Protection)**:
-    - تم توفير مسار موحد لإعادة ترتيب سير العمل بالكامل: `PUT /api/production/templates/:id/workflow/reorder`.
+    - تم توفير مسار موحد لإعادة ترتيب سير العمل بالكامل: `PATCH /api/production/templates/:id/workflow/reorder`.
     - يرسل العميل مصفوفة كاملة لمعرفات عناصر سير العمل (`workflowItemIds: string[]`).
-    - مسار إعادة ترتيب المراحل القديم `PUT /api/production/templates/:id/stages/reorder`:
+    - مسار إعادة ترتيب المراحل القديم `PATCH /api/production/templates/:id/stages/reorder`:
       - تم تعديله ليعمل عبر جدول `production_template_workflow_item`.
       - إذا كان القالب يحتوي على أي نمط نشط (`hasActivePatterns = true`)، يتم حظر استدعاء المسار القديم فوراً بـ `BusinessRuleError` والرمز الثابت `PRODUCTION_TEMPLATE_MIXED_WORKFLOW_REORDER_REQUIRED`.
   - **خدمة التخزين المرجعية المشتركة (Shared Reference File Storage Abstraction)**:
@@ -80,9 +80,11 @@
       - فحص توافق MIME Type مع الامتداد وقائمة الامتدادات البيضاء المعتمدة (PDF, PNG, JPG, JPEG, WEBP بحد أقصى 20 ميغابايت).
       - دورة الحياة الآمنة للتراجع وحذف الملفات المؤقتة والنهائية عند فشل المعاملات لمنع الملفات اليتيمة.
       - الحذف الناعم للوثائق المرجعية لحفظ الجاهزية التاريخية لأخذ اللقطات.
-    - ترث منها كل من:
-      - `TemplateStageAttachmentStorageService` لتخزين وثائق المراحل (`storage/template-stage-attachments/`).
-      - `ProductionTemplatePatternOptionTaskAttachmentService` لتخزين وثائق مهام الأنماط (`storage/template-task-attachments/`).
+    - يعتمد التخزين جذر التخزين المشترك `Shared FILE_STORAGE_ROOT` بالمسار الافتراضي المتوافق مع السجلات القديمة:
+      `storage/template-stage-attachments/`
+      مع استخدام بادئات منطقية مستقلة:
+      - `production-template-stage/` لوثائق مراحل القوالب.
+      - `production-template-pattern-task/` لوثائق مهام أنماط القوالب.
   - **حظر تسريب بيانات المستودعات في مواد المرحلة ومواد المهمة (Zero Inventory Data Leakage)**:
     - مسارات مواد المرحلة ومواد المهمة تعتمد خدمة `InventoryProductReferenceService` وترجع DTOs مخصصة:
       `ProductionTemplateStageMaterialDto` و `ProductionTemplatePatternOptionTaskMaterialDto`.

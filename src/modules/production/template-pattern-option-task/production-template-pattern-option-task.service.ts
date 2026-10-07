@@ -1,6 +1,8 @@
-import { DataSource, Repository, IsNull } from 'typeorm';
+import { DataSource, EntityManager, Repository, IsNull } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionTemplatePatternOptionTaskEntity } from './production-template-pattern-option-task.entity.js';
+import { ProductionTemplatePatternOptionTaskMaterialEntity } from '../template-pattern-option-task-material/production-template-pattern-option-task-material.entity.js';
+import { ProductionTemplatePatternOptionTaskAttachmentEntity } from '../template-pattern-option-task-attachment/production-template-pattern-option-task-attachment.entity.js';
 import {
   ProductionTemplateGuardService,
   productionTemplateGuardService,
@@ -17,6 +19,65 @@ import {
   toProductionTemplatePatternOptionTaskDto,
 } from './production-template-pattern-option-task.types.js';
 import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+
+/**
+ * Batched reference counts loader for tasks: planned materials and active attachments.
+ * Groups by task_id in two efficient queries (no N+1).
+ */
+export async function loadTaskReferenceCounts(
+  taskIds: string[],
+  dataSource: DataSource = AppDataSource,
+  manager?: EntityManager
+): Promise<Map<string, { plannedMaterialsCount: number; attachmentsCount: number }>> {
+  const result = new Map<string, { plannedMaterialsCount: number; attachmentsCount: number }>();
+  if (!taskIds || taskIds.length === 0) {
+    return result;
+  }
+
+  for (const id of taskIds) {
+    result.set(id, { plannedMaterialsCount: 0, attachmentsCount: 0 });
+  }
+
+  const matRepo = manager
+    ? manager.getRepository(ProductionTemplatePatternOptionTaskMaterialEntity)
+    : dataSource.getRepository(ProductionTemplatePatternOptionTaskMaterialEntity);
+
+  const matCounts = await matRepo
+    .createQueryBuilder('mat')
+    .select('mat.taskId', 'taskId')
+    .addSelect('COUNT(*)', 'cnt')
+    .where('mat.taskId IN (:...taskIds)', { taskIds })
+    .groupBy('mat.taskId')
+    .getRawMany<{ taskId: string; cnt: string | number }>();
+
+  for (const row of matCounts) {
+    const existing = result.get(row.taskId);
+    if (existing) {
+      existing.plannedMaterialsCount = Number(row.cnt);
+    }
+  }
+
+  const attRepo = manager
+    ? manager.getRepository(ProductionTemplatePatternOptionTaskAttachmentEntity)
+    : dataSource.getRepository(ProductionTemplatePatternOptionTaskAttachmentEntity);
+
+  const attCounts = await attRepo
+    .createQueryBuilder('att')
+    .select('att.taskId', 'taskId')
+    .addSelect('COUNT(*)', 'cnt')
+    .where('att.taskId IN (:...taskIds) AND att.deletedAt IS NULL', { taskIds })
+    .groupBy('att.taskId')
+    .getRawMany<{ taskId: string; cnt: string | number }>();
+
+  for (const row of attCounts) {
+    const existing = result.get(row.taskId);
+    if (existing) {
+      existing.attachmentsCount = Number(row.cnt);
+    }
+  }
+
+  return result;
+}
 
 export class ProductionTemplatePatternOptionTaskService {
   private taskRepo: Repository<ProductionTemplatePatternOptionTaskEntity>;
@@ -36,46 +97,70 @@ export class ProductionTemplatePatternOptionTaskService {
   async listTasks(
     templateId: string,
     patternId: string,
-    optionId: string
+    optionId: string,
+    manager?: EntityManager
   ): Promise<ProductionTemplatePatternOptionTaskDto[]> {
-    await this.guardService.requireOptionBelongsToPattern(templateId, patternId, optionId);
+    await this.guardService.requireOptionBelongsToPattern(templateId, patternId, optionId, manager);
 
-    const tasks = await this.taskRepo.find({
+    const repo = manager
+      ? manager.getRepository(ProductionTemplatePatternOptionTaskEntity)
+      : this.taskRepo;
+
+    const tasks = await repo.find({
       where: { optionId, deletedAt: IsNull() },
       relations: {
         department: true,
-        plannedMaterials: true,
-        attachments: true,
       },
       order: { sortOrder: 'ASC' },
     });
 
-    return tasks.map((t) => toProductionTemplatePatternOptionTaskDto(t));
+    const taskIds = tasks.map((t) => t.id);
+    const countMap = await loadTaskReferenceCounts(taskIds, this.dataSource, manager);
+
+    return tasks.map((t) => {
+      const counts = countMap.get(t.id);
+      return toProductionTemplatePatternOptionTaskDto(
+        t,
+        counts?.plannedMaterialsCount,
+        counts?.attachmentsCount
+      );
+    });
   }
 
   async getTaskById(
     templateId: string,
     patternId: string,
     optionId: string,
-    taskId: string
+    taskId: string,
+    manager?: EntityManager
   ): Promise<ProductionTemplatePatternOptionTaskDto> {
-    const { task } = await this.guardService.requireTaskBelongsToOption(
+    await this.guardService.requireTaskBelongsToOption(
       templateId,
       patternId,
       optionId,
-      taskId
+      taskId,
+      manager
     );
 
-    const reloaded = await this.taskRepo.findOneOrFail({
-      where: { id: task.id },
+    const repo = manager
+      ? manager.getRepository(ProductionTemplatePatternOptionTaskEntity)
+      : this.taskRepo;
+
+    const task = await repo.findOneOrFail({
+      where: { id: taskId, optionId, deletedAt: IsNull() },
       relations: {
         department: true,
-        plannedMaterials: true,
-        attachments: true,
       },
     });
 
-    return toProductionTemplatePatternOptionTaskDto(reloaded);
+    const countMap = await loadTaskReferenceCounts([task.id], this.dataSource, manager);
+    const counts = countMap.get(task.id);
+
+    return toProductionTemplatePatternOptionTaskDto(
+      task,
+      counts?.plannedMaterialsCount,
+      counts?.attachmentsCount
+    );
   }
 
   async addTask(
@@ -176,12 +261,17 @@ export class ProductionTemplatePatternOptionTaskService {
         where: { id: taskId },
         relations: {
           department: true,
-          plannedMaterials: true,
-          attachments: true,
         },
       });
 
-      return toProductionTemplatePatternOptionTaskDto(reloaded);
+      const countMap = await loadTaskReferenceCounts([taskId], this.dataSource, manager);
+      const counts = countMap.get(taskId);
+
+      return toProductionTemplatePatternOptionTaskDto(
+        reloaded,
+        counts?.plannedMaterialsCount,
+        counts?.attachmentsCount
+      );
     });
   }
 
@@ -274,7 +364,7 @@ export class ProductionTemplatePatternOptionTaskService {
         );
       }
 
-      return await this.listTasks(templateId, patternId, optionId);
+      return await this.listTasks(templateId, patternId, optionId, manager);
     });
   }
 }

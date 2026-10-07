@@ -1,4 +1,4 @@
-import { DataSource, Repository, IsNull } from 'typeorm';
+import { DataSource, EntityManager, Repository, IsNull } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionTemplatePatternOptionTaskAttachmentEntity } from './production-template-pattern-option-task-attachment.entity.js';
 import {
@@ -37,16 +37,22 @@ export class ProductionTemplatePatternOptionTaskAttachmentService {
     templateId: string,
     patternId: string,
     optionId: string,
-    taskId: string
+    taskId: string,
+    manager?: EntityManager
   ): Promise<ProductionTemplatePatternOptionTaskAttachmentDto[]> {
     await this.guardService.requireTaskBelongsToOption(
       templateId,
       patternId,
       optionId,
-      taskId
+      taskId,
+      manager
     );
 
-    const attachments = await this.attachmentRepo.find({
+    const repo = manager
+      ? manager.getRepository(ProductionTemplatePatternOptionTaskAttachmentEntity)
+      : this.attachmentRepo;
+
+    const attachments = await repo.find({
       where: { taskId, deletedAt: IsNull() },
       order: { sortOrder: 'ASC', createdAt: 'ASC' },
     });
@@ -298,7 +304,7 @@ export class ProductionTemplatePatternOptionTaskAttachmentService {
         );
       }
 
-      return await this.listTaskAttachments(templateId, patternId, optionId, taskId);
+      return await this.listTaskAttachments(templateId, patternId, optionId, taskId, manager);
     });
   }
 

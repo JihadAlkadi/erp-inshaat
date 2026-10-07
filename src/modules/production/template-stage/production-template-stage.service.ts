@@ -1,4 +1,4 @@
-import { DataSource, Repository, IsNull } from 'typeorm';
+import { DataSource, Repository, EntityManager, IsNull } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionTemplateStageEntity } from './production-template-stage.entity.js';
 import { ProductionTemplateWorkflowItemEntity } from '../template-workflow-item/production-template-workflow-item.entity.js';
@@ -42,10 +42,16 @@ export class ProductionTemplateStageService {
     this.workflowService = workflowService;
   }
 
-  async listStages(templateId: string): Promise<ProductionTemplateStageDto[]> {
-    await this.guardService.requireExistingTemplate(templateId);
+  async listStages(
+    templateId: string,
+    manager?: EntityManager
+  ): Promise<ProductionTemplateStageDto[]> {
+    await this.guardService.requireExistingTemplate(templateId, manager);
 
-    const stages = await this.stageRepo.find({
+    const repo: Repository<ProductionTemplateStageEntity> = manager
+      ? manager.getRepository(ProductionTemplateStageEntity)
+      : this.stageRepo;
+    const stages: ProductionTemplateStageEntity[] = await repo.find({
       where: { templateId, deletedAt: IsNull() },
       relations: {
         department: true,
@@ -58,12 +64,12 @@ export class ProductionTemplateStageService {
     });
 
     const activeStages = stages
-      .filter((s) => s.workflowItem && !s.workflowItem.deletedAt)
-      .map((s) => {
+      .filter((s: ProductionTemplateStageEntity) => s.workflowItem && !s.workflowItem.deletedAt)
+      .map((s: ProductionTemplateStageEntity) => {
         s.sortOrder = s.workflowItem?.sortOrder ?? 1;
         return s;
       })
-      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      .sort((a: ProductionTemplateStageEntity, b: ProductionTemplateStageEntity) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
     return activeStages.map(toProductionTemplateStageDto);
   }
@@ -257,7 +263,7 @@ export class ProductionTemplateStageService {
         );
       }
 
-      return await this.listStages(templateId);
+      return await this.listStages(templateId, manager);
     });
   }
 }

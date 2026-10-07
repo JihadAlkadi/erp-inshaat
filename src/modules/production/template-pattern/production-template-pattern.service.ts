@@ -1,4 +1,4 @@
-import { DataSource, Repository, IsNull } from 'typeorm';
+import { DataSource, EntityManager, Repository, IsNull } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionTemplatePatternEntity } from './production-template-pattern.entity.js';
 import {
@@ -17,6 +17,7 @@ import {
 } from './production-template-pattern.types.js';
 import { toProductionTemplatePatternOptionDto } from '../template-pattern-option/production-template-pattern-option.types.js';
 import { toProductionTemplatePatternOptionTaskDto } from '../template-pattern-option-task/production-template-pattern-option-task.types.js';
+import { loadTaskReferenceCounts } from '../template-pattern-option-task/production-template-pattern-option-task.service.js';
 
 export class ProductionTemplatePatternService {
   private patternRepo: Repository<ProductionTemplatePatternEntity>;
@@ -33,10 +34,17 @@ export class ProductionTemplatePatternService {
     this.workflowService = workflowService;
   }
 
-  async listPatterns(templateId: string): Promise<ProductionTemplatePatternDto[]> {
-    await this.guardService.requireExistingTemplate(templateId);
+  async listPatterns(
+    templateId: string,
+    manager?: EntityManager
+  ): Promise<ProductionTemplatePatternDto[]> {
+    await this.guardService.requireExistingTemplate(templateId, manager);
 
-    const patterns = await this.patternRepo.find({
+    const repo = manager
+      ? manager.getRepository(ProductionTemplatePatternEntity)
+      : this.patternRepo;
+
+    const patterns = await repo.find({
       where: { templateId, deletedAt: IsNull() },
       relations: {
         options: {
@@ -48,6 +56,21 @@ export class ProductionTemplatePatternService {
       order: { createdAt: 'ASC' },
     });
 
+    const allTaskIds: string[] = [];
+    for (const p of patterns) {
+      for (const opt of p.options || []) {
+        if (!opt.deletedAt) {
+          for (const t of opt.tasks || []) {
+            if (!t.deletedAt) {
+              allTaskIds.push(t.id);
+            }
+          }
+        }
+      }
+    }
+
+    const countMap = await loadTaskReferenceCounts(allTaskIds, this.dataSource, manager);
+
     return patterns.map((p) => {
       const activeOptions = (p.options || [])
         .filter((o) => !o.deletedAt)
@@ -56,28 +79,58 @@ export class ProductionTemplatePatternService {
           const activeTasks = (opt.tasks || [])
             .filter((t) => !t.deletedAt)
             .sort((a, b) => a.sortOrder - b.sortOrder)
-            .map((t) => toProductionTemplatePatternOptionTaskDto(t));
+            .map((t) => {
+              const counts = countMap.get(t.id);
+              return toProductionTemplatePatternOptionTaskDto(
+                t,
+                counts?.plannedMaterialsCount,
+                counts?.attachmentsCount
+              );
+            });
           return toProductionTemplatePatternOptionDto(opt, activeTasks);
         });
       return toProductionTemplatePatternDto(p, activeOptions);
     });
   }
 
-  async getPatternById(templateId: string, patternId: string): Promise<ProductionTemplatePatternDto> {
-    const { pattern } = await this.guardService.requirePatternBelongsToTemplate(templateId, patternId);
+  async getPatternById(
+    templateId: string,
+    patternId: string,
+    manager?: EntityManager
+  ): Promise<ProductionTemplatePatternDto> {
+    const { pattern } = await this.guardService.requirePatternBelongsToTemplate(
+      templateId,
+      patternId,
+      manager
+    );
 
-    const reloaded = await this.patternRepo.findOneOrFail({
+    const repo = manager
+      ? manager.getRepository(ProductionTemplatePatternEntity)
+      : this.patternRepo;
+
+    const reloaded = await repo.findOneOrFail({
       where: { id: pattern.id },
       relations: {
         options: {
           tasks: {
             department: true,
-            plannedMaterials: true,
-            attachments: true,
           },
         },
       },
     });
+
+    const allTaskIds: string[] = [];
+    for (const opt of reloaded.options || []) {
+      if (!opt.deletedAt) {
+        for (const t of opt.tasks || []) {
+          if (!t.deletedAt) {
+            allTaskIds.push(t.id);
+          }
+        }
+      }
+    }
+
+    const countMap = await loadTaskReferenceCounts(allTaskIds, this.dataSource, manager);
 
     const activeOptions = (reloaded.options || [])
       .filter((o) => !o.deletedAt)
@@ -86,7 +139,14 @@ export class ProductionTemplatePatternService {
         const activeTasks = (opt.tasks || [])
           .filter((t) => !t.deletedAt)
           .sort((a, b) => a.sortOrder - b.sortOrder)
-          .map((t) => toProductionTemplatePatternOptionTaskDto(t));
+          .map((t) => {
+            const counts = countMap.get(t.id);
+            return toProductionTemplatePatternOptionTaskDto(
+              t,
+              counts?.plannedMaterialsCount,
+              counts?.attachmentsCount
+            );
+          });
         return toProductionTemplatePatternOptionDto(opt, activeTasks);
       });
 
