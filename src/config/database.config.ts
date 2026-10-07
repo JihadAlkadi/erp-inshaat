@@ -18,6 +18,12 @@ import { ProductionTemplateSpecificationEntity } from '../modules/production/tem
 import { ProductionTemplateStageEntity } from '../modules/production/template-stage/production-template-stage.entity.js';
 import { ProductionTemplateStageMaterialEntity } from '../modules/production/template-stage-material/production-template-stage-material.entity.js';
 import { ProductionTemplateStageAttachmentEntity } from '../modules/production/template-stage-attachment/production-template-stage-attachment.entity.js';
+import { ProductionTemplateWorkflowItemEntity } from '../modules/production/template-workflow-item/production-template-workflow-item.entity.js';
+import { ProductionTemplatePatternEntity } from '../modules/production/template-pattern/production-template-pattern.entity.js';
+import { ProductionTemplatePatternOptionEntity } from '../modules/production/template-pattern-option/production-template-pattern-option.entity.js';
+import { ProductionTemplatePatternOptionTaskEntity } from '../modules/production/template-pattern-option-task/production-template-pattern-option-task.entity.js';
+import { ProductionTemplatePatternOptionTaskMaterialEntity } from '../modules/production/template-pattern-option-task-material/production-template-pattern-option-task-material.entity.js';
+import { ProductionTemplatePatternOptionTaskAttachmentEntity } from '../modules/production/template-pattern-option-task-attachment/production-template-pattern-option-task-attachment.entity.js';
 import { CreateSystemCoreTables1710000000000 } from '../database/migrations/1710000000000-CreateSystemCoreTables.js';
 import { CreateSystemSessionTable1710000000001 } from '../database/migrations/1710000000001-CreateSystemSessionTable.js';
 import { CreateProductionDepartmentsAndYards1710000000002 } from '../database/migrations/1710000000002-CreateProductionDepartmentsAndYards.js';
@@ -29,6 +35,7 @@ import { CreateStudiesTemplateCoreTables1710000000007 } from '../database/migrat
 import { MigrateStudiesToProductionTemplateTables1710000000008 } from '../database/migrations/1710000000008-MigrateStudiesToProductionTemplateTables.js';
 import { HardenProductionTemplateCoreAndStageAttachments1710000000009 } from '../database/migrations/1710000000009-HardenProductionTemplateCoreAndStageAttachments.js';
 import { FinalizeProductionTemplateHardening1710000000010 } from '../database/migrations/1710000000010-FinalizeProductionTemplateHardening.js';
+import { AddProductionTemplateMixedWorkflowPatterns1710000000011 } from '../database/migrations/1710000000011-AddProductionTemplateMixedWorkflowPatterns.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -58,6 +65,12 @@ export const databaseConfig: DataSourceOptions = {
     ProductionTemplateStageEntity,
     ProductionTemplateStageMaterialEntity,
     ProductionTemplateStageAttachmentEntity,
+    ProductionTemplateWorkflowItemEntity,
+    ProductionTemplatePatternEntity,
+    ProductionTemplatePatternOptionEntity,
+    ProductionTemplatePatternOptionTaskEntity,
+    ProductionTemplatePatternOptionTaskMaterialEntity,
+    ProductionTemplatePatternOptionTaskAttachmentEntity,
   ],
   migrations: [
     CreateSystemCoreTables1710000000000,
@@ -71,9 +84,7 @@ export const databaseConfig: DataSourceOptions = {
     MigrateStudiesToProductionTemplateTables1710000000008,
     HardenProductionTemplateCoreAndStageAttachments1710000000009,
     FinalizeProductionTemplateHardening1710000000010,
+    AddProductionTemplateMixedWorkflowPatterns1710000000011,
   ],
   subscribers: [],
 };
-
-
-
