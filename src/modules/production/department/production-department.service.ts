@@ -471,6 +471,23 @@ export class ProductionDepartmentService {
       code: d.code,
     }));
   }
+
+  async validateDepartmentForStage(departmentId: string): Promise<{ id: string; name: string; code: string }> {
+    const department = await this.departmentRepository.findOne({
+      where: { id: departmentId },
+      withDeleted: true,
+    });
+    if (!department) {
+      throw new NotFoundError('قسم الإنتاج المحدد غير موجود', 'PRODUCTION_TEMPLATE_STAGE_DEPARTMENT_NOT_FOUND');
+    }
+    if (department.deletedAt) {
+      throw new BusinessRuleError('قسم الإنتاج المحدد مؤرشف', 'PRODUCTION_TEMPLATE_STAGE_DEPARTMENT_ARCHIVED');
+    }
+    if (!department.isActive) {
+      throw new BusinessRuleError('قسم الإنتاج المحدد معطل', 'PRODUCTION_TEMPLATE_STAGE_DEPARTMENT_INACTIVE');
+    }
+    return { id: department.id, name: department.name, code: department.code };
+  }
 }
 
 export const productionDepartmentService = new ProductionDepartmentService();

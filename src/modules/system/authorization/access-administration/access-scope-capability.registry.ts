@@ -60,6 +60,18 @@ export const PERMISSION_SCOPE_CAPABILITIES: Record<string, AccessScopePresetType
     AccessScopePreset.CURRENT_PRODUCTION_DEPARTMENT,
     AccessScopePreset.SPECIFIC_PRODUCTION_DEPARTMENTS,
   ],
+  'production.template.view': [
+    AccessScopePreset.ALL,
+  ],
+  'production.template.create': [
+    AccessScopePreset.ALL,
+  ],
+  'production.template.update': [
+    AccessScopePreset.ALL,
+  ],
+  'production.template.delete': [
+    AccessScopePreset.ALL,
+  ],
 };
 
 export class AccessScopeCapabilityRegistry {

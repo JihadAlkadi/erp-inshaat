@@ -14,6 +14,7 @@ import { userPortfolioWebController } from '../modules/system/user/portfolio/use
 import { inventoryCategoryWebController } from '../modules/inventory/category/inventory-category.web.controller.js';
 import { inventoryProductWebController } from '../modules/inventory/product/inventory-product.web.controller.js';
 import { inventoryHomeWebController } from '../modules/inventory/inventory.web.controller.js';
+import { productionTemplateWebController } from '../modules/production/template/production-template.web.controller.js';
 
 const webRouter: Router = Router();
 
@@ -309,6 +310,44 @@ webRouter.get(
   requirePermission(SystemPermission.INVENTORY_PRODUCT_UPDATE),
   validateUuidParam('id'),
   inventoryProductWebController.renderProductEdit
+);
+
+// ==========================================
+// Production Templates Web Routes (/production/templates)
+// ==========================================
+
+// GET /production/templates - Templates List (Protected)
+webRouter.get(
+  '/production/templates',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_VIEW),
+  productionTemplateWebController.renderTemplatesList
+);
+
+// GET /production/templates/create - Create Template Page (Protected)
+webRouter.get(
+  '/production/templates/create',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_CREATE),
+  productionTemplateWebController.renderTemplateCreate
+);
+
+// GET /production/templates/:id - Template Details Page (Protected)
+webRouter.get(
+  '/production/templates/:id',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_VIEW),
+  validateUuidParam('id'),
+  productionTemplateWebController.renderTemplateShow
+);
+
+// GET /production/templates/:id/edit - Edit Template Page (Protected)
+webRouter.get(
+  '/production/templates/:id/edit',
+  requireWebAuth,
+  requirePermission(SystemPermission.PRODUCTION_TEMPLATE_UPDATE),
+  validateUuidParam('id'),
+  productionTemplateWebController.renderTemplateEdit
 );
 
 export { webRouter };

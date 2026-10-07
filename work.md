@@ -1,6 +1,90 @@
 # Project Technical Map
 
-## Current Project State
+- **قوالب ومراحل الإنتاج — Production Template Core & Template Builder Workspace** (`src/modules/production/`):
+  - **الهيكلية المعمارية والمجلدات المستقلة (Modular Monolith Structure)**:
+    - القوالب جزء أصيل من تطبيق الإنتاج (`Production Application`)، ولا يوجد تطبيق مستقل باسم Studies.
+    - النماذج مقسمة إلى 5 مجلدات مستقلة تماماً:
+      ```text
+      src/modules/production/template/
+      src/modules/production/template-specification/
+      src/modules/production/template-stage/
+      src/modules/production/template-stage-material/
+      src/modules/production/template-stage-attachment/
+      ```
+    - الجداول المعتمدة في قاعدة البيانات:
+      `production_template`, `production_template_specification`, `production_template_stage`, `production_template_stage_material`, `production_template_stage_attachment`.
+  - **تجربة المستخدم ومساحة العمل المتكاملة (Two-Step Flow & Single-Page Template Builder)**:
+    > Template creation is intentionally a two-step user flow:
+    > 1. Create minimal template identity.
+    > 2. Redirect directly to the Template Builder workspace where specifications, workflow stages, planned materials and stage reference documents are managed without leaving the page.
+    - صفحة الإنشاء `/production/templates/create` تقتصر فقط على الهوية الأساسية (الاسم، الكود، الرقم المرجعي، الوصف، الحالة)، وزر المتابعة `إنشاء ومتابعة إعداد القالب` ينقل المستخدم مباشرة إلى `/production/templates/:id`.
+    - صفحة القالب `/production/templates/:id` هي **Template Builder Workspace** واحدة متكاملة:
+      - تعديل البيانات الأساسية يتم عبر Modal فوري وحفظ API دون مغادرة الصفحة.
+      - شريط تنقل سلس وSticky بين أقسام الصفحة (`#template-info`, `#template-specifications`, `#template-workflow`).
+      - إدارة المواصفات وإعادة ترتيبها عبر Modals مخصصة.
+      - النقر على أي مرحلة يفتح **درج المرحلة الجانبي (Stage Offcanvas Drawer)** من 3 تبويبات:
+        1. معلومات المرحلة وتعديل القسم التشغيلي.
+        2. المواد المخططة مع أداة بحث في الكتالوج (Debounced Search) وترقيم (Pagination/Load More) وتحميل الوحدات عند الطلب (On-demand Unit Fetching).
+        3. الوثائق التنفيذية المرجعية مع الرفع والمشاهدة والتحميل والتنزيل وإعادة الترتيب.
+  - **قواعد ومحددات سير العمل ومراحل الإنتاج (Workflow & Stage Invariants)**:
+    > No sub-stages.
+    > Stages are globally ordered.
+    > departmentId belongs to Stage.
+    > Only consecutive stages with same departmentId are grouped visually.
+    > Same department may appear multiple times.
+    > No TemplateDepartmentSection entity exists.
+    - المراحل مرتبة عالمياً على مستوى القالب `sortOrder: 1..N` بترتيب مكثف (Dense Ordering).
+    - التجميع حسب القسم هو عرض بصري فقط للمراحل المتتالية التي تملك نفس `departmentId`.
+    - السحب والإفلات يغير الترتيب فقط داخل Transaction مع قفل تشاؤمي (`pessimistic_write`) على صف القالب، ولا يغير القسم بصمت.
+    - تغيير القسم التشغيلي للمرحلة يتم بإجراء صريح داخل نموذج تعديل المرحلة.
+  - **حظر تسريب بيانات المستودعات في مواد المرحلة (Stage Materials Data Leakage Elimination)**:
+    - مسارات مواد المرحلة ترجع DTO مخصص `ProductionTemplateStageMaterialDto` يحتوي حصراً:
+      `{ id, stageId, productId, productUnitId, plannedQuantity, product: { id, name, code }, productUnit: { id, name, isBase } }`.
+    - يمنع كلياً تسريب الحقول الداخلية لكتالوج المستودعات مثل: `price`, `barcode`, `locationName`, `specifications`, `conversionQuantity`.
+    - تفادي حد الـ 100 عنصر في اختيار المواد: يدعم الكتالوج البحث والتصفح والترقيم حتى للمنتجات التي تقع بعد أول 100 سجل.
+  - **الوثائق المرجعية للمرحلة وفصلها عن وثائق التنفيذ (Reference Documents vs Runtime Attachments)**:
+    > ProductionTemplateStageAttachment represents design/reference documentation attached to a template stage.
+    > It is not an execution attachment.
+    > Runtime engineer/supervisor attachments will use a separate Production Stage attachment model in a later phase.
+    - وثائق القالب المرجعية هي مخططات هندسية، صور، أو أدلة (PDF, PNG, JPG, WEBP بحد أقصى 20 ميغابايت) يضعها مصمم القالب.
+    - مستقبلاً عند تنفيذ الغرفة في خط الإنتاج، سيكون للمهندس وثائق تنفيذ مستقلة `ProductionStageAttachment`.
+    - خدمة التخزين `TemplateStageAttachmentStorageService` تخزن الملفات خارج المجلدات العامة بمفاتيح مبهمة مولدة (`production-template-stage/${stageId}/${uuid}.${ext}`) مع حماية تامة ضد Path Traversal باستخدام `path.relative`، والتحقق الصارم من تطابق نوع المحتوى والامتداد (MIME/Extension Compatibility Mapping)، وحظر الملفات التنفيذية.
+    - التنزيل محمي بالمصادقة والتحقق من التبعية وترويسة `X-Content-Type-Options: nosniff`، ويفشل مغلقاً بـ `ATTACHMENT_FILE_MISSING` إذا كان السجل موجوداً لكن الملف الفعلي مفقود.
+    - تستخدم الوثائق المرجعية الحذف الناعم (Soft Delete) لحفظ الجاهزية التاريخية لأخذ اللقطات مستقبلاً (Snapshot Readiness)، ولا يتم حذف الملف الفعلي نهائياً عند الأرشفة الناعمة.
+    - سلامة التراجع عن الرفع والملفات اليتيمة (Upload Rollback & Orphan File Prevention):
+      > Attachment upload is rollback-safe: temporary and final files are cleaned if validation or DB persistence fails.
+      - في حال فشل التحقق من الملف (MIME, Extension, Size, Description max 500 chars) يتم حذف ملف Multer المؤقت فوراً.
+      - في حال نجاح حفظ الملف في التخزين النهائي ثم فشل معاملة قاعدة البيانات (DB Transaction Failure)، يتم حذف الملف النهائي فوراً من التخزين وحذف الملف المؤقت منعاً لتراكم أي ملفات يتيمة على القرص.
+      - عند نجاح العملية بالكامل، يتم تنظيف ملف Multer المؤقت بشكل حتمي.
+  - **حدود واجهات برمجة التطبيقات ومنع تسريب الكيانات (API DTO Boundaries & Entity Exposure Prohibition)**:
+    > All public Production Template APIs return explicit DTOs and never expose ORM entities directly.
+    - كافة مسارات HTTP الخاصة بالقوالب والمواصفات والمراحل والمواد المخططة والوثائق المرجعية تعيد DTOs صريحة ومحددة (`ProductionTemplateDto`, `ProductionTemplateListItemDto`, `ProductionTemplateDetailDto`, `ProductionTemplateSpecificationDto`, `ProductionTemplateStageDto`, `ProductionTemplateStageMaterialDto`, `ProductionTemplateStageAttachmentDto`).
+    - يمنع كلياً إرجاع أي كائن TypeORM Entity مباشرة كعقد عام لـ API.
+    - واجهات المراحل تعيد كائن قسم مبسط `{ id, name, code }` ويحظر نهائياً تسريب أي حقول داخلية لإدارة الأقسام مثل `headUserId`, `isActive`, `deletedAt`, `engineers`, `yards`, `headUser`.
+  - **حماية دورة حياة القالب الأب وقفل التزامن الموحد (Unified Pessimistic Lock Root & Atomic Archival)**:
+    > ProductionTemplateEntity is the unified pessimistic lock root for every mutation in the Production Template aggregate.
+    > All template and nested-resource mutations lock the parent template row inside the same database transaction before revalidating lifecycle state and writing child data.
+    > Template archival is atomic: setting `isActive = false` and applying the soft delete occur inside one transaction under the template row lock.
+    > Nested template resources are inaccessible once the parent template is archived.
+    - تم اعتماد `ProductionTemplateGuardService` ودالة `lockMutableTemplate` لفرض بروتوكول تسلسلي صارم لكافة العمليات التعديلية في الـ Aggregate:
+      - `ProductionTemplateEntity` هو الـ Lock Root الوحيد لكافة العمليات التعديلية على القالب أو أي مورد تابع له (`updateTemplate`, `softDeleteTemplate`, `addSpecification`, `updateSpecification`, `deleteSpecification`, `reorderSpecifications`, `addStage`, `updateStage`, `softDeleteStage`, `reorderStages`, `addPlannedMaterial`, `updatePlannedMaterial`, `removePlannedMaterial`, `addStageAttachment`, `updateStageAttachment`, `softDeleteStageAttachment`, `reorderStageAttachments`).
+      - كل عملية تعديل تعمل داخل معاملة واحدة تبدأ بقفل سجل القالب الأب بوضع `pessimistic_write` والتحقق من أنه غير مؤرشف (`deletedAt IS NULL`) قبل إجراء أي تعديل على الجداول التابعة.
+      - أرشفة القالب `softDeleteTemplate` ذرية بالكامل: تعديل `isActive = false` وتطبيق `softDelete` يتمان داخل نفس المعاملة وتحت قفل القالب، وفي حال فشل أي خطوة يتم التراجع التام (Full Rollback) لمنع أي حالة أرشفة جزئية (`No partial archive`).
+      - التعطيل التشغيلي `isActive = false` لا يعتبر أرشفة؛ القالب المعطل غير المؤرشف يبقى قابلاً للتعديل الإداري ما لم يتم حذفه ناعماً (`deletedAt != null`).
+      - عمليات القراءة الطبيعية (`listTemplates`, `getTemplateById`, `listSpecifications`, `listStages`, `getStageById`, `listStageMaterials`, `listStageAttachments`, `getAttachmentForDownload`) تبقى خالية من أقفال الكتابة وتعتمد على `requireExistingTemplate` لمنع القراءة من القوالب المؤرشفة.
+      - أرشفة القالب الأب لا تقوم بعمل Cascade Soft Delete للأطفال للحفاظ على السجل التاريخي وجاهزية اللقطات (Snapshot Readiness).
+  - **توحيد أسماء الفهارس وترقية المخطط (Schema Migration 0010 — Index Normalization)**:
+    - عبر Migration `1710000000010-FinalizeProductionTemplateHardening.ts`، تم استبدال وتوحيد كافة الفهارس القديمة التي كانت تحمل بادئة `studies_*` على الجداول الخمسة بالأسماء النظامية `production_*` (`UQ_production_template_code`, `IDX_production_template_*`, `IDX_production_stage_*`, `UQ_production_stage_material_stage_unit`).
+    - تم فحص المخطط للتأكد من عدم بقاء أي فهرس يحمل اسم `studies_*` بعد الترقية.
+    - تم استبعاد مجلد التخزين `storage/template-stage-attachments/*` في `.gitignore` مع الإبقاء على ملف `.gitkeep`.
+  - **الصلاحيات والأمان (Permissions & Authorization Invariants)**:
+    - صلاحيات القوالب تتبع موديول `production`:
+      - `production.template.view`: تتيح استعراض القوالب والمواصفات والمراحل والمواد وتنزيل الوثائق المرجعية.
+      - `production.template.create`: تتيح إنشاء قالب جديد.
+      - `production.template.update`: تتيح تعديل القالب، والمواصفات، والمراحل، والمواد المخططة، ورفع وأرشفة وترتيب الوثائق المرجعية.
+      - `production.template.delete`: تتيح أرشفة القالب بالكامل.
+    - مدير النظام `SYSTEM_ADMIN` يحصل عليها تلقائياً عبر المصالحة الزمنية `reconcileSystemPermissions`.
+    - جميع العمليات التعديلية تمر عبر `window.erpFetch` مع التحقق من الـ CSRF، وحظر XSS عبر Native DOM APIs و `safeJsonStringify`.
 
 - **كتالوج المنتجات والمستودعات الأساسية (Inventory Product Catalog Core & Administration UI)** (`src/modules/inventory/`):
   - **البيانات المرجعية (Master Data Architecture)**:
@@ -1547,3 +1631,43 @@ src/
 - Inventory Category Service with Fail-Closed Ancestry Cycle Check, Deactivation Restrictions, and Unique Race Handling (`src/modules/inventory/category/inventory-category.service.ts`).
 - Inventory Product Service with Atomic Base Unit Creation, Asserted Base Unit Integrity Helper, Conversion Chain Traversal, Pessimistic Locking, and MySQL Duplicate Key Mapping (`src/modules/inventory/product/inventory-product.service.ts`).
 - Inventory Catalog Test Suite covering DTO validation, precision boundaries, and domain invariants (`tests/inventory-catalog.test.ts`).
+- Production Template Core Hardening Test Suite covering architecture, permissions, DTOs, consecutive grouping, inventory reference fail-closed invariants, and XSS safety (`tests/production-template.test.ts`).
+- Migrations:
+  - `1710000000000-CreateSystemCoreTables.ts`
+  - `1710000000001-CreateSystemSessionTable.ts`
+  - `1710000000002-CreateProductionDepartmentsAndYards.ts`
+  - `1710000000003-CreateProductionTeamAssignments.ts`
+  - `1710000000004-CreateInventoryCategories.ts`
+  - `1710000000005-CreateInventoryProductsAndUnits.ts`
+  - `1710000000006-HardenInventoryCatalogConstraints.ts`
+  - `1710000000007-CreateStudiesTemplateCoreTables.ts`
+  - `1710000000008-MigrateStudiesToProductionTemplateTables.ts`
+
+---
+
+13. **Production Template Core Hardening & Architectural Invariants**:
+    - **التصحيح المعماري الأساسي (Application Boundary Correction)**:
+      - نقل قوالب التصنيع لتكون جزءاً أصيلاً من تطبيق الإنتاج (`Production Application`) تحت `src/modules/production/` بدلاً من تطبيق مستقل باسم Studies. قسم الدراسات هو مالك وظيفي (`Business Owner`) وليس مساحة تقنية مستقلة.
+      - إزالة كافة الآثار الفنية القديمة لموديول الدراسات بالكامل: حذف مجلدات `src/modules/studies/` و `src/views/dashboard/studies/` وملفات الأصول `src/public/css/studies.css` و `src/public/js/studies-*.js` ومسارات `/studies/templates`.
+      - المسارات المعتمدة حصراً: Web `/production/templates` و API `/api/production/templates`.
+    - **التقسيم إلى 4 Submodules مستقلة ومفصولة**:
+      - `src/modules/production/template/`: الكيان الرئيسي للقالب والبيانات الوصفية وأبعاد الغرفة.
+      - `src/modules/production/template-specification/`: المواصفات الفنية الملحقة بالقالب وترتيبها.
+      - `src/modules/production/template-stage/`: مراحل التصنيع وترتيبها الكثيف وتجميع الأقسام المتتالية.
+      - `src/modules/production/template-stage-material/`: المواد المخططة لكل مرحلة مع الكميات والوحدات.
+    - **بروتوكول الأقفال التشاؤمية لمنع التعارضات (Pessimistic Locking Concurrency Protocol)**:
+      - استخدام قفل تشاؤمي حصري للكتابة (`pessimistic_write`) على سجل القالب الرئيسي `ProductionTemplateEntity` داخل Transactions لكافة عمليات إضافة أو إعادة ترتيب أو أرشفة المراحل والمواصفات لضمان التسلسل ومنع Race Conditions والتسلسل الكثيف (1..N).
+    - **حدود الوحدات الأخرى والتحقق المنغلق أمنياً (Cross-Module Boundaries & Fail-Closed Validation)**:
+      - التعامل مع أقسام الإنتاج حصراً عبر `ProductionDepartmentService.validateDepartmentForStage`.
+      - التعامل مع كتالوج المواد حصراً عبر `InventoryProductReferenceService` دون استعلام مباشر لكيانات المواد:
+        - `searchProductReferences`: إرجاع بيانات مرجعية مقلصة فقط للمنتجات النشطة.
+        - `getProductUnitReferences`: إرجاع الوحدات الصالحة مع التحقق من سلامة الوحدة الأساسية.
+        - `validatePlannedMaterialUnit`: التحقق المنغلق أمنياً من وجود ونشاط المنتج، سلامة الوحدة الأساسية ذرياً، تبعية الوحدة المختارة لنفس المنتج، وخلو سلسلة التحويل من الحلقات الدائرية وانتهاؤها حتماً بالوحدة الأساسية.
+    - **صلاحيات وقدرات الوصول (Permissions & Capability Registry)**:
+      - تسجيل الصلاحيات: `production.template.view`, `production.template.create`, `production.template.update`, `production.template.delete`.
+      - تسجيلها في `AccessScopeCapabilityRegistry` لدعم قالب `ALL` فقط، مع بقاء أي صلاحية غير مسجلة فاشلة مغلقة (`[]`).
+    - **حماية الواجهات من حقن النصوص (Stored XSS Hardening & Safe JSON Serialization)**:
+      - استخدام `safeJsonStringify` لتشفير المحارف الخاصة (`<`, `>`, `&`, Line Terminators) داخل جزر السكربت الآمنة `<script type="application/json">` بدلاً من البيانات النصية المباشرة في الـ DOM.
+    - **تطابق الصلاحيات في واجهة المستخدم (UI Permission Parity)**:
+      - ربط تعديل المرا والمواد وحذف المراحل بصلاحية التحديث `production.template.update`.
+      - ربط أرشفة القالب بصلاحية الحذف `production.template.delete`.

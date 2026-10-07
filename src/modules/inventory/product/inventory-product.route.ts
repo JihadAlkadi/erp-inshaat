@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { inventoryProductController } from './inventory-product.controller.js';
 import { requireApiAuth } from '../../system/auth/auth.middleware.js';
-import { requirePermission } from '../../system/authorization/authorization.middleware.js';
+import { requirePermission, requireAnyPermission } from '../../system/authorization/authorization.middleware.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { validateDto } from '../../../common/middleware/validate-dto.middleware.js';
 import { validateQueryDto } from '../../../common/middleware/validate-query-dto.middleware.js';
@@ -17,12 +17,35 @@ const inventoryProductApiRouter: Router = Router();
 
 inventoryProductApiRouter.use(requireApiAuth);
 
+// GET /api/inventory/products/reference-options - Minimal product reference picker (paginated, search)
+inventoryProductApiRouter.get(
+  '/reference-options',
+  requireAnyPermission([
+    SystemPermission.INVENTORY_PRODUCT_VIEW,
+    SystemPermission.PRODUCTION_TEMPLATE_VIEW,
+    SystemPermission.PRODUCTION_TEMPLATE_UPDATE,
+  ]),
+  inventoryProductController.listProductReferences
+);
+
 // GET /api/inventory/products - List products (paginated, filtered)
 inventoryProductApiRouter.get(
   '/',
   requirePermission(SystemPermission.INVENTORY_PRODUCT_VIEW),
   validateQueryDto(ListInventoryProductsQueryDto),
   inventoryProductController.listProducts
+);
+
+// GET /api/inventory/products/:productId/units/reference-options - Minimal unit references for a product
+inventoryProductApiRouter.get(
+  '/:productId/units/reference-options',
+  validateUuidParam('productId'),
+  requireAnyPermission([
+    SystemPermission.INVENTORY_PRODUCT_VIEW,
+    SystemPermission.PRODUCTION_TEMPLATE_VIEW,
+    SystemPermission.PRODUCTION_TEMPLATE_UPDATE,
+  ]),
+  inventoryProductController.listProductUnitReferences
 );
 
 // GET /api/inventory/products/:id - Get product details

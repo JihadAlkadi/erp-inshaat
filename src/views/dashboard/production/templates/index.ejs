@@ -1,0 +1,100 @@
+<link rel="stylesheet" href="/css/production-templates.css">
+
+<!-- Page Header (Matching System UI Standard) -->
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+  <div>
+    <h3 class="fw-bold mb-1" style="color: #1F2937;">
+      قوالب المنتجات والتصنيع <i class="fa-solid fa-compass-drafting text-muted fs-5 ms-2"></i>
+    </h3>
+    <p class="text-muted mb-0 small">التعريف التخطيطي الكامل لمنتجات وغرف التصنيع وسير مراحلها ومواصفاتها الهندسية</p>
+  </div>
+  <% if (typeof canCreateTemplate !== 'undefined' && canCreateTemplate) { %>
+    <div>
+      <a href="/production/templates/create" class="btn production-theme-btn d-inline-flex align-items-center gap-2 shadow-sm px-4 py-2">
+        <i class="fa-solid fa-plus"></i>
+        <span>إضافة قالب جديد</span>
+      </a>
+    </div>
+  <% } %>
+</div>
+
+<!-- Search & Filter Card -->
+<div class="card border-0 shadow-sm mb-4" style="border-radius: 12px;">
+  <div class="card-body p-3">
+    <form id="templateFilterForm" class="row g-2 align-items-center">
+      <div class="col-12 col-md-5">
+        <div class="input-group">
+          <span class="input-group-text bg-white border-end-0 text-muted"><i class="fa-solid fa-magnifying-glass"></i></span>
+          <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="بحث بالاسم أو الكود أو رقم المرجع...">
+        </div>
+      </div>
+      <div class="col-12 col-md-3">
+        <select id="statusFilter" class="form-select">
+          <option value="">-- جميع الحالات --</option>
+          <option value="true">نشط فقط</option>
+          <option value="false">معطل فقط</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-4 d-flex gap-2">
+        <button type="submit" class="btn btn-outline-secondary px-3 d-inline-flex align-items-center gap-2">
+          <i class="fa-solid fa-filter"></i>
+          <span>تصفية</span>
+        </button>
+        <button type="button" id="resetFilterBtn" class="btn btn-link text-muted text-decoration-none">
+          إلغاء التصفية
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Templates Table Card -->
+<div class="card border-0 shadow-sm" style="border-radius: 12px; overflow: hidden;">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <h6 class="fw-bold mb-0 text-dark">
+      <i class="fa-solid fa-list-check me-2 text-muted"></i> قائمة قوالب التصنيع
+    </h6>
+    <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-2 rounded-pill" id="totalTemplatesBadge">0 قالب</span>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" id="templatesTable">
+      <thead class="table-light">
+        <tr class="text-muted small">
+          <th scope="col" class="ps-4">اسم القالب</th>
+          <th scope="col">الرقم / المرجع</th>
+          <th scope="col">الكود التقني</th>
+          <th scope="col" class="text-center">عدد المراحل</th>
+          <th scope="col" class="text-center">الحالة</th>
+          <th scope="col">آخر تحديث</th>
+          <th scope="col" class="text-center pe-4">الإجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="templatesTableBody">
+        <tr>
+          <td colspan="7" class="text-center py-5 text-muted">
+            <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+            جاري تحميل البيانات...
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination Footer -->
+  <div class="card-footer bg-white border-top py-3 px-4 d-flex flex-wrap justify-content-between align-items-center" id="paginationContainer">
+    <div class="text-muted small mb-2 mb-md-0" id="paginationInfo">عرض 0 من 0</div>
+    <nav>
+      <ul class="pagination pagination-sm mb-0" id="paginationList"></ul>
+    </nav>
+  </div>
+</div>
+
+<script>
+  window.PRODUCTION_PERMISSIONS = {
+    canCreateTemplate: <%= typeof canCreateTemplate !== 'undefined' ? canCreateTemplate : false %>,
+    canUpdateTemplate: <%= typeof canUpdateTemplate !== 'undefined' ? canUpdateTemplate : false %>,
+    canDeleteTemplate: <%= typeof canDeleteTemplate !== 'undefined' ? canDeleteTemplate : false %>
+  };
+</script>
+<script src="/js/production-templates.js"></script>

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { InventoryProductService, inventoryProductService } from './inventory-product.service.js';
+import { inventoryProductReferenceService } from './inventory-product-reference.service.js';
 import { ApiResponse } from '../../../common/responses/api-response.js';
 import { CreateInventoryProductDto } from './dto/create-product.dto.js';
 import { UpdateInventoryProductDto } from './dto/update-product.dto.js';
@@ -104,6 +105,29 @@ export class InventoryProductController {
       const { productId, unitId } = req.params;
       await this.productService.softDeleteUnit(productId as string, unitId as string);
       res.status(200).json(ApiResponse.success(null, 'تم أرشفة الوحدة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listProductReferences = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const page = req.query.page ? parseInt(String(req.query.page), 10) : 1;
+      const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
+
+      const result = await inventoryProductReferenceService.searchProductReferences(search, page, limit);
+      res.status(200).json(ApiResponse.success(result, 'تم جلب خيارات المنتجات المرجعية بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listProductUnitReferences = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { productId } = req.params;
+      const result = await inventoryProductReferenceService.getProductUnitReferences(productId as string);
+      res.status(200).json(ApiResponse.success(result, 'تم جلب خيارات وحدات المنتج بنجاح'));
     } catch (error) {
       next(error);
     }

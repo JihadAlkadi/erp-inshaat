@@ -1,0 +1,303 @@
+/* Production Templates CSS - Theme #0984E3 */
+:root {
+  --prod-primary: #0984E3;
+  --prod-primary-hover: #076bbb;
+  --prod-light: rgba(9, 132, 227, 0.08);
+}
+
+.production-theme-btn {
+  background-color: var(--prod-primary) !important;
+  border-color: var(--prod-primary) !important;
+  color: #fff !important;
+  border-radius: 8px;
+}
+.production-theme-btn:hover {
+  background-color: var(--prod-primary-hover) !important;
+  border-color: var(--prod-primary-hover) !important;
+}
+
+.production-outline-btn {
+  color: var(--prod-primary) !important;
+  border-color: var(--prod-primary) !important;
+  border-radius: 8px;
+}
+.production-outline-btn:hover {
+  background-color: var(--prod-light) !important;
+  color: var(--prod-primary-hover) !important;
+}
+
+/* Department Group in Workflow */
+.department-workflow-group {
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  background-color: #FAFAFA;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+
+.department-workflow-header {
+  background-color: #F3F4F6;
+  border-bottom: 1px solid #E5E7EB;
+  padding: 0.85rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.department-workflow-title {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-weight: 700;
+  color: #1F2937;
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.department-workflow-body {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Stage Card */
+.stage-card {
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  padding: 0.85rem 1.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  transition: box-shadow 0.2s ease, transform 0.15s ease, border-color 0.2s ease;
+  user-select: none;
+}
+
+.stage-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.07);
+  border-color: #CBD5E1;
+}
+
+.stage-card.is-dragging {
+  opacity: 0.45;
+  background: #EBF8FF;
+  border: 2px dashed #0984E3 !important;
+}
+
+.stage-card.drag-over {
+  border-top: 3px solid #0984E3 !important;
+  transform: translateY(2px);
+}
+
+.stage-drag-handle {
+  cursor: grab;
+  color: #9CA3AF;
+  font-size: 1.25rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.stage-drag-handle:hover {
+  color: #0984E3;
+  background-color: #EBF8FF;
+}
+
+.stage-drag-handle:active {
+  cursor: grabbing;
+}
+
+.stage-order-badge {
+  font-weight: 700;
+  font-size: 0.85rem;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background-color: #EBF8FF;
+  color: #0984E3;
+  flex-shrink: 0;
+}
+
+.stage-info {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.stage-name {
+  font-weight: 700;
+  font-size: 0.98rem;
+  color: #111827;
+  margin-bottom: 0.2rem;
+}
+
+.stage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.85rem;
+  font-size: 0.82rem;
+  color: #6B7280;
+}
+
+.stage-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+/* Specifications Table */
+.spec-row:hover {
+  background-color: #F9FAFB;
+}
+
+/* Template Builder Workspace Navigation (Isolated Tabs) */
+.template-builder-nav {
+  position: sticky;
+  top: 70px;
+  z-index: 1020;
+  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.98) !important;
+  border: 1px solid #E2E8F0;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
+}
+
+.workspace-tabs .nav-link {
+  font-weight: 600;
+  color: #475569;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 9px;
+  padding: 0.55rem 1.15rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+
+.workspace-tabs .nav-link:hover {
+  color: #0984E3;
+  background-color: #F0F7FF;
+  border-color: #BAE6FD;
+  transform: translateY(-1px);
+}
+
+.workspace-tabs .nav-link.active {
+  color: #FFFFFF !important;
+  background: linear-gradient(135deg, #0984E3 0%, #0070BA 100%) !important;
+  border-color: #0984E3 !important;
+  box-shadow: 0 4px 12px rgba(9, 132, 227, 0.28);
+}
+
+.workspace-tabs .nav-link.active .badge {
+  background-color: rgba(255, 255, 255, 0.25) !important;
+  color: #FFFFFF !important;
+}
+
+/* Stage Modal (Centered Workspace Dialog) */
+.stage-modal .modal-content {
+  border-radius: 16px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.08);
+  border: 1px solid #E2E8F0;
+  overflow: hidden;
+}
+
+.stage-modal .modal-header {
+  background-color: #FFFFFF;
+  border-bottom: 1px solid #E2E8F0;
+  padding: 1.1rem 1.5rem;
+}
+
+.stage-modal .stage-modal-tabs .nav-link {
+  font-weight: 600;
+  color: #64748B;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 0.85rem 1.35rem;
+  border-radius: 0;
+  background: transparent;
+  transition: all 0.15s ease;
+}
+
+.stage-modal .stage-modal-tabs .nav-link:hover {
+  color: #0984E3;
+  background-color: rgba(9, 132, 227, 0.04);
+}
+
+.stage-modal .stage-modal-tabs .nav-link.active {
+  color: #0984E3;
+  border-bottom-color: #0984E3;
+  background-color: #FFFFFF;
+}
+
+.stage-modal .modal-body {
+  background-color: #F8FAFC;
+}
+
+.header-stat-link {
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.header-stat-link:hover {
+  color: #0984E3 !important;
+}
+
+/* Catalog Product Search Picker */
+.catalog-search-results-box {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  background-color: #FFF;
+}
+
+.catalog-search-item {
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid #F3F4F6;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.15s ease;
+}
+
+.catalog-search-item:last-child {
+  border-bottom: none;
+}
+
+.catalog-search-item:hover {
+  background-color: #EBF8FF;
+}
+
+.catalog-search-item.is-selected {
+  background-color: #DBEAFE;
+  border-right: 3px solid #0984E3;
+}
+
+/* Reference Documents List */
+.attachment-item-card {
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background-color: #FFF;
+  transition: all 0.15s ease;
+}
+
+.attachment-item-card:hover {
+  border-color: #CBD5E1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
