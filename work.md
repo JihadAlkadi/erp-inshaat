@@ -20,49 +20,60 @@
       src/modules/production/order-line/
       src/modules/production/order-line-pattern-selection/
       ```
-  - **توليد رقم الطلب الآمن للتزامن (Concurrency-Safe Order Number Generation)**:
+  - **توليد رقم الطلب الآمن للتزامن وحتمية صف العداد (Concurrency-Safe Order Number Generation & Mandatory Sequence Row)**:
     - رقم الطلب بشري ومقروء بصيغة تسلسلية فريدة ثابتة: `PO-XXXXXX` (مثل `PO-000001`).
     - غير مشتق من `MAX() + 1` غير الآمن تحت التزامن.
     - يعتمد جدول عداد مخصص `production_order_sequence` مع قفل تشاؤمي `pessimistic_write` على صف `'PRODUCTION_ORDER'` داخل معاملة الإنشاء.
+    - **حتمية وجود صف العداد (Mandatory Sequence Row Invariant)**: يتم تهيئة صف العداد عبر الـ Migration حصراً، وفي حال غيابه يفشل `createOrder()` فوراً بالرمز الثابت `PRODUCTION_ORDER_SEQUENCE_NOT_INITIALIZED` دون أي إنشاء تلقائي متأخر (No lazy creation).
+    - تم إثبات الأمان التزامني تجريبياً عبر سكريبت التحقق `scripts/verify-production-order-concurrency.ts` بـ 20 معاملة متزامنة نتج عنها 20 رقماً فريداً متتالياً بدقة دون أي تكرار.
     - `orderNumber` غير قابل للتعديل إطلاقاً بعد الإنشاء (Immutable).
   - **قفل التزامن الموحد للتجميعة (Unified Pessimistic Lock Root Protocol)**:
     > ProductionOrderEntity is the unified pessimistic lock root for all draft-order mutations.
     - كل عملية تعديل داخل التجميعة (`updateOrder`, `archiveOrder`, `addLine`, `updateLineQuantity`, `archiveLine`, `reorderLines`, `changePatternSelection`, `syncDraftLineSelections`) تبدأ بقفل تشاؤمي `pessimistic_write` على صف أمر الإنتاج `ProductionOrderEntity` داخل المعاملة عبر `guardService.lockMutableOrder(orderId, manager)`.
     - القوالب تملك جذر قفل مستقل بها ولا تستخدم كجذر قفل للأمر لتفادي التعارض وتداخل الأقفال.
-  - **بنود أمر الإنتاج (Production Order Lines)**:
+  - **بنود أمر الإنتاج والتحقق من الكميات (Production Order Lines & Quantity Invariant)**:
     - كل بند يمثل تركيبة مستقلة: `Template + Quantity + Pattern Selections`.
     - تكرار نفس القالب ونفس خيارات النمط مسموح ولا يتم دمج البنود تلقائياً (كل Line كيان مستقل).
-    - الكمية عدد صحيح موجب حصراً: `1 <= quantity <= 10000` ومحمية بـ DTO Validation و Service Validation و Check Constraint في قاعدة البيانات `CHK_production_order_line_quantity`.
+    - **صحة وسلامة الكمية (Line Quantity Invariant)**: الكمية عدد صحيح موجب حصراً `1 <= quantity <= 10000`، ويتم التحقق منها على 3 مستويات: DTO Validation و Service Invariant (`validateLineQuantity` تطلق `PRODUCTION_ORDER_LINE_QUANTITY_INVALID` للأعداد العشرية أو السالبة أو الصفر أو التي تتجاوز 10,000) وقيد Check في قاعدة البيانات `CHK_production_order_line_quantity`.
     - الترتيب مكثف `sortOrder: 1..N` ومدعوم بإعادة ترتيب كامل `PATCH /api/production/orders/:orderId/lines/reorder` بتبديل كامل دقيق (Exact Permutation).
     - `templateId` ثابت وغير قابل للتعديل للبند القائم لمنع بقاء اختيارات أنماط يتيمة.
-  - **تحديد خيارات الأنماط والتوافق مع القوالب (Pattern Selection & Template Relationship)**:
+  - **تحديد خيارات الأنماط وعقد القصد الصريح (Pattern Selection Intent Contract)**:
     > Draft order lines reference live template configuration.
     > Every active Pattern in the Template requires exactly one Selection.
     > The default option is the first active option by sortOrder ASC.
-    - عند إنشاء بند جديد، إذا لم ترسل الخيارات صراحة، يختار النظام تلقائياً أول خيار نشط حسب `sortOrder ASC`.
-    - إذا أرسل العميل خيارات محددة صراحة، يجب أن تطابق بدقة مجموعة الأنماط النشطة (Exact Set)، وترفض أي خيارات مكررة أو ناقصة أو لأنماط أجنبية أو خيارات غير نشطة.
+    - **تمييز قصد العميل بدقة**:
+      - غياب الحقل (`patternSelections === undefined`): يولد النظام الخيارات الافتراضية تلقائياً (أول خيار فعال حسب `sortOrder ASC`).
+      - إرسال الحقل صراحة (`patternSelections !== undefined`): يُعامل كـ Explicit Set ويخضع للتحقق الصارم كـ Exact Set حتى لو أُرسل كمصفوفة فارغة `[]`.
+      - إذا كان القالب يملك أنماطاً وأرسل العميل `patternSelections: []`، يرفض الطلب فوراً بالرمز `PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID`.
+      - إذا كان القالب بلا أنماط وأرسل العميل `patternSelections: []`، يُقبل كـ Explicit Set صالح.
+    - التحقق من صلاحية القالب عند تغيير الخيار `changePatternSelection`: يتم التحقق صراحة من أن القالب موجود وغير مؤرشف وفعال (`template.isActive === true`)؛ وإلا تفشل العملية فوراً بالرمز `PRODUCTION_ORDER_TEMPLATE_INACTIVE`.
     - إذا احتوى القالب على نمط فعال بدون أي خيار فعال، تفشل إضافة البند ذرياً مع Rollback بالرمز `PRODUCTION_ORDER_TEMPLATE_PATTERN_HAS_NO_ACTIVE_OPTIONS`.
-    - القوالب ذات البنية الموحدة (بدون أنماط) مسموحة وتنشئ بنداً بـ `patternSelections = []`.
+  - **التعامل مع تلف البيانات الهيكلي مقابل الحالات القديمة (Structural Corruption vs Stale State Contract)**:
+    - **الحالات القديمة المقبولة (Stale State)**:
+      - إذا أُرشِف النمط أو الخيار لاحقاً في القالب (`deletedAt !== null`) ولكن ملكيتهما صحيحة وسليمة (النمط ينتمي لقالب البند والخيار ينتمي لنمطه): هذا ليس تلفاً؛ تبقى المسودة مقروءة مع عرض الأسماء التاريخية الحقيقية من السجلات المؤرشفة وتعيين `availableOptions = []` وخفض الجاهزية (`ready: false`).
+    - **التلف الهيكلي غير المقبول (Structural Corruption — Fail Closed)**:
+      - إذا كان سجل النمط أو الخيار مفقوداً تماماً من قاعدة البيانات، أو كان النمط أجنبياً لا ينتمي لقالب البند (`pattern.templateId !== line.templateId`)، أو كان الخيار أجنبياً لا ينتمي لنمطه المحدد (`option.patternId !== sel.templatePatternId`): تفشل القراءة وعمليات الجاهزية والمزامنة فوراً ومنغلقة أمنياً بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
+      - يُمنع إخفاء التلف أو معالجته صامتاً (No Silent Repair).
   - **قواعد المزامنة مع القالب (Explicit Sync Semantics)**:
     > Template changes do not modify Draft Orders silently.
     > GET requests strictly never perform automatic or silent repairs.
     - التعديلات اللاحقة على القالب أثناء وجود الطلب في حالة المسودة يتم فحصها والتعامل معها حصراً عبر إجرائين:
       1. خدمة التحقق من الجاهزية `validateDraftForRelease`: قراءة فقط وتكشف أي نقص أو عدم توافق كـ issues دون تعديل قاعدة البيانات.
       2. مسار المزامنة الصريح `POST /api/production/orders/:orderId/lines/:lineId/sync-template`:
+         - يتحقق أولاً من سلامة البنية الهيكلية للاختيارات ويرفض أي تلف هيكلي أجنبي بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
          - يحتفظ بالاختيارات الصالحة القائمة.
          - يضيف اختيارات الأنماط الجديدة بالخيار الافتراضي.
          - يستبدل الخيار المؤرشف بأول خيار فعال بديل.
          - يحذف الاختيارات القديمة للأنماط التي أصبحت غير نشطة أو محذوفة.
          - يفشل ويتراجع ذرياً إذا كان أي نمط فعال يفتقر للخيارات الفعالة.
-  - **التحقق من الجاهزية للإطلاق المستقبلي (Read-Only Release Readiness Validation)**:
-    - مسار قراءة حصراً: `GET /api/production/orders/:orderId/release-readiness`.
-    - لا يغير حالة الطلب، لا يولد وحدات، لا يأخذ لقطات، ولا يعدل أي سجل في قاعدة البيانات.
-    - يتحقق من:
-      - وجود الطلب وحالة `DRAFT`.
-      - وجود بند واحد على الأقل (`PRODUCTION_ORDER_EMPTY`).
-      - صحة القالب وكونه فعالاً وغير مؤرشف (`PRODUCTION_ORDER_TEMPLATE_INACTIVE`).
-      - عدم فراغ سير عمل القالب (`PRODUCTION_ORDER_TEMPLATE_WORKFLOW_EMPTY`).
-      - اكتمال وصحة اختيار خيار فعال لكل نمط فعال للبند وعدم وجود اختيارات شاذة أو مكررة.
+  - **الاستعلام الخفيف لإعدادات القالب (Lightweight Order Configuration)**:
+    - استعلام `getOrderConfiguration(templateId)` يستعلم حصراً عن الأنماط وخياراتها دون استدعاء `listPatterns()` التي كانت تجلب المهام والمواد والمرفقات، مما يمنع فرط جلب البيانات (No Over-fetching) تماماً.
+  - **ترقيم وتصفح منتقي القوالب في الواجهة (Template Picker Server-Side Pagination & Race Protection)**:
+    - يدعم منتقي القوالب الترقيم الخادمي المكتمل مع زر `تحميل المزيد` عند وجود صفحات إضافية (`currentPage < totalPages`).
+    - مزود بـ Debounce (300ms) وتتبع رقم تسلسلي للطلبات (`templatePickerRequestSeq`) لمنع تداخل الاستجابات غير المرتبة (Race Condition Protection).
+    - يعتمد على `Set` لمعرفات القوالب لمنع تكرار البطاقات نهائياً.
+  - **عقد الصلاحيات لمسارات مراجع القوالب (Permissions Contract for Reference Endpoints)**:
+    - تم منح صلاحية `PRODUCTION_ORDER_UPDATE` إمكانية الوصول لمسارات `GET /api/production/templates/reference-options` و `GET /api/production/templates/:id/order-configuration` بجانب `VIEW` و `CREATE` لتسهيل عمل محرري الأوامر.
   - **العقد المستقبلي للمرحلة الثانية (Future Release Contract — Phase 2)**:
     - عملية الإطلاق `releaseProductionOrder(orderId)` ستكون في المرحلة التالية معاملة ذرية كاملة تنفذ بالتزامن:
       `lock Order -> validateDraftForRelease -> create immutable snapshots -> generate Production Units (1 unit per quantity) -> generate ProductionPatternSelections -> generate Runtime Stages -> mark order RELEASED -> commit`.

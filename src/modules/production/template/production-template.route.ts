@@ -56,6 +56,7 @@ productionTemplateApiRouter.get(
   requireAnyPermission([
     SystemPermission.PRODUCTION_ORDER_VIEW,
     SystemPermission.PRODUCTION_ORDER_CREATE,
+    SystemPermission.PRODUCTION_ORDER_UPDATE,
     SystemPermission.PRODUCTION_TEMPLATE_VIEW,
   ]),
   productionTemplateController.getReferenceOptions
@@ -67,6 +68,7 @@ productionTemplateApiRouter.get(
   requireAnyPermission([
     SystemPermission.PRODUCTION_ORDER_VIEW,
     SystemPermission.PRODUCTION_ORDER_CREATE,
+    SystemPermission.PRODUCTION_ORDER_UPDATE,
     SystemPermission.PRODUCTION_TEMPLATE_VIEW,
   ]),
   validateUuidParam('id'),

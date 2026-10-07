@@ -290,20 +290,28 @@ export class ProductionTemplateService {
   async getOrderConfiguration(templateId: string): Promise<ProductionTemplateOrderConfigurationDto> {
     const template = await this.guardService.requireExistingTemplate(templateId);
     if (!template.isActive) {
-      throw new BusinessRuleError('PRODUCTION_ORDER_TEMPLATE_INACTIVE', 'لا يمكن استخدام قالب تصنيع غير فعال');
+      throw new BusinessRuleError('لا يمكن استخدام قالب تصنيع غير فعال', 'PRODUCTION_ORDER_TEMPLATE_INACTIVE');
     }
 
-    const patterns = await this.patternService.listPatterns(templateId);
+    const patternRepo = this.dataSource.getRepository(ProductionTemplatePatternEntity);
+    const patterns = await patternRepo.find({
+      where: { templateId, deletedAt: IsNull() },
+      relations: { options: true },
+      order: { createdAt: 'ASC' },
+    });
 
     return {
       templateId: template.id,
       templateName: template.name,
       patterns: patterns.map((p) => {
-        const activeOptions = (p.options || []).map((o) => ({
-          id: o.id,
-          name: o.name,
-          sortOrder: o.sortOrder,
-        }));
+        const activeOptions = (p.options || [])
+          .filter((o) => !o.deletedAt)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((o) => ({
+            id: o.id,
+            name: o.name,
+            sortOrder: o.sortOrder,
+          }));
         const defaultOptionId = activeOptions.length > 0 ? activeOptions[0].id : null;
         return {
           id: p.id,

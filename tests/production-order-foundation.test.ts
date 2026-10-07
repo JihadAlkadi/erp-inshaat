@@ -14,6 +14,15 @@ import { ProductionOrderEntity, ProductionOrderStatus } from '../src/modules/pro
 import { ProductionOrderSequenceEntity } from '../src/modules/production/order/production-order-sequence.entity.js';
 import { ProductionOrderLineEntity } from '../src/modules/production/order-line/production-order-line.entity.js';
 import { ProductionOrderLinePatternSelectionEntity } from '../src/modules/production/order-line-pattern-selection/production-order-line-pattern-selection.entity.js';
+import { ProductionTemplateEntity } from '../src/modules/production/template/production-template.entity.js';
+import { ProductionTemplatePatternEntity } from '../src/modules/production/template-pattern/production-template-pattern.entity.js';
+import { ProductionTemplatePatternOptionEntity } from '../src/modules/production/template-pattern-option/production-template-pattern-option.entity.js';
+import { ProductionTemplateWorkflowItemEntity } from '../src/modules/production/template-workflow-item/production-template-workflow-item.entity.js';
+import { ProductionOrderService } from '../src/modules/production/order/production-order.service.js';
+import { ProductionOrderGuardService } from '../src/modules/production/order/production-order-guard.service.js';
+import { ProductionTemplateService } from '../src/modules/production/template/production-template.service.js';
+import { BusinessRuleError } from '../src/common/errors/business-rule.error.js';
+import { NotFoundError } from '../src/common/errors/not-found.error.js';
 import { CreateProductionOrderDto } from '../src/modules/production/order/dto/create-production-order.dto.js';
 import { UpdateProductionOrderDto } from '../src/modules/production/order/dto/update-production-order.dto.js';
 import { AddProductionOrderLineDto } from '../src/modules/production/order-line/dto/add-production-order-line.dto.js';
@@ -508,21 +517,545 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
   });
 
   // ==========================================
-  // 9. OUT OF SCOPE BOUNDARY VERIFICATION
+  // 10. SERVICE-LEVEL REGRESSION & INVARIANT TESTS
   // ==========================================
-  describe('9. Out of Scope Explicit Verification', () => {
-    it('verifies NO Production Units or Room Instances are created in Phase 1', () => {
-      // In Phase 1, only drafting aggregates exist. ProductionUnit runtime entities are strictly Phase 2.
-      assert.ok(true, 'Production Units are confirmed out of scope for Phase 1');
+  describe('10. Service-Level Regression & Invariant Tests', () => {
+    function createMockServiceContext(initialData: {
+      order?: any;
+      lines?: any[];
+      selections?: any[];
+      template?: any;
+      templates?: any[];
+      patterns?: any[];
+      options?: any[];
+      workflowItems?: any[];
+      sequence?: any;
+    }) {
+      const store = {
+        order: initialData.order ? { ...initialData.order } : null,
+        lines: (initialData.lines || []).map((l) => ({ ...l })),
+        selections: (initialData.selections || []).map((s) => ({ ...s })),
+        templates: (initialData.templates || (initialData.template ? [initialData.template] : [])).map((t) => ({ ...t })),
+        patterns: (initialData.patterns || []).map((p) => ({ ...p })),
+        options: (initialData.options || []).map((o) => ({ ...o })),
+        workflowItems: (initialData.workflowItems || []).map((w) => ({ ...w })),
+        sequence: initialData.sequence ? { ...initialData.sequence } : null,
+      };
+
+      const createRepo = (entityClass: any) => {
+        return {
+          findOne: async (opts: any) => {
+            if (entityClass === ProductionOrderEntity) {
+              if (!store.order) return null;
+              if (opts?.where?.id && store.order.id !== opts.where.id) return null;
+              if (opts?.where?.deletedAt && store.order.deletedAt !== null) return null;
+              return store.order;
+            }
+            if (entityClass === ProductionOrderSequenceEntity) {
+              if (!store.sequence) return null;
+              if (opts?.where?.id && store.sequence.id !== opts.where.id) return null;
+              return store.sequence;
+            }
+            if (entityClass === ProductionOrderLineEntity) {
+              return store.lines.find((l) => {
+                if (opts?.where?.id && l.id !== opts.where.id) return false;
+                if (opts?.where?.orderId && l.orderId !== opts.where.orderId) return false;
+                if (opts?.where?.deletedAt && l.deletedAt !== null) return false;
+                return true;
+              }) || null;
+            }
+            if (entityClass === ProductionTemplateEntity) {
+              return store.templates.find((t) => {
+                if (opts?.where?.id && t.id !== opts.where.id) return false;
+                if (opts?.where?.deletedAt && t.deletedAt !== null) return false;
+                return true;
+              }) || null;
+            }
+            if (entityClass === ProductionTemplatePatternEntity) {
+              return store.patterns.find((p) => {
+                if (opts?.where?.id && p.id !== opts.where.id) return false;
+                if (opts?.where?.templateId && p.templateId !== opts.where.templateId) return false;
+                if (opts?.where?.deletedAt && p.deletedAt !== null) return false;
+                return true;
+              }) || null;
+            }
+            if (entityClass === ProductionTemplatePatternOptionEntity) {
+              return store.options.find((o) => {
+                if (opts?.where?.id && o.id !== opts.where.id) return false;
+                if (opts?.where?.patternId && o.patternId !== opts.where.patternId) return false;
+                if (opts?.where?.deletedAt && o.deletedAt !== null) return false;
+                return true;
+              }) || null;
+            }
+            if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+              return store.selections.find((s) => {
+                if (opts?.where?.orderLineId && s.orderLineId !== opts.where.orderLineId) return false;
+                if (opts?.where?.templatePatternId && s.templatePatternId !== opts.where.templatePatternId) return false;
+                return true;
+              }) || null;
+            }
+            return null;
+          },
+          find: async (opts: any) => {
+            if (entityClass === ProductionOrderLineEntity) {
+              return store.lines.filter((l) => {
+                if (opts?.where?.orderId && l.orderId !== opts.where.orderId) return false;
+                if (!opts?.withDeleted && l.deletedAt) return false;
+                return true;
+              });
+            }
+            if (entityClass === ProductionTemplateEntity) {
+              return store.templates.filter((t) => {
+                if (!opts?.withDeleted && t.deletedAt) return false;
+                return true;
+              });
+            }
+            if (entityClass === ProductionTemplatePatternEntity) {
+              return store.patterns.filter((p) => {
+                if (opts?.where?.id) {
+                  const idList = opts.where.id._value || (Array.isArray(opts.where.id) ? opts.where.id : [opts.where.id]);
+                  if (!idList.includes(p.id)) return false;
+                }
+                if (opts?.where?.templateId) {
+                  const tmplList = opts.where.templateId._value || (Array.isArray(opts.where.templateId) ? opts.where.templateId : [opts.where.templateId]);
+                  if (!tmplList.includes(p.templateId)) return false;
+                }
+                if (!opts?.withDeleted && p.deletedAt) return false;
+                return true;
+              }).map((p) => {
+                if (opts?.relations?.options) {
+                  const optsForP = store.options.filter((o) => o.patternId === p.id);
+                  return { ...p, options: optsForP };
+                }
+                return p;
+              });
+            }
+            if (entityClass === ProductionTemplatePatternOptionEntity) {
+              return store.options.filter((o) => {
+                if (opts?.where?.id) {
+                  const idList = opts.where.id._value || (Array.isArray(opts.where.id) ? opts.where.id : [opts.where.id]);
+                  if (!idList.includes(o.id)) return false;
+                }
+                if (opts?.where?.patternId && o.patternId !== opts.where.patternId) return false;
+                if (!opts?.withDeleted && o.deletedAt) return false;
+                return true;
+              });
+            }
+            if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+              return store.selections.filter((s) => {
+                if (opts?.where?.orderLineId) {
+                  const lineList = opts.where.orderLineId._value || (Array.isArray(opts.where.orderLineId) ? opts.where.orderLineId : [opts.where.orderLineId]);
+                  if (!lineList.includes(s.orderLineId)) return false;
+                }
+                return true;
+              });
+            }
+            if (entityClass === ProductionTemplateWorkflowItemEntity) {
+              return store.workflowItems;
+            }
+            return [];
+          },
+          count: async (opts: any) => {
+            if (entityClass === ProductionOrderLineEntity) {
+              return store.lines.filter((l) => !l.deletedAt).length;
+            }
+            return 0;
+          },
+          create: (data: any) => ({ id: data.id || `gen-${Date.now()}-${Math.floor(Math.random() * 1000)}`, deletedAt: null, ...data }),
+          save: async (entity: any) => {
+            if (entityClass === ProductionOrderEntity) store.order = entity;
+            else if (entityClass === ProductionOrderLineEntity) {
+              const idx = store.lines.findIndex((l) => l.id === entity.id);
+              if (idx >= 0) store.lines[idx] = entity;
+              else store.lines.push(entity);
+            } else if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+              const idx = store.selections.findIndex((s) => s.id === entity.id);
+              if (idx >= 0) store.selections[idx] = entity;
+              else store.selections.push(entity);
+            } else if (entityClass === ProductionOrderSequenceEntity) {
+              store.sequence = entity;
+            }
+            return entity;
+          },
+          softDelete: async (id: string) => {
+            const item = store.lines.find((l) => l.id === id);
+            if (item) item.deletedAt = new Date();
+          },
+          remove: async (entity: any) => {
+            const idx = store.selections.findIndex((s) => s.id === entity.id);
+            if (idx >= 0) store.selections.splice(idx, 1);
+          },
+        };
+      };
+
+      const mockManager: any = {
+        getRepository: (entityClass: any) => createRepo(entityClass),
+        save: async (entity: any) => {
+          if (entity.orderNumber) store.order = entity;
+          else if (entity.quantity !== undefined) {
+            const idx = store.lines.findIndex((l) => l.id === entity.id);
+            if (idx >= 0) store.lines[idx] = entity; else store.lines.push(entity);
+          } else if (entity.selectedOptionId) {
+            const idx = store.selections.findIndex((s) => s.id === entity.id);
+            if (idx >= 0) store.selections[idx] = entity; else store.selections.push(entity);
+          }
+          return entity;
+        },
+        softDelete: async (entityClass: any, id: string) => {
+          if (entityClass === ProductionOrderEntity && store.order) store.order.deletedAt = new Date();
+        },
+      };
+
+      const mockDataSource: any = {
+        getRepository: (entityClass: any) => createRepo(entityClass),
+        transaction: async (cb: any) => cb(mockManager),
+      };
+
+      const guardService = new ProductionOrderGuardService(mockDataSource);
+      const orderService = new ProductionOrderService(mockDataSource, guardService);
+
+      return { store, mockDataSource, mockManager, guardService, orderService };
+    }
+
+    it('addLine(): absent patternSelections uses default options', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [
+          { id: 'opt-1', patternId: 'p-1', name: 'خيار 1', sortOrder: 1, deletedAt: null },
+          { id: 'opt-2', patternId: 'p-1', name: 'خيار 2', sortOrder: 2, deletedAt: null },
+        ],
+      });
+
+      const line = await ctx.orderService.addLine('ord-1', {
+        templateId: 't-1',
+        quantity: 2,
+        // patternSelections is undefined
+      });
+
+      assert.equal(line.quantity, 2);
+      assert.equal(line.patternSelections.length, 1);
+      assert.equal(line.patternSelections[0].selectedOptionId, 'opt-1');
     });
 
-    it('verifies NO Runtime Workflow Stages or Pattern Runtime Snapshots exist in Phase 1', () => {
-      assert.ok(true, 'Runtime Stages and Snapshots are confirmed out of scope for Phase 1');
+    it('addLine(): explicit [] with active patterns throws PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-1', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+      });
+
+      let err: any = null;
+      try {
+        await ctx.orderService.addLine('ord-1', {
+          templateId: 't-1',
+          quantity: 2,
+          patternSelections: [],
+        });
+      } catch (e) {
+        err = e;
+      }
+
+      assert.ok(err instanceof BusinessRuleError);
+      assert.equal(err.code, 'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID');
     });
 
-    it('verifies NO Release endpoint or status mutation to RELEASED exists in Phase 1', () => {
-      const statuses = Object.values(ProductionOrderStatus);
-      assert.ok(!statuses.includes('RELEASED' as any), 'RELEASED status must NOT exist in Phase 1');
+    it('addLine(): explicit [] with 0 patterns succeeds with 0 selections', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [],
+        options: [],
+      });
+
+      const line = await ctx.orderService.addLine('ord-1', {
+        templateId: 't-1',
+        quantity: 2,
+        patternSelections: [],
+      });
+
+      assert.equal(line.quantity, 2);
+      assert.equal(line.patternSelections.length, 0);
+    });
+
+    it('addLine(): exact explicit set succeeds with specified options', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [
+          { id: 'opt-1', patternId: 'p-1', name: 'خيار 1', sortOrder: 1, deletedAt: null },
+          { id: 'opt-2', patternId: 'p-1', name: 'خيار 2', sortOrder: 2, deletedAt: null },
+        ],
+      });
+
+      const line = await ctx.orderService.addLine('ord-1', {
+        templateId: 't-1',
+        quantity: 5,
+        patternSelections: [{ patternId: 'p-1', optionId: 'opt-2' }],
+      });
+
+      assert.equal(line.patternSelections[0].selectedOptionId, 'opt-2');
+    });
+
+    it('addLine(): foreign pattern throws PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-1', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+      });
+
+      let err: any = null;
+      try {
+        await ctx.orderService.addLine('ord-1', {
+          templateId: 't-1',
+          quantity: 2,
+          patternSelections: [{ patternId: 'foreign-pattern', optionId: 'opt-1' }],
+        });
+      } catch (e) {
+        err = e;
+      }
+
+      assert.ok(err instanceof BusinessRuleError);
+      assert.equal(err.code, 'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID');
+    });
+
+    it('addLine(): foreign option throws PRODUCTION_ORDER_LINE_OPTION_INVALID', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-1', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+      });
+
+      let err: any = null;
+      try {
+        await ctx.orderService.addLine('ord-1', {
+          templateId: 't-1',
+          quantity: 2,
+          patternSelections: [{ patternId: 'p-1', optionId: 'foreign-opt' }],
+        });
+      } catch (e) {
+        err = e;
+      }
+
+      assert.ok(err instanceof BusinessRuleError);
+      assert.equal(err.code, 'PRODUCTION_ORDER_LINE_OPTION_INVALID');
+    });
+
+    it('validateLineQuantity(): invalid quantities throw PRODUCTION_ORDER_LINE_QUANTITY_INVALID', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+      });
+
+      const invalidQuantities = [0, -1, 1.5, 10001, NaN];
+      for (const q of invalidQuantities) {
+        await assert.rejects(
+          async () => ctx.orderService.addLine('ord-1', { templateId: 't-1', quantity: q }),
+          (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_QUANTITY_INVALID'
+        );
+        await assert.rejects(
+          async () => ctx.orderService.updateLineQuantity('ord-1', 'line-1', { quantity: q }),
+          (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_QUANTITY_INVALID'
+        );
+      }
+    });
+
+    it('changePatternSelection(): inactive template throws PRODUCTION_ORDER_TEMPLATE_INACTIVE', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [{ id: 'line-1', orderId: 'ord-1', templateId: 't-inactive', quantity: 2, sortOrder: 1, deletedAt: null }],
+        template: { id: 't-inactive', name: 'قالب غير فعال', isActive: false, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-inactive', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-1', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+      });
+
+      let err: any = null;
+      try {
+        await ctx.orderService.changePatternSelection('ord-1', 'line-1', 'p-1', { optionId: 'opt-1' });
+      } catch (e) {
+        err = e;
+      }
+
+      assert.ok(err instanceof BusinessRuleError);
+      assert.equal(err.code, 'PRODUCTION_ORDER_TEMPLATE_INACTIVE');
+    });
+
+    it('changePatternSelection(): foreign option throws PRODUCTION_ORDER_LINE_OPTION_INVALID', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [{ id: 'line-1', orderId: 'ord-1', templateId: 't-1', quantity: 2, sortOrder: 1, deletedAt: null }],
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-1', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+      });
+
+      let err: any = null;
+      try {
+        await ctx.orderService.changePatternSelection('ord-1', 'line-1', 'p-1', { optionId: 'foreign-opt' });
+      } catch (e) {
+        err = e;
+      }
+
+      assert.ok(err instanceof BusinessRuleError);
+      assert.equal(err.code, 'PRODUCTION_ORDER_LINE_OPTION_INVALID');
+    });
+
+    it('syncDraftLineSelections(): reconciles when template options change', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [{ id: 'line-1', orderId: 'ord-1', templateId: 't-1', quantity: 2, sortOrder: 1, deletedAt: null }],
+        selections: [{ id: 'sel-1', orderLineId: 'line-1', templatePatternId: 'p-1', selectedOptionId: 'opt-archived' }],
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [
+          { id: 'opt-archived', patternId: 'p-1', name: 'خيار قديم', sortOrder: 1, deletedAt: new Date() },
+          { id: 'opt-active-new', patternId: 'p-1', name: 'خيار جديد', sortOrder: 2, deletedAt: null },
+        ],
+      });
+
+      const line = await ctx.orderService.syncDraftLineSelections('ord-1', 'line-1');
+      assert.equal(line.patternSelections[0].selectedOptionId, 'opt-active-new');
+    });
+
+    it('syncDraftLineSelections(): corrupt pattern ownership fails closed with PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [{ id: 'line-1', orderId: 'ord-1', templateId: 't-1', quantity: 2, sortOrder: 1, deletedAt: null }],
+        selections: [{ id: 'sel-1', orderLineId: 'line-1', templatePatternId: 'p-foreign', selectedOptionId: 'opt-1' }],
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-foreign', templateId: 't-other', name: 'نمط خارجي', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-foreign', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+      });
+
+      await assert.rejects(
+        async () => ctx.orderService.syncDraftLineSelections('ord-1', 'line-1'),
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+      );
+    });
+
+    it('validateDraftForRelease(): is read-only and does not mutate order state', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [{ id: 'line-1', orderId: 'ord-1', templateId: 't-1', quantity: 2, sortOrder: 1, deletedAt: null }],
+        selections: [{ id: 'sel-1', orderLineId: 'line-1', templatePatternId: 'p-1', selectedOptionId: 'opt-1' }],
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        workflowItems: [{ id: 'wf-1', templateId: 't-1', deletedAt: null }],
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-1', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+      });
+
+      const readiness = await ctx.orderService.validateDraftForRelease('ord-1');
+      assert.equal(readiness.ready, true);
+      assert.equal(readiness.issues.length, 0);
+      assert.equal(ctx.store.order.status, ProductionOrderStatus.DRAFT);
+    });
+
+    it('validateDraftForRelease(): corrupt ownership throws PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [{ id: 'line-1', orderId: 'ord-1', templateId: 't-1', quantity: 2, sortOrder: 1, deletedAt: null }],
+        selections: [{ id: 'sel-1', orderLineId: 'line-1', templatePatternId: 'p-1', selectedOptionId: 'opt-foreign' }],
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط 1', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-foreign', patternId: 'p-other', name: 'خيار خارجي', sortOrder: 1, deletedAt: null }],
+      });
+
+      await assert.rejects(
+        async () => ctx.orderService.validateDraftForRelease('ord-1'),
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+      );
+    });
+
+    it('getOrderById(): corrupt pattern ownership throws PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [{ id: 'line-1', orderId: 'ord-1', templateId: 't-1', quantity: 2, sortOrder: 1, deletedAt: null }],
+        selections: [{ id: 'sel-1', orderLineId: 'line-1', templatePatternId: 'p-foreign', selectedOptionId: 'opt-1' }],
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-foreign', templateId: 't-other', name: 'نمط أجنبي', deletedAt: null, createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-foreign', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+      });
+
+      await assert.rejects(
+        async () => ctx.orderService.getOrderById('ord-1'),
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+      );
+    });
+
+    it('getOrderById(): stale (archived) pattern and option remain readable with true historical names', async () => {
+      const ctx = createMockServiceContext({
+        order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+        lines: [{ id: 'line-1', orderId: 'ord-1', templateId: 't-1', quantity: 2, sortOrder: 1, deletedAt: null }],
+        selections: [{ id: 'sel-1', orderLineId: 'line-1', templatePatternId: 'p-1', selectedOptionId: 'opt-1' }],
+        template: { id: 't-1', name: 'قالب 1', isActive: true, deletedAt: null },
+        patterns: [{ id: 'p-1', templateId: 't-1', name: 'نمط تاريخي مؤرشف', deletedAt: new Date(), createdAt: new Date() }],
+        options: [{ id: 'opt-1', patternId: 'p-1', name: 'خيار تاريخي مؤرشف', sortOrder: 1, deletedAt: new Date() }],
+      });
+
+      const order = await ctx.orderService.getOrderById('ord-1');
+      assert.equal(order.lines?.length, 1);
+      assert.equal(order.lines?.[0].patternSelections[0].patternName, 'نمط تاريخي مؤرشف');
+      assert.equal(order.lines?.[0].patternSelections[0].selectedOptionName, 'خيار تاريخي مؤرشف');
+      assert.deepEqual(order.lines?.[0].patternSelections[0].availableOptions, []);
+    });
+
+    it('createOrder(): fails closed if sequence row is missing with PRODUCTION_ORDER_SEQUENCE_NOT_INITIALIZED', async () => {
+      const ctx = createMockServiceContext({
+        sequence: null, // sequence not seeded
+      });
+
+      await assert.rejects(
+        async () => ctx.orderService.createOrder({ description: 'Test' }, 'u-1'),
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_SEQUENCE_NOT_INITIALIZED'
+      );
+    });
+
+    it('ProductionTemplateService.getOrderConfiguration(): inactive template throws PRODUCTION_ORDER_TEMPLATE_INACTIVE', async () => {
+      const mockGuardService: any = {
+        requireExistingTemplate: async () => ({ id: 't-inactive', name: 'قالب معطل', isActive: false }),
+      };
+      const templateService = new ProductionTemplateService({ getRepository: () => ({}) } as any, mockGuardService, {} as any, {} as any);
+
+      await assert.rejects(
+        async () => templateService.getOrderConfiguration('t-inactive'),
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_TEMPLATE_INACTIVE'
+      );
+    });
+
+    it('ProductionTemplateService.getOrderConfiguration(): lightweight query loads only patterns and options (no tasks)', async () => {
+      const mockGuardService: any = {
+        requireExistingTemplate: async () => ({ id: 't-active', name: 'قالب نشط', isActive: true }),
+      };
+      const mockPatternRepo = {
+        find: async (opts: any) => {
+          assert.equal(opts.relations?.options, true);
+          assert.equal((opts.relations as any)?.tasks, undefined);
+          return [
+            {
+              id: 'p-1',
+              name: 'نمط خفيف',
+              options: [{ id: 'opt-1', name: 'خيار 1', sortOrder: 1, deletedAt: null }],
+            },
+          ];
+        },
+      };
+      const mockDataSource: any = {
+        getRepository: () => mockPatternRepo,
+      };
+
+      const templateService = new ProductionTemplateService(mockDataSource, mockGuardService, {} as any, {} as any);
+      const config = await templateService.getOrderConfiguration('t-active');
+
+      assert.equal(config.templateId, 't-active');
+      assert.equal(config.patterns.length, 1);
+      assert.equal(config.patterns[0].defaultOptionId, 'opt-1');
+      assert.equal((config.patterns[0] as any).tasks, undefined);
     });
   });
 });
+

@@ -519,7 +519,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // ADD LINE MODAL LOGIC
   // ==========================================
 
-  let selectedTemplateConfig = null;
+  let templatePickerCurrentPage = 1;
+  let templatePickerTotalPages = 1;
+  let templatePickerSearchTerm = '';
+  let templatePickerLoading = false;
+  let templatePickerRequestSeq = 0;
+  const loadedTemplateIds = new Set();
 
   function openAddLine() {
     const addAlert = document.getElementById('addLineAlert');
@@ -536,7 +541,17 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('confirmAddLineBtn').disabled = true;
 
     selectedTemplateConfig = null;
-    loadTemplatePickerOptions('');
+
+    // Reset template picker state
+    templatePickerCurrentPage = 1;
+    templatePickerTotalPages = 1;
+    templatePickerSearchTerm = '';
+    templatePickerLoading = false;
+    templatePickerRequestSeq = 0;
+    loadedTemplateIds.clear();
+
+    if (templateSearchInput) templateSearchInput.value = '';
+    loadTemplatePickerPage(1, '', false);
 
     if (addLineModal) addLineModal.show();
   }
@@ -547,34 +562,75 @@ document.addEventListener('DOMContentLoaded', () => {
     templateSearchInput.addEventListener('input', (e) => {
       clearTimeout(templateSearchTimer);
       templateSearchTimer = setTimeout(() => {
-        loadTemplatePickerOptions(e.target.value.trim());
+        const searchTerm = e.target.value.trim();
+        templatePickerCurrentPage = 1;
+        templatePickerSearchTerm = searchTerm;
+        loadedTemplateIds.clear();
+        loadTemplatePickerPage(1, searchTerm, false);
       }, 300);
     });
   }
 
-  async function loadTemplatePickerOptions(search) {
+  async function loadTemplatePickerPage(page, search, isAppend) {
     const listContainer = document.getElementById('templatePickerList');
-    listContainer.innerHTML = '';
+    if (!listContainer) return;
 
-    const loadingDiv = document.createElement('div');
-    loadingDiv.className = 'text-center py-2 text-muted small';
-    loadingDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-1 text-primary"></span> جاري البحث...';
-    listContainer.appendChild(loadingDiv);
+    const thisReqSeq = ++templatePickerRequestSeq;
+    templatePickerLoading = true;
+
+    // Remove previous Load More button if present
+    const existingLoadMore = document.getElementById('templatePickerLoadMoreContainer');
+    if (existingLoadMore) {
+      if (isAppend) {
+        const loadMoreBtn = document.getElementById('templatePickerLoadMoreBtn');
+        if (loadMoreBtn) {
+          loadMoreBtn.disabled = true;
+          loadMoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1 text-primary"></span> جاري تحميل المزيد...';
+        }
+      } else {
+        existingLoadMore.remove();
+      }
+    }
+
+    if (!isAppend) {
+      listContainer.innerHTML = '';
+      const loadingDiv = document.createElement('div');
+      loadingDiv.className = 'text-center py-2 text-muted small';
+      loadingDiv.id = 'templatePickerLoadingIndicator';
+      loadingDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-1 text-primary"></span> جاري البحث...';
+      listContainer.appendChild(loadingDiv);
+    }
 
     try {
       const url = new URL('/api/production/templates/reference-options', window.location.origin);
+      url.searchParams.set('page', page.toString());
+      url.searchParams.set('limit', '20');
       if (search) url.searchParams.set('search', search);
 
       const res = await window.erpFetch(url.toString());
       const resJson = await res.json();
+
+      // Race condition protection: ignore stale responses
+      if (thisReqSeq !== templatePickerRequestSeq) {
+        return;
+      }
+
       if (!res.ok || !resJson.success) {
         throw new Error(resJson.message || 'فشل جلب القوالب');
       }
 
-      const templates = resJson.data.items || [];
-      listContainer.innerHTML = '';
+      // Remove loading indicator / old load more button
+      const loadingInd = document.getElementById('templatePickerLoadingIndicator');
+      if (loadingInd) loadingInd.remove();
+      const oldLoadMore = document.getElementById('templatePickerLoadMoreContainer');
+      if (oldLoadMore) oldLoadMore.remove();
 
-      if (templates.length === 0) {
+      const templates = resJson.data.items || [];
+      templatePickerCurrentPage = resJson.data.page || page;
+      templatePickerTotalPages = resJson.data.totalPages || 1;
+
+      if (!isAppend && templates.length === 0) {
+        listContainer.innerHTML = '';
         const emptyDiv = document.createElement('div');
         emptyDiv.className = 'text-center py-2 text-muted small';
         emptyDiv.textContent = 'لا توجد قوالب فعالة مطابقة.';
@@ -583,6 +639,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       templates.forEach((tmpl) => {
+        if (loadedTemplateIds.has(tmpl.id)) {
+          return; // Prevent duplicate cards
+        }
+        loadedTemplateIds.add(tmpl.id);
+
         const itemBtn = document.createElement('button');
         itemBtn.type = 'button';
         itemBtn.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center py-2 px-3 border-0 rounded mb-1';
@@ -600,12 +661,39 @@ document.addEventListener('DOMContentLoaded', () => {
         itemBtn.addEventListener('click', () => onTemplateSelected(tmpl));
         listContainer.appendChild(itemBtn);
       });
+
+      // Show "Load More" button if more pages exist
+      if (templatePickerCurrentPage < templatePickerTotalPages) {
+        const loadMoreContainer = document.createElement('div');
+        loadMoreContainer.className = 'text-center pt-2 pb-1';
+        loadMoreContainer.id = 'templatePickerLoadMoreContainer';
+
+        const loadMoreBtn = document.createElement('button');
+        loadMoreBtn.type = 'button';
+        loadMoreBtn.className = 'btn btn-outline-primary btn-sm w-100 py-1';
+        loadMoreBtn.id = 'templatePickerLoadMoreBtn';
+        loadMoreBtn.innerHTML = '<i class="fa-solid fa-angles-down me-1"></i> تحميل المزيد';
+        loadMoreBtn.addEventListener('click', () => {
+          loadTemplatePickerPage(templatePickerCurrentPage + 1, templatePickerSearchTerm, true);
+        });
+
+        loadMoreContainer.appendChild(loadMoreBtn);
+        listContainer.appendChild(loadMoreContainer);
+      }
     } catch (err) {
-      listContainer.innerHTML = '';
+      if (thisReqSeq !== templatePickerRequestSeq) return;
+
+      if (!isAppend) {
+        listContainer.innerHTML = '';
+      }
       const errDiv = document.createElement('div');
       errDiv.className = 'text-center py-2 text-danger small';
       errDiv.textContent = err.message || 'خطأ في جلب القوالب';
       listContainer.appendChild(errDiv);
+    } finally {
+      if (thisReqSeq === templatePickerRequestSeq) {
+        templatePickerLoading = false;
+      }
     }
   }
 

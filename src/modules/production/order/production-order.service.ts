@@ -69,13 +69,16 @@ export class ProductionOrderService {
     return this.dataSource.transaction(async (manager) => {
       // 1. Generate human-readable order number atomically using sequence row lock
       const seqRepo = manager.getRepository(ProductionOrderSequenceEntity);
-      let seq = await seqRepo.findOne({
+      const seq = await seqRepo.findOne({
         where: { id: 'PRODUCTION_ORDER' },
         lock: { mode: 'pessimistic_write' },
       });
 
       if (!seq) {
-        seq = seqRepo.create({ id: 'PRODUCTION_ORDER', currentValue: '0' });
+        throw new BusinessRuleError(
+          'عداد تسلسل أوامر الإنتاج غير مهيأ في قاعدة البيانات',
+          'PRODUCTION_ORDER_SEQUENCE_NOT_INITIALIZED'
+        );
       }
 
       const nextVal = BigInt(seq.currentValue || '0') + 1n;
@@ -227,6 +230,15 @@ export class ProductionOrderService {
   // 2. ORDER LINES MANAGEMENT
   // ==========================================
 
+  private validateLineQuantity(quantity: number): void {
+    if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 1 || quantity > 10000) {
+      throw new BusinessRuleError(
+        'كمية بند أمر الإنتاج يجب أن تكون عدداً صحيحاً بين 1 و 10,000',
+        'PRODUCTION_ORDER_LINE_QUANTITY_INVALID'
+      );
+    }
+  }
+
   /**
    * Adds a new line to a DRAFT production order.
    * Atomic: creates line and pattern selections (default or explicit).
@@ -235,6 +247,8 @@ export class ProductionOrderService {
     orderId: string,
     dto: AddProductionOrderLineDto
   ): Promise<ProductionOrderLineDto> {
+    this.validateLineQuantity(dto.quantity);
+
     return this.dataSource.transaction(async (manager) => {
       // 1. Lock Order (Unified Lock Root)
       await this.guardService.lockMutableOrder(orderId, manager);
@@ -285,7 +299,7 @@ export class ProductionOrderService {
       // 4. Resolve pattern selections: either explicit payload validation or system defaults
       const selectionsToCreate: Array<{ templatePatternId: string; selectedOptionId: string }> = [];
 
-      if (dto.patternSelections && dto.patternSelections.length > 0) {
+      if (dto.patternSelections !== undefined) {
         // Explicit payload provided: MUST be the exact set of active patterns
         const payload = dto.patternSelections;
 
@@ -397,6 +411,8 @@ export class ProductionOrderService {
     lineId: string,
     dto: UpdateProductionOrderLineDto
   ): Promise<ProductionOrderLineDto> {
+    this.validateLineQuantity(dto.quantity);
+
     return this.dataSource.transaction(async (manager) => {
       // 1. Lock Order
       await this.guardService.lockMutableOrder(orderId, manager);
@@ -522,6 +538,26 @@ export class ProductionOrderService {
       // 2. Validate Line belongs to Order
       const line = await this.guardService.requireExistingLine(orderId, lineId, manager);
 
+      // 2.1. Validate Template exists, not archived, and is active
+      const templateRepo = manager.getRepository(ProductionTemplateEntity);
+      const template = await templateRepo.findOne({
+        where: { id: line.templateId, deletedAt: IsNull() },
+      });
+
+      if (!template) {
+        throw new NotFoundError(
+          'قالب هذا البند غير موجود أو تم حذفه',
+          'PRODUCTION_ORDER_TEMPLATE_NOT_FOUND'
+        );
+      }
+
+      if (!template.isActive) {
+        throw new BusinessRuleError(
+          'لا يمكن تعديل خيارات نمط لقالب تصنيع غير فعال',
+          'PRODUCTION_ORDER_TEMPLATE_INACTIVE'
+        );
+      }
+
       // 3. Validate Pattern belongs to Line's Template and is active
       const patternRepo = manager.getRepository(ProductionTemplatePatternEntity);
       const pattern = await patternRepo.findOne({
@@ -644,6 +680,41 @@ export class ProductionOrderService {
         where: { orderLineId: lineId },
       });
 
+      // 5.1. Validate existing selections against structural corruption (Fail Closed)
+      if (existingSelections.length > 0) {
+        const existingPatternIds = Array.from(new Set(existingSelections.map((s) => s.templatePatternId)));
+        const existingOptionIds = Array.from(new Set(existingSelections.map((s) => s.selectedOptionId)));
+
+        const referencedPatterns = await patternRepo.find({
+          where: { id: In(existingPatternIds) },
+          withDeleted: true,
+        });
+        const refPatternMap = new Map(referencedPatterns.map((p) => [p.id, p]));
+
+        const referencedOptions = await manager.getRepository(ProductionTemplatePatternOptionEntity).find({
+          where: { id: In(existingOptionIds) },
+          withDeleted: true,
+        });
+        const refOptionMap = new Map(referencedOptions.map((o) => [o.id, o]));
+
+        for (const sel of existingSelections) {
+          const pat = refPatternMap.get(sel.templatePatternId);
+          if (!pat || pat.templateId !== line.templateId) {
+            throw new BusinessRuleError(
+              'تعذر المزامنة: بنية اختيارات البند تالفة وغير موثوقة',
+              'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+            );
+          }
+          const opt = refOptionMap.get(sel.selectedOptionId);
+          if (!opt || opt.patternId !== sel.templatePatternId) {
+            throw new BusinessRuleError(
+              'تعذر المزامنة: بنية اختيارات البند تالفة وغير موثوقة',
+              'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+            );
+          }
+        }
+      }
+
       const activePatternMap = new Map(patternsWithOptions.map((item) => [item.pattern.id, item]));
 
       // 6. Remove obsolete selections (pointing to patterns no longer active)
@@ -763,6 +834,44 @@ export class ProductionOrderService {
       const list = lineSelectionsMap.get(sel.orderLineId) || [];
       list.push(sel);
       lineSelectionsMap.set(sel.orderLineId, list);
+    }
+
+    // Fail closed on any structural corruption in existing selections
+    if (selections.length > 0) {
+      const referencedPatternIds = Array.from(new Set(selections.map((s) => s.templatePatternId)));
+      const referencedOptionIds = Array.from(new Set(selections.map((s) => s.selectedOptionId)));
+
+      const referencedPatterns = await this.patternRepo.find({
+        where: { id: In(referencedPatternIds) },
+        withDeleted: true,
+      });
+      const refPatternMap = new Map(referencedPatterns.map((p) => [p.id, p]));
+
+      const referencedOptions = await this.optionRepo.find({
+        where: { id: In(referencedOptionIds) },
+        withDeleted: true,
+      });
+      const refOptionMap = new Map(referencedOptions.map((o) => [o.id, o]));
+
+      for (const line of activeLines) {
+        const lineSels = lineSelectionsMap.get(line.id) || [];
+        for (const sel of lineSels) {
+          const pat = refPatternMap.get(sel.templatePatternId);
+          if (!pat || pat.templateId !== line.templateId) {
+            throw new BusinessRuleError(
+              'بنية اختيارات البند تالفة: النمط المرجعي غير موجود أو لا ينتمي لهذا القالب',
+              'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+            );
+          }
+          const opt = refOptionMap.get(sel.selectedOptionId);
+          if (!opt || opt.patternId !== sel.templatePatternId) {
+            throw new BusinessRuleError(
+              'بنية اختيارات البند تالفة: الخيار المرجعي غير موجود أو لا ينتمي لهذا النمط',
+              'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+            );
+          }
+        }
+      }
     }
 
     // 4. Validate each line
@@ -923,6 +1032,59 @@ export class ProductionOrderService {
       selectionsByLineId.set(sel.orderLineId, list);
     }
 
+    // 4.1. Validate structural corruption on all selections (Fail Closed)
+    const referencedPatternIds = Array.from(new Set(selections.map((s) => s.templatePatternId)));
+    const referencedOptionIds = Array.from(new Set(selections.map((s) => s.selectedOptionId)));
+
+    const referencedPatterns = referencedPatternIds.length > 0
+      ? await patternRepo.find({
+          where: { id: In(referencedPatternIds) },
+          withDeleted: true,
+        })
+      : [];
+    const refPatternMap = new Map(referencedPatterns.map((p) => [p.id, p]));
+
+    const referencedOptions = referencedOptionIds.length > 0
+      ? await (manager ? manager.getRepository(ProductionTemplatePatternOptionEntity) : this.optionRepo).find({
+          where: { id: In(referencedOptionIds) },
+          withDeleted: true,
+        })
+      : [];
+    const refOptionMap = new Map(referencedOptions.map((o) => [o.id, o]));
+
+    for (const line of lines) {
+      const lineSels = selectionsByLineId.get(line.id) || [];
+      for (const sel of lineSels) {
+        const pat = refPatternMap.get(sel.templatePatternId);
+        if (!pat) {
+          throw new BusinessRuleError(
+            'بنية اختيارات البند تالفة: النمط المرجعي غير موجود في النظام',
+            'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+          );
+        }
+        if (pat.templateId !== line.templateId) {
+          throw new BusinessRuleError(
+            'بنية اختيارات البند تالفة: النمط المرجعي لا ينتمي إلى قالب هذا البند',
+            'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+          );
+        }
+
+        const opt = refOptionMap.get(sel.selectedOptionId);
+        if (!opt) {
+          throw new BusinessRuleError(
+            'بنية اختيارات البند تالفة: الخيار المرجعي غير موجود في النظام',
+            'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+          );
+        }
+        if (opt.patternId !== sel.templatePatternId) {
+          throw new BusinessRuleError(
+            'بنية اختيارات البند تالفة: الخيار المرجعي لا ينتمي إلى النمط المحدد',
+            'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+          );
+        }
+      }
+    }
+
     // 5. Batch load active patterns and options for all unique templates
     const patterns = await patternRepo.find({
       where: { templateId: In(templateIds), deletedAt: IsNull() },
@@ -945,30 +1107,26 @@ export class ProductionOrderService {
       totalQuantity += line.quantity;
       const tmpl = templateMap.get(line.templateId);
       const lineSelections = selectionsByLineId.get(line.id) || [];
-      const templatePatterns = patternsByTemplateId.get(line.templateId) || [];
 
       // Assemble pattern selections DTOs
       const selectionDtos = lineSelections.map((sel) => {
-        const pat = allPatternsMap.get(sel.templatePatternId);
-        const patternName = pat ? pat.name : 'نمط محذوف أو غير معروف';
+        const pat = refPatternMap.get(sel.templatePatternId)!;
+        const opt = refOptionMap.get(sel.selectedOptionId)!;
 
-        const activeOptions = pat
-          ? (pat.options || [])
+        // If pattern is still active, fetch active available options; if archived, availableOptions = []
+        const activePat = !pat.deletedAt ? allPatternsMap.get(pat.id) : null;
+        const activeOptions = activePat
+          ? (activePat.options || [])
               .filter((o) => !o.deletedAt)
               .sort((a, b) => a.sortOrder - b.sortOrder)
           : [];
 
-        const selectedOption = activeOptions.find((o) => o.id === sel.selectedOptionId);
-        const selectedOptionName = selectedOption
-          ? selectedOption.name
-          : 'خيار غير معروف أو محذوف';
-
         return {
           id: sel.id,
           templatePatternId: sel.templatePatternId,
-          patternName,
+          patternName: pat.name,
           selectedOptionId: sel.selectedOptionId,
-          selectedOptionName,
+          selectedOptionName: opt.name,
           availableOptions: activeOptions.map((o) => ({
             id: o.id,
             name: o.name,
