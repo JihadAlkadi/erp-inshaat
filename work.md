@@ -1,87 +1,117 @@
 # Project Technical Map
 
-- **قوالب ومراحل الإنتاج — Production Template Core & Template Builder Workspace** (`src/modules/production/`):
+- **قوالب ومراحل الإنتاج وسير العمل المختلط — Production Template Core & Mixed Workflow Workspace** (`src/modules/production/`):
   - **الهيكلية المعمارية والمجلدات المستقلة (Modular Monolith Structure)**:
     - القوالب جزء أصيل من تطبيق الإنتاج (`Production Application`)، ولا يوجد تطبيق مستقل باسم Studies.
-    - النماذج مقسمة إلى 5 مجلدات مستقلة تماماً:
+    - النماذج مقسمة إلى 11 مجلداً مستقلاً تماماً:
       ```text
       src/modules/production/template/
       src/modules/production/template-specification/
       src/modules/production/template-stage/
       src/modules/production/template-stage-material/
       src/modules/production/template-stage-attachment/
+      src/modules/production/template-workflow-item/
+      src/modules/production/template-pattern/
+      src/modules/production/template-pattern-option/
+      src/modules/production/template-pattern-option-task/
+      src/modules/production/template-pattern-option-task-material/
+      src/modules/production/template-pattern-option-task-attachment/
       ```
-    - الجداول المعتمدة في قاعدة البيانات:
-      `production_template`, `production_template_specification`, `production_template_stage`, `production_template_stage_material`, `production_template_stage_attachment`.
-  - **تجربة المستخدم ومساحة العمل المتكاملة (Two-Step Flow & Single-Page Template Builder)**:
+    - الجداول المعتمدة في قاعدة البيانات (11 جدولاً بنكيث وتكامل تام):
+      `production_template`, `production_template_specification`, `production_template_stage`, `production_template_stage_material`, `production_template_stage_attachment`, `production_template_workflow_item`, `production_template_pattern`, `production_template_pattern_option`, `production_template_pattern_option_task`, `production_template_pattern_option_task_material`, `production_template_pattern_option_task_attachment`.
+  - **تجربة المستخدم ومساحة العمل المتكاملة (Two-Step Flow & Single-Page Mixed Workflow Workspace)**:
     > Template creation is intentionally a two-step user flow:
     > 1. Create minimal template identity.
-    > 2. Redirect directly to the Template Builder workspace where specifications, workflow stages, planned materials and stage reference documents are managed without leaving the page.
+    > 2. Redirect directly to the Template Builder workspace where specifications, mixed workflow (stages and patterns), planned materials and reference documents are managed without leaving the page.
     - صفحة الإنشاء `/production/templates/create` تقتصر فقط على الهوية الأساسية (الاسم، الكود، الرقم المرجعي، الوصف، الحالة)، وزر المتابعة `إنشاء ومتابعة إعداد القالب` ينقل المستخدم مباشرة إلى `/production/templates/:id`.
-    - صفحة القالب `/production/templates/:id` هي **Template Builder Workspace** واحدة متكاملة:
+    - صفحة القالب `/production/templates/:id` هي **Template Builder Workspace** متكاملة:
       - تعديل البيانات الأساسية يتم عبر Modal فوري وحفظ API دون مغادرة الصفحة.
       - شريط تنقل سلس وSticky بين أقسام الصفحة (`#template-info`, `#template-specifications`, `#template-workflow`).
       - إدارة المواصفات وإعادة ترتيبها عبر Modals مخصصة.
-      - النقر على أي مرحلة يفتح **درج المرحلة الجانبي (Stage Offcanvas Drawer)** من 3 تبويبات:
+      - إضافة عناصر سير العمل بالأزرار العلوية المباشرة: `[+ إضافة نمط]` و `[+ إضافة مرحلة]`.
+      - النقر على أي مرحلة يفتح **نافذة المرحلة المنبثقة المتمركزة (Centered Stage Modal)** من 3 تبويبات:
         1. معلومات المرحلة وتعديل القسم التشغيلي.
-        2. المواد المخططة مع أداة بحث في الكتالوج (Debounced Search) وترقيم (Pagination/Load More) وتحميل الوحدات عند الطلب (On-demand Unit Fetching).
+        2. المواد المخططة مع أداة بحث في الكتالوج (Debounced Search) وترقيم (Pagination) وتحميل الوحدات عند الطلب.
         3. الوثائق التنفيذية المرجعية مع الرفع والمشاهدة والتحميل والتنزيل وإعادة الترتيب.
-  - **قواعد ومحددات سير العمل ومراحل الإنتاج (Workflow & Stage Invariants)**:
-    > No sub-stages.
-    > Stages are globally ordered.
-    > departmentId belongs to Stage.
-    > Only consecutive stages with same departmentId are grouped visually.
-    > Same department may appear multiple times.
-    > No TemplateDepartmentSection entity exists.
-    - المراحل مرتبة عالمياً على مستوى القالب `sortOrder: 1..N` بترتيب مكثف (Dense Ordering).
-    - التجميع حسب القسم هو عرض بصري فقط للمراحل المتتالية التي تملك نفس `departmentId`.
-    - السحب والإفلات يغير الترتيب فقط داخل Transaction مع قفل تشاؤمي (`pessimistic_write`) على صف القالب، ولا يغير القسم بصمت.
-    - تغيير القسم التشغيلي للمرحلة يتم بإجراء صريح داخل نموذج تعديل المرحلة.
-  - **حظر تسريب بيانات المستودعات في مواد المرحلة (Stage Materials Data Leakage Elimination)**:
-    - مسارات مواد المرحلة ترجع DTO مخصص `ProductionTemplateStageMaterialDto` يحتوي حصراً:
-      `{ id, stageId, productId, productUnitId, plannedQuantity, product: { id, name, code }, productUnit: { id, name, isBase } }`.
+      - النقر على أي مهمة داخل خيار النمط يفتح **نافذة المهمة المنبثقة المتمركزة (Centered Task Modal)** من 3 تبويبات:
+        1. معلومات المهمة وتعديل القسم التشغيلي والمدة والتكلفة التقديرية.
+        2. المواد المخططة للمهمة مع نفس تجربة كتالوج المستودعات بدون تسريب للبيانات الداخلية.
+        3. الوثائق التنفيذية المرجعية للمهمة عبر خدمة التخزين المشتركة والتحميل الآمن.
+  - **معمارية سير العمل المختلط وحيد المرجع (Mixed Workflow & Single Source of Truth)**:
+    > Single source of truth for top-level workflow ordering is ProductionTemplateWorkflowItemEntity.sortOrder.
+    > No sub-stages exist. No generic recursive trees are permitted.
+    > Database column sort_order was permanently removed from production_template_stage in Migration 0011.
+    - ترتيب عناصر المستوى الأول في سير العمل يخضع حصراً لجدول `production_template_workflow_item`:
+      - الترتيب مكثف ومتسلسل `sortOrder: 1..N`.
+      - كل عنصر في سير العمل هو إما مرحلة مباشرة `STAGE` (`stage_id IS NOT NULL AND pattern_id IS NULL`) أو عقدة قرار/نمط `PATTERN` (`pattern_id IS NOT NULL AND stage_id IS NULL`).
+      - محمي على مستوى قاعدة البيانات عبر Check Constraint: `CHK_prod_tmpl_wf_item_polymorphic`.
+      - فرادة الترتيب مضمونة بقيد فريد مركب: `UQ_prod_tmpl_wf_item_order (template_id, sort_order)`.
+      - كل مرحلة وكل نمط يرتبط بعنصر سير عمل واحد حصراً عبر قيود فريدة `UQ_prod_tmpl_wf_item_stage` و `UQ_prod_tmpl_wf_item_pattern`.
+      - تم حذف عمود `sort_order` نهائياً من جدول `production_template_stage`؛ وأي ترتيب قديم للمراحل أصبح مشتقاً بصرياً ودلالياً من `workflowItem.sortOrder`.
+  - **مجال الأنماط والخيارات والمهام (Pattern Domain: Pattern -> Options -> Tasks)**:
+    > Pattern and Option have NO departmentId.
+    > DepartmentId strictly belongs to Stage and Task.
+    > Options are branch alternatives; Tasks are sequential execution steps within an option.
+    - النمط (`ProductionTemplatePattern`) هو نقطة تفرع/قرار هيكلي في مسار الإنتاج (مثل "نوع الصب: مسبق الصنع / صب في الموقع" أو "طريقة العزل").
+    - النمط لا يملك قسماً تشغيلياً (`No departmentId on Pattern`).
+    - الخيار (`ProductionTemplatePatternOption`) هو أحد البدائل التفرعية داخل النمط (مثل "صب مسبق الصنع" أو "صب رطب").
+    - الخيار لا يملك قسماً تشغيلياً (`No departmentId on Option`). الخيارات مرتبة داخل النمط مكثفاً `sortOrder: 1..N`.
+    - المهمة (`ProductionTemplatePatternOptionTask`) هي وحدة التنفيذ الإجرائية داخل الخيار؛ وهي التي تملك القسم التشغيلي حصراً (`departmentId belongs to Task`).
+    - المهام مرتبة داخل الخيار مكثفاً `sortOrder: 1..N`.
+    - لا توجد مستويات فرعية عودية (Strict 4-tier model: `Template -> WorkflowItem -> Stage | (Pattern -> Option -> Task)`).
+  - **الخيار الافتراضي المستقبلي (Default Option Suggestion Invariant)**:
+    > The first active option by sortOrder (sortOrder = 1) is the future default suggestion when generating Production Orders.
+    - أول خيار نشط حسب الترتيب (`sortOrder = 1`) يتم تمييزه في واجهة المستخدم ببادية "الخيار الافتراضي"، وهو الخيار الذي سيقترحه النظام تلقائياً عند توليد أوامر الإنتاج مع إمكانية التبديل من قبل مهندس التخطيط.
+  - **التجميع البصري للأقسام المتتالية وانقطاعه بالأنماط (Visual Consecutive Grouping & Pattern Interruption)**:
+    > Only consecutive stages belonging to the same department are visually grouped.
+    > A Pattern boundary strictly interrupts consecutive department grouping, even if the stages before and after belong to the same department.
+    - دالة `deriveMixedWorkflowGroups` تحافظ على منطق تجميع المراحل المتتالية التي تملك نفس `departmentId`.
+    - وجود أي نمط (`Pattern`) يمثل فاصلاً بنيوياً صريحاً (Decision Node)، فيقطع التجميع فوراً؛ فلا يمكن دمج مرحلة صب تسبق النمط مع مرحلة صب تليه في نفس الكتلة البصرية.
+  - **إعادة الترتيب وحماية المسار القديم (Workflow Reorder & Legacy Reorder Protection)**:
+    - تم توفير مسار موحد لإعادة ترتيب سير العمل بالكامل: `PUT /api/production/templates/:id/workflow/reorder`.
+    - يرسل العميل مصفوفة كاملة لمعرفات عناصر سير العمل (`workflowItemIds: string[]`).
+    - مسار إعادة ترتيب المراحل القديم `PUT /api/production/templates/:id/stages/reorder`:
+      - تم تعديله ليعمل عبر جدول `production_template_workflow_item`.
+      - إذا كان القالب يحتوي على أي نمط نشط (`hasActivePatterns = true`)، يتم حظر استدعاء المسار القديم فوراً بـ `BusinessRuleError` والرمز الثابت `PRODUCTION_TEMPLATE_MIXED_WORKFLOW_REORDER_REQUIRED`.
+  - **خدمة التخزين المرجعية المشتركة (Shared Reference File Storage Abstraction)**:
+    - تم استخراج فئة أساسية مجردة `ProductionTemplateReferenceFileStorageService` لتنظيم إدارة الملفات المرجعية للمراحل والمهام بقواعد موحدة:
+      - المسارات المعزولة والمحمية بمفاتيح مبهمة مولدة دون كشف مسارات الخادم الفيزيائية.
+      - فحص Path Traversal التام بـ `path.relative` ضد الـ Root.
+      - فحص توافق MIME Type مع الامتداد وقائمة الامتدادات البيضاء المعتمدة (PDF, PNG, JPG, JPEG, WEBP بحد أقصى 20 ميغابايت).
+      - دورة الحياة الآمنة للتراجع وحذف الملفات المؤقتة والنهائية عند فشل المعاملات لمنع الملفات اليتيمة.
+      - الحذف الناعم للوثائق المرجعية لحفظ الجاهزية التاريخية لأخذ اللقطات.
+    - ترث منها كل من:
+      - `TemplateStageAttachmentStorageService` لتخزين وثائق المراحل (`storage/template-stage-attachments/`).
+      - `ProductionTemplatePatternOptionTaskAttachmentService` لتخزين وثائق مهام الأنماط (`storage/template-task-attachments/`).
+  - **حظر تسريب بيانات المستودعات في مواد المرحلة ومواد المهمة (Zero Inventory Data Leakage)**:
+    - مسارات مواد المرحلة ومواد المهمة تعتمد خدمة `InventoryProductReferenceService` وترجع DTOs مخصصة:
+      `ProductionTemplateStageMaterialDto` و `ProductionTemplatePatternOptionTaskMaterialDto`.
     - يمنع كلياً تسريب الحقول الداخلية لكتالوج المستودعات مثل: `price`, `barcode`, `locationName`, `specifications`, `conversionQuantity`.
-    - تفادي حد الـ 100 عنصر في اختيار المواد: يدعم الكتالوج البحث والتصفح والترقيم حتى للمنتجات التي تقع بعد أول 100 سجل.
-  - **الوثائق المرجعية للمرحلة وفصلها عن وثائق التنفيذ (Reference Documents vs Runtime Attachments)**:
-    > ProductionTemplateStageAttachment represents design/reference documentation attached to a template stage.
-    > It is not an execution attachment.
-    > Runtime engineer/supervisor attachments will use a separate Production Stage attachment model in a later phase.
-    - وثائق القالب المرجعية هي مخططات هندسية، صور، أو أدلة (PDF, PNG, JPG, WEBP بحد أقصى 20 ميغابايت) يضعها مصمم القالب.
-    - مستقبلاً عند تنفيذ الغرفة في خط الإنتاج، سيكون للمهندس وثائق تنفيذ مستقلة `ProductionStageAttachment`.
-    - خدمة التخزين `TemplateStageAttachmentStorageService` تخزن الملفات خارج المجلدات العامة بمفاتيح مبهمة مولدة (`production-template-stage/${stageId}/${uuid}.${ext}`) مع حماية تامة ضد Path Traversal باستخدام `path.relative`، والتحقق الصارم من تطابق نوع المحتوى والامتداد (MIME/Extension Compatibility Mapping)، وحظر الملفات التنفيذية.
-    - التنزيل محمي بالمصادقة والتحقق من التبعية وترويسة `X-Content-Type-Options: nosniff`، ويفشل مغلقاً بـ `ATTACHMENT_FILE_MISSING` إذا كان السجل موجوداً لكن الملف الفعلي مفقود.
-    - تستخدم الوثائق المرجعية الحذف الناعم (Soft Delete) لحفظ الجاهزية التاريخية لأخذ اللقطات مستقبلاً (Snapshot Readiness)، ولا يتم حذف الملف الفعلي نهائياً عند الأرشفة الناعمة.
-    - سلامة التراجع عن الرفع والملفات اليتيمة (Upload Rollback & Orphan File Prevention):
-      > Attachment upload is rollback-safe: temporary and final files are cleaned if validation or DB persistence fails.
-      - في حال فشل التحقق من الملف (MIME, Extension, Size, Description max 500 chars) يتم حذف ملف Multer المؤقت فوراً.
-      - في حال نجاح حفظ الملف في التخزين النهائي ثم فشل معاملة قاعدة البيانات (DB Transaction Failure)، يتم حذف الملف النهائي فوراً من التخزين وحذف الملف المؤقت منعاً لتراكم أي ملفات يتيمة على القرص.
-      - عند نجاح العملية بالكامل، يتم تنظيف ملف Multer المؤقت بشكل حتمي.
-  - **حدود واجهات برمجة التطبيقات ومنع تسريب الكيانات (API DTO Boundaries & Entity Exposure Prohibition)**:
-    > All public Production Template APIs return explicit DTOs and never expose ORM entities directly.
-    - كافة مسارات HTTP الخاصة بالقوالب والمواصفات والمراحل والمواد المخططة والوثائق المرجعية تعيد DTOs صريحة ومحددة (`ProductionTemplateDto`, `ProductionTemplateListItemDto`, `ProductionTemplateDetailDto`, `ProductionTemplateSpecificationDto`, `ProductionTemplateStageDto`, `ProductionTemplateStageMaterialDto`, `ProductionTemplateStageAttachmentDto`).
-    - يمنع كلياً إرجاع أي كائن TypeORM Entity مباشرة كعقد عام لـ API.
-    - واجهات المراحل تعيد كائن قسم مبسط `{ id, name, code }` ويحظر نهائياً تسريب أي حقول داخلية لإدارة الأقسام مثل `headUserId`, `isActive`, `deletedAt`, `engineers`, `yards`, `headUser`.
-  - **حماية دورة حياة القالب الأب وقفل التزامن الموحد (Unified Pessimistic Lock Root & Atomic Archival)**:
+    - معالجة تعارض القيود الفريدة عند إضافة المادة لنفس الوحدة مرتين وتحويل خطأ MySQL ER_DUP_ENTRY إلى `ConflictError` برمز خطأ واضح (`PRODUCTION_TEMPLATE_STAGE_MATERIAL_EXISTS` أو `PRODUCTION_TEMPLATE_TASK_MATERIAL_EXISTS`).
+  - **حماية دورة حياة القالب الأب وقفل التزامن الموحد (Unified Pessimistic Lock Root Protocol)**:
     > ProductionTemplateEntity is the unified pessimistic lock root for every mutation in the Production Template aggregate.
-    > All template and nested-resource mutations lock the parent template row inside the same database transaction before revalidating lifecycle state and writing child data.
-    > Template archival is atomic: setting `isActive = false` and applying the soft delete occur inside one transaction under the template row lock.
-    > Nested template resources are inaccessible once the parent template is archived.
-    - تم اعتماد `ProductionTemplateGuardService` ودالة `lockMutableTemplate` لفرض بروتوكول تسلسلي صارم لكافة العمليات التعديلية في الـ Aggregate:
-      - `ProductionTemplateEntity` هو الـ Lock Root الوحيد لكافة العمليات التعديلية على القالب أو أي مورد تابع له (`updateTemplate`, `softDeleteTemplate`, `addSpecification`, `updateSpecification`, `deleteSpecification`, `reorderSpecifications`, `addStage`, `updateStage`, `softDeleteStage`, `reorderStages`, `addPlannedMaterial`, `updatePlannedMaterial`, `removePlannedMaterial`, `addStageAttachment`, `updateStageAttachment`, `softDeleteStageAttachment`, `reorderStageAttachments`).
-      - كل عملية تعديل تعمل داخل معاملة واحدة تبدأ بقفل سجل القالب الأب بوضع `pessimistic_write` والتحقق من أنه غير مؤرشف (`deletedAt IS NULL`) قبل إجراء أي تعديل على الجداول التابعة.
-      - أرشفة القالب `softDeleteTemplate` ذرية بالكامل: تعديل `isActive = false` وتطبيق `softDelete` يتمان داخل نفس المعاملة وتحت قفل القالب، وفي حال فشل أي خطوة يتم التراجع التام (Full Rollback) لمنع أي حالة أرشفة جزئية (`No partial archive`).
-      - التعطيل التشغيلي `isActive = false` لا يعتبر أرشفة؛ القالب المعطل غير المؤرشف يبقى قابلاً للتعديل الإداري ما لم يتم حذفه ناعماً (`deletedAt != null`).
-      - عمليات القراءة الطبيعية (`listTemplates`, `getTemplateById`, `listSpecifications`, `listStages`, `getStageById`, `listStageMaterials`, `listStageAttachments`, `getAttachmentForDownload`) تبقى خالية من أقفال الكتابة وتعتمد على `requireExistingTemplate` لمنع القراءة من القوالب المؤرشفة.
-      - أرشفة القالب الأب لا تقوم بعمل Cascade Soft Delete للأطفال للحفاظ على السجل التاريخي وجاهزية اللقطات (Snapshot Readiness).
-  - **توحيد أسماء الفهارس وترقية المخطط (Schema Migration 0010 — Index Normalization)**:
-    - عبر Migration `1710000000010-FinalizeProductionTemplateHardening.ts`، تم استبدال وتوحيد كافة الفهارس القديمة التي كانت تحمل بادئة `studies_*` على الجداول الخمسة بالأسماء النظامية `production_*` (`UQ_production_template_code`, `IDX_production_template_*`, `IDX_production_stage_*`, `UQ_production_stage_material_stage_unit`).
-    - تم فحص المخطط للتأكد من عدم بقاء أي فهرس يحمل اسم `studies_*` بعد الترقية.
-    - تم استبعاد مجلد التخزين `storage/template-stage-attachments/*` في `.gitignore` مع الإبقاء على ملف `.gitkeep`.
+    > All mutations across templates, stages, specifications, workflow items, patterns, options, tasks, materials, and attachments serialize through parent template row lock.
+    - تم توسيع `ProductionTemplateGuardService` بدوال حماية التبعية الكاملة:
+      - `requireExistingTemplate`, `requireMutableTemplate`, `lockMutableTemplate`.
+      - `requireStageBelongsToTemplate`.
+      - `requirePatternBelongsToTemplate`.
+      - `requireOptionBelongsToPattern`.
+      - `requireTaskBelongsToOption`.
+    - كافة عمليات التعديل (18 مساراً جديداً للأنماط والخيارات والمهام وسير العمل) تبدأ وجوباً باستدعاء `lockMutableTemplate(templateId, manager)` للحصول على قفل `pessimistic_write` على سجل القالب الأب داخل المعاملة.
+    - أي محاولة لتعديل مورد تابع لقالب محذوف ناعماً تفشل مغلقة فوراً بـ `NotFoundError` والرمز `PRODUCTION_TEMPLATE_NOT_FOUND`.
+  - **عقود التشغيل واللقطات ومسارات التعديل المستقبلية (Runtime Readiness & Snapshot Contracts)**:
+    > Formal contract for Phase 3 (Production Order Execution):
+    > 1. Selection Model: ProductionPatternSelection { orderId, patternId, selectedOptionId, selectedAt, selectedByUserId }.
+    >    - Default selection automatically resolves to the first active option by sortOrder (sortOrder = 1).
+    > 2. Snapshot Model: Execution tasks are instantiated into production_order_task with full snapshots of task details, planned materials, and reference documents, keeping origin references (originTemplatePatternId, originTemplateOptionId, originTemplateTaskId).
+    > 3. Option Change Semantics:
+    >    - Pre-execution (no tasks in the pattern started): Direct option switch allowed. Old order tasks are soft-deleted/replaced, new option snapshot is created, and the switch is recorded in the audit trail.
+    >    - In-execution / Post-execution (at least one task started, logged progress, or consumed materials): Direct switch is strictly blocked. Requires a Formal Engineering Revision Request (Engineering Change Order) to review scrapped work, rework costs, and material variance.
   - **الصلاحيات والأمان (Permissions & Authorization Invariants)**:
     - صلاحيات القوالب تتبع موديول `production`:
-      - `production.template.view`: تتيح استعراض القوالب والمواصفات والمراحل والمواد وتنزيل الوثائق المرجعية.
+      - `production.template.view`: تتيح استعراض القوالب والمواصفات وسير العمل والمراحل والأنماط والخيارات والمهام والمواد وتنزيل الوثائق المرجعية.
       - `production.template.create`: تتيح إنشاء قالب جديد.
-      - `production.template.update`: تتيح تعديل القالب، والمواصفات، والمراحل، والمواد المخططة، ورفع وأرشفة وترتيب الوثائق المرجعية.
+      - `production.template.update`: تتيح تعديل القالب، والمواصفات، وسير العمل المختلط، والمراحل، والأنماط، والخيارات، والمهام، والمواد المخططة، ورفع وأرشفة وترتيب كافة الوثائق المرجعية.
       - `production.template.delete`: تتيح أرشفة القالب بالكامل.
     - مدير النظام `SYSTEM_ADMIN` يحصل عليها تلقائياً عبر المصالحة الزمنية `reconcileSystemPermissions`.
     - جميع العمليات التعديلية تمر عبر `window.erpFetch` مع التحقق من الـ CSRF، وحظر XSS عبر Native DOM APIs و `safeJsonStringify`.
