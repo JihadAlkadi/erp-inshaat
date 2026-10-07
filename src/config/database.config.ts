@@ -36,6 +36,7 @@ import { MigrateStudiesToProductionTemplateTables1710000000008 } from '../databa
 import { HardenProductionTemplateCoreAndStageAttachments1710000000009 } from '../database/migrations/1710000000009-HardenProductionTemplateCoreAndStageAttachments.js';
 import { FinalizeProductionTemplateHardening1710000000010 } from '../database/migrations/1710000000010-FinalizeProductionTemplateHardening.js';
 import { AddProductionTemplateMixedWorkflowPatterns1710000000011 } from '../database/migrations/1710000000011-AddProductionTemplateMixedWorkflowPatterns.js';
+import { HardenProductionTemplateMixedWorkflow1710000000012 } from '../database/migrations/1710000000012-HardenProductionTemplateMixedWorkflow.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -85,6 +86,7 @@ export const databaseConfig: DataSourceOptions = {
     HardenProductionTemplateCoreAndStageAttachments1710000000009,
     FinalizeProductionTemplateHardening1710000000010,
     AddProductionTemplateMixedWorkflowPatterns1710000000011,
+    HardenProductionTemplateMixedWorkflow1710000000012,
   ],
   subscribers: [],
 };

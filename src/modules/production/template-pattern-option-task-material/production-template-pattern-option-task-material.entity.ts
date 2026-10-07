@@ -13,6 +13,7 @@ import { InventoryProductEntity } from '../../inventory/product/inventory-produc
 import { InventoryProductUnitEntity } from '../../inventory/product/inventory-product-unit.entity.js';
 
 @Entity('production_template_pattern_option_task_material')
+@Index('UQ_production_pattern_task_material_task_unit', ['taskId', 'productUnitId'], { unique: true })
 export class ProductionTemplatePatternOptionTaskMaterialEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -28,7 +29,7 @@ export class ProductionTemplatePatternOptionTaskMaterialEntity {
   @Column({ name: 'product_unit_id', type: 'varchar', length: 36 })
   productUnitId!: string;
 
-  @Column({ name: 'planned_quantity', type: 'decimal', precision: 18, scale: 4 })
+  @Column({ name: 'planned_quantity', type: 'decimal', precision: 18, scale: 6 })
   plannedQuantity!: string;
 
   @CreateDateColumn({ name: 'created_at' })
