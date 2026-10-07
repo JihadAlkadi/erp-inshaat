@@ -11,11 +11,14 @@ import {
   PaginatedProductionTemplatesResult,
   ProductionTemplateDetailDto,
   ProductionTemplateDto,
+  PaginatedTemplateReferenceOptionsResult,
+  ProductionTemplateOrderConfigurationDto,
   toProductionTemplateDto,
   toProductionTemplateListItemDto,
 } from './production-template.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
+import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 import {
   ProductionTemplateGuardService,
   productionTemplateGuardService,
@@ -248,6 +251,68 @@ export class ProductionTemplateService {
       await manager.save(template);
       await manager.softDelete(ProductionTemplateEntity, id);
     });
+  }
+
+  async getReferenceOptions(query: { page?: number; limit?: number; search?: string }): Promise<PaginatedTemplateReferenceOptionsResult> {
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.max(1, Math.min(100, query.limit || 20));
+    const skip = (page - 1) * limit;
+
+    const qb = this.templateRepo
+      .createQueryBuilder('t')
+      .where('t.deleted_at IS NULL')
+      .andWhere('t.is_active = :isActive', { isActive: true });
+
+    if (query.search) {
+      const s = `%${query.search.trim()}%`;
+      qb.andWhere('(t.name LIKE :s OR t.code LIKE :s OR t.reference_number LIKE :s)', { s });
+    }
+
+    qb.orderBy('t.created_at', 'DESC').skip(skip).take(limit);
+
+    const [items, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      items: items.map((t) => ({
+        id: t.id,
+        name: t.name,
+        code: t.code,
+        referenceNumber: t.referenceNumber,
+      })),
+      total,
+      page,
+      limit,
+      totalPages,
+    };
+  }
+
+  async getOrderConfiguration(templateId: string): Promise<ProductionTemplateOrderConfigurationDto> {
+    const template = await this.guardService.requireExistingTemplate(templateId);
+    if (!template.isActive) {
+      throw new BusinessRuleError('PRODUCTION_ORDER_TEMPLATE_INACTIVE', 'لا يمكن استخدام قالب تصنيع غير فعال');
+    }
+
+    const patterns = await this.patternService.listPatterns(templateId);
+
+    return {
+      templateId: template.id,
+      templateName: template.name,
+      patterns: patterns.map((p) => {
+        const activeOptions = (p.options || []).map((o) => ({
+          id: o.id,
+          name: o.name,
+          sortOrder: o.sortOrder,
+        }));
+        const defaultOptionId = activeOptions.length > 0 ? activeOptions[0].id : null;
+        return {
+          id: p.id,
+          name: p.name,
+          options: activeOptions,
+          defaultOptionId,
+        };
+      }),
+    };
   }
 }
 

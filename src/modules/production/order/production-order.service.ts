@@ -1,0 +1,1024 @@
+import { DataSource, EntityManager, Repository, IsNull, In } from 'typeorm';
+import { AppDataSource } from '../../../database/data-source.js';
+import { ProductionOrderEntity, ProductionOrderStatus } from './production-order.entity.js';
+import { ProductionOrderSequenceEntity } from './production-order-sequence.entity.js';
+import { ProductionOrderLineEntity } from '../order-line/production-order-line.entity.js';
+import { ProductionOrderLinePatternSelectionEntity } from '../order-line-pattern-selection/production-order-line-pattern-selection.entity.js';
+import { ProductionTemplateEntity } from '../template/production-template.entity.js';
+import { ProductionTemplatePatternEntity } from '../template-pattern/production-template-pattern.entity.js';
+import { ProductionTemplatePatternOptionEntity } from '../template-pattern-option/production-template-pattern-option.entity.js';
+import { ProductionTemplateWorkflowItemEntity } from '../template-workflow-item/production-template-workflow-item.entity.js';
+import { UserEntity } from '../../system/user/user.entity.js';
+import {
+  ProductionOrderDto,
+  PaginatedProductionOrdersResult,
+  ProductionOrderListItemDto,
+  ProductionOrderReadinessDto,
+  ProductionOrderReadinessIssueDto,
+} from './production-order.types.js';
+import { ProductionOrderLineDto } from '../order-line/production-order-line.types.js';
+import { CreateProductionOrderDto } from './dto/create-production-order.dto.js';
+import { UpdateProductionOrderDto } from './dto/update-production-order.dto.js';
+import { ListProductionOrdersQueryDto } from './dto/list-production-orders-query.dto.js';
+import { AddProductionOrderLineDto } from '../order-line/dto/add-production-order-line.dto.js';
+import { UpdateProductionOrderLineDto } from '../order-line/dto/update-production-order-line.dto.js';
+import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
+import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
+import {
+  ProductionOrderGuardService,
+  productionOrderGuardService,
+} from './production-order-guard.service.js';
+import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
+import { NotFoundError } from '../../../common/errors/not-found.error.js';
+
+export class ProductionOrderService {
+  private orderRepo: Repository<ProductionOrderEntity>;
+  private lineRepo: Repository<ProductionOrderLineEntity>;
+  private selectionRepo: Repository<ProductionOrderLinePatternSelectionEntity>;
+  private templateRepo: Repository<ProductionTemplateEntity>;
+  private patternRepo: Repository<ProductionTemplatePatternEntity>;
+  private optionRepo: Repository<ProductionTemplatePatternOptionEntity>;
+  private workflowItemRepo: Repository<ProductionTemplateWorkflowItemEntity>;
+  private guardService: ProductionOrderGuardService;
+
+  constructor(
+    private dataSource: DataSource = AppDataSource,
+    guardService: ProductionOrderGuardService = productionOrderGuardService
+  ) {
+    this.orderRepo = this.dataSource.getRepository(ProductionOrderEntity);
+    this.lineRepo = this.dataSource.getRepository(ProductionOrderLineEntity);
+    this.selectionRepo = this.dataSource.getRepository(ProductionOrderLinePatternSelectionEntity);
+    this.templateRepo = this.dataSource.getRepository(ProductionTemplateEntity);
+    this.patternRepo = this.dataSource.getRepository(ProductionTemplatePatternEntity);
+    this.optionRepo = this.dataSource.getRepository(ProductionTemplatePatternOptionEntity);
+    this.workflowItemRepo = this.dataSource.getRepository(ProductionTemplateWorkflowItemEntity);
+    this.guardService = guardService;
+  }
+
+  // ==========================================
+  // 1. ORDER LIFECYCLE & MUTATIONS
+  // ==========================================
+
+  /**
+   * Creates a new DRAFT production order with a concurrency-safe unique order number.
+   */
+  async createOrder(
+    dto: CreateProductionOrderDto,
+    userId: string
+  ): Promise<ProductionOrderDto> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Generate human-readable order number atomically using sequence row lock
+      const seqRepo = manager.getRepository(ProductionOrderSequenceEntity);
+      let seq = await seqRepo.findOne({
+        where: { id: 'PRODUCTION_ORDER' },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!seq) {
+        seq = seqRepo.create({ id: 'PRODUCTION_ORDER', currentValue: '0' });
+      }
+
+      const nextVal = BigInt(seq.currentValue || '0') + 1n;
+      seq.currentValue = nextVal.toString();
+      await seqRepo.save(seq);
+
+      const orderNumber = `PO-${String(nextVal).padStart(6, '0')}`;
+
+      // 2. Insert new DRAFT order
+      const orderRepo = manager.getRepository(ProductionOrderEntity);
+      const order = orderRepo.create({
+        orderNumber,
+        status: ProductionOrderStatus.DRAFT,
+        description: dto.description?.trim() || null,
+        notes: dto.notes?.trim() || null,
+        createdByUserId: userId,
+      });
+
+      const savedOrder = await orderRepo.save(order);
+
+      // 3. Return DTO
+      return this.getOrderByIdInternal(savedOrder.id, manager);
+    });
+  }
+
+  /**
+   * Lists production orders with server-side pagination and search.
+   */
+  async listOrders(
+    query: ListProductionOrdersQueryDto
+  ): Promise<PaginatedProductionOrdersResult> {
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.max(1, Math.min(100, query.limit || 20));
+    const skip = (page - 1) * limit;
+
+    const qb = this.orderRepo
+      .createQueryBuilder('o')
+      .leftJoinAndSelect('o.createdByUser', 'u')
+      .where('o.deleted_at IS NULL');
+
+    if (query.search && query.search.trim()) {
+      const s = `%${query.search.trim()}%`;
+      qb.andWhere('(o.order_number LIKE :s OR o.description LIKE :s)', { s });
+    }
+
+    qb.orderBy('o.created_at', 'DESC').skip(skip).take(limit);
+
+    const [orders, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    // Batch load active line counts and total quantities for returned orders
+    const orderIds = orders.map((o) => o.id);
+    const summaryMap = new Map<string, { lineCount: number; totalQuantity: number }>();
+
+    if (orderIds.length > 0) {
+      const rawSummaries = await this.lineRepo
+        .createQueryBuilder('l')
+        .select('l.order_id', 'orderId')
+        .addSelect('COUNT(l.id)', 'lineCount')
+        .addSelect('COALESCE(SUM(l.quantity), 0)', 'totalQuantity')
+        .where('l.order_id IN (:...orderIds)', { orderIds })
+        .andWhere('l.deleted_at IS NULL')
+        .groupBy('l.order_id')
+        .getRawMany();
+
+      for (const row of rawSummaries) {
+        summaryMap.set(row.orderId, {
+          lineCount: parseInt(row.lineCount, 10) || 0,
+          totalQuantity: parseInt(row.totalQuantity, 10) || 0,
+        });
+      }
+    }
+
+    const items: ProductionOrderListItemDto[] = orders.map((o) => {
+      const summary = summaryMap.get(o.id) || { lineCount: 0, totalQuantity: 0 };
+      return {
+        id: o.id,
+        orderNumber: o.orderNumber,
+        status: o.status,
+        description: o.description,
+        notes: o.notes,
+        createdAt: o.createdAt,
+        updatedAt: o.updatedAt,
+        createdByUser: o.createdByUser
+          ? {
+              id: o.createdByUser.id,
+              fullName: o.createdByUser.fullName,
+            }
+          : undefined,
+        summary,
+      };
+    });
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages,
+    };
+  }
+
+  /**
+   * Retrieves production order detail with all active lines and selections (Batch loaded, zero N+1).
+   */
+  async getOrderById(orderId: string): Promise<ProductionOrderDto> {
+    return this.getOrderByIdInternal(orderId);
+  }
+
+  /**
+   * Updates DRAFT production order header (description, notes). Status and orderNumber are immutable.
+   */
+  async updateOrder(
+    orderId: string,
+    dto: UpdateProductionOrderDto
+  ): Promise<ProductionOrderDto> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock order row (Unified Lock Root)
+      const order = await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Apply modifications explicitly
+      if (dto.description !== undefined) {
+        order.description = dto.description === null ? null : dto.description.trim() || null;
+      }
+      if (dto.notes !== undefined) {
+        order.notes = dto.notes === null ? null : dto.notes.trim() || null;
+      }
+
+      await manager.save(order);
+
+      return this.getOrderByIdInternal(orderId, manager);
+    });
+  }
+
+  /**
+   * Archives (soft-deletes) a DRAFT production order.
+   */
+  async archiveOrder(orderId: string): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock order row
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Soft-delete order
+      await manager.softDelete(ProductionOrderEntity, orderId);
+    });
+  }
+
+  // ==========================================
+  // 2. ORDER LINES MANAGEMENT
+  // ==========================================
+
+  /**
+   * Adds a new line to a DRAFT production order.
+   * Atomic: creates line and pattern selections (default or explicit).
+   */
+  async addLine(
+    orderId: string,
+    dto: AddProductionOrderLineDto
+  ): Promise<ProductionOrderLineDto> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock Order (Unified Lock Root)
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Validate Template exists, not archived, and is active
+      const templateRepo = manager.getRepository(ProductionTemplateEntity);
+      const template = await templateRepo.findOne({
+        where: { id: dto.templateId, deletedAt: IsNull() },
+      });
+
+      if (!template) {
+        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_ORDER_TEMPLATE_NOT_FOUND');
+      }
+
+      if (!template.isActive) {
+        throw new BusinessRuleError('لا يمكن إضافة قالب تصنيع غير فعال إلى طلب الإنتاج', 'PRODUCTION_ORDER_TEMPLATE_INACTIVE');
+      }
+
+      // 3. Load active patterns and their active options
+      const patternRepo = manager.getRepository(ProductionTemplatePatternEntity);
+      const activePatterns = await patternRepo.find({
+        where: { templateId: dto.templateId, deletedAt: IsNull() },
+        relations: { options: true },
+        order: { createdAt: 'ASC' },
+      });
+
+      // Filter active options and sort them
+      const patternsWithOptions = activePatterns.map((p) => {
+        const activeOptions = (p.options || [])
+          .filter((opt) => !opt.deletedAt)
+          .sort((a, b) => a.sortOrder - b.sortOrder);
+        return {
+          pattern: p,
+          options: activeOptions,
+        };
+      });
+
+      // Verify that every active pattern has at least one active option
+      for (const item of patternsWithOptions) {
+        if (item.options.length === 0) {
+          throw new BusinessRuleError(
+            `النمط "${item.pattern.name}" لا يحتوي على أي خيارات فعالة`,
+            'PRODUCTION_ORDER_TEMPLATE_PATTERN_HAS_NO_ACTIVE_OPTIONS'
+          );
+        }
+      }
+
+      // 4. Resolve pattern selections: either explicit payload validation or system defaults
+      const selectionsToCreate: Array<{ templatePatternId: string; selectedOptionId: string }> = [];
+
+      if (dto.patternSelections && dto.patternSelections.length > 0) {
+        // Explicit payload provided: MUST be the exact set of active patterns
+        const payload = dto.patternSelections;
+
+        // Check for duplicates in payload
+        const patternIdSet = new Set<string>();
+        for (const item of payload) {
+          if (patternIdSet.has(item.patternId)) {
+            throw new BusinessRuleError(
+              'لا يمكن تكرار اختيار نفس النمط في نفس البند',
+              'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_INVALID'
+            );
+          }
+          patternIdSet.add(item.patternId);
+        }
+
+        // Must match exact count and keys of active patterns
+        if (patternIdSet.size !== patternsWithOptions.length) {
+          throw new BusinessRuleError(
+            'يجب تحديد خيار لكل نمط فعال في القالب بدقة',
+            'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
+          );
+        }
+
+        for (const item of patternsWithOptions) {
+          if (!patternIdSet.has(item.pattern.id)) {
+            throw new BusinessRuleError(
+              `لم يتم إرسال خيار للنمط "${item.pattern.name}"`,
+              'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
+            );
+          }
+        }
+
+        // Validate each selection: option belongs to pattern and is active
+        for (const pSel of payload) {
+          const matchedPatternItem = patternsWithOptions.find((p) => p.pattern.id === pSel.patternId);
+          if (!matchedPatternItem) {
+            throw new BusinessRuleError(
+              'النمط المحدد لا ينتمي إلى هذا القالب',
+              'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
+            );
+          }
+
+          const matchedOption = matchedPatternItem.options.find((o) => o.id === pSel.optionId);
+          if (!matchedOption) {
+            throw new BusinessRuleError(
+              'الخيار المحدد غير فعال أو لا يتبع هذا النمط',
+              'PRODUCTION_ORDER_LINE_OPTION_INVALID'
+            );
+          }
+
+          selectionsToCreate.push({
+            templatePatternId: matchedPatternItem.pattern.id,
+            selectedOptionId: matchedOption.id,
+          });
+        }
+      } else {
+        // No explicit payload: select default (first active option by sortOrder ASC)
+        for (const item of patternsWithOptions) {
+          selectionsToCreate.push({
+            templatePatternId: item.pattern.id,
+            selectedOptionId: item.options[0].id,
+          });
+        }
+      }
+
+      // 5. Calculate next sort order dense (1..N)
+      const lineRepo = manager.getRepository(ProductionOrderLineEntity);
+      const activeLinesCount = await lineRepo.count({
+        where: { orderId, deletedAt: IsNull() },
+      });
+      const nextSortOrder = activeLinesCount + 1;
+
+      // 6. Insert Line
+      const newLine = lineRepo.create({
+        orderId,
+        templateId: dto.templateId,
+        quantity: dto.quantity,
+        sortOrder: nextSortOrder,
+      });
+      const savedLine = await lineRepo.save(newLine);
+
+      // 7. Insert Selections
+      const selectionRepo = manager.getRepository(ProductionOrderLinePatternSelectionEntity);
+      for (const sel of selectionsToCreate) {
+        const newSel = selectionRepo.create({
+          orderLineId: savedLine.id,
+          templatePatternId: sel.templatePatternId,
+          selectedOptionId: sel.selectedOptionId,
+        });
+        await selectionRepo.save(newSel);
+      }
+
+      // 8. Return created line DTO
+      const fullOrder = await this.getOrderByIdInternal(orderId, manager);
+      const createdLineDto = fullOrder.lines?.find((l) => l.id === savedLine.id);
+      if (!createdLineDto) {
+        throw new NotFoundError('تعذر استرجاع بند الإنتاج المنشأ', 'PRODUCTION_ORDER_LINE_NOT_FOUND');
+      }
+
+      return createdLineDto;
+    });
+  }
+
+  /**
+   * Updates quantity on a DRAFT production order line. (Template ID is strictly immutable).
+   */
+  async updateLineQuantity(
+    orderId: string,
+    lineId: string,
+    dto: UpdateProductionOrderLineDto
+  ): Promise<ProductionOrderLineDto> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock Order
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Validate Line exists on this order
+      const line = await this.guardService.requireExistingLine(orderId, lineId, manager);
+
+      // 3. Update quantity
+      line.quantity = dto.quantity;
+      await manager.save(line);
+
+      const fullOrder = await this.getOrderByIdInternal(orderId, manager);
+      const lineDto = fullOrder.lines?.find((l) => l.id === lineId);
+      if (!lineDto) {
+        throw new NotFoundError('تعذر استرجاع بند الإنتاج', 'PRODUCTION_ORDER_LINE_NOT_FOUND');
+      }
+
+      return lineDto;
+    });
+  }
+
+  /**
+   * Soft deletes a line from a DRAFT order and recompacts remaining sort orders (dense 1..N).
+   */
+  async archiveLine(orderId: string, lineId: string): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock Order
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Validate Line exists on this order
+      await this.guardService.requireExistingLine(orderId, lineId, manager);
+
+      // 3. Soft-delete the line
+      const lineRepo = manager.getRepository(ProductionOrderLineEntity);
+      await lineRepo.softDelete(lineId);
+
+      // 4. Re-compact remaining active lines to dense 1..N
+      const remainingLines = await lineRepo.find({
+        where: { orderId, deletedAt: IsNull() },
+        order: { sortOrder: 'ASC', createdAt: 'ASC' },
+      });
+
+      for (let i = 0; i < remainingLines.length; i++) {
+        const expectedSortOrder = i + 1;
+        if (remainingLines[i].sortOrder !== expectedSortOrder) {
+          remainingLines[i].sortOrder = expectedSortOrder;
+          await lineRepo.save(remainingLines[i]);
+        }
+      }
+    });
+  }
+
+  /**
+   * Reorders all active lines in a DRAFT order.
+   * Requires exact permutation and sets dense sort orders 1..N.
+   */
+  async reorderLines(
+    orderId: string,
+    dto: ReorderProductionOrderLinesDto
+  ): Promise<ProductionOrderLineDto[]> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock Order
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      const lineRepo = manager.getRepository(ProductionOrderLineEntity);
+      const activeLines = await lineRepo.find({
+        where: { orderId, deletedAt: IsNull() },
+      });
+
+      // 2. Validate exact permutation
+      const lineIdSet = new Set(dto.lineIds);
+      if (lineIdSet.size !== dto.lineIds.length) {
+        throw new BusinessRuleError('مصفوفة المعرفات تحتوي على تكرارات', 'PRODUCTION_ORDER_LINE_INVALID_REORDER');
+      }
+
+      if (dto.lineIds.length !== activeLines.length) {
+        throw new BusinessRuleError(
+          'يجب تقديم كافة بنود الإنتاج النشطة في عملية إعادة الترتيب',
+          'PRODUCTION_ORDER_LINE_INVALID_REORDER'
+        );
+      }
+
+      const activeLineMap = new Map(activeLines.map((l) => [l.id, l]));
+      for (const id of dto.lineIds) {
+        if (!activeLineMap.has(id)) {
+          throw new BusinessRuleError(
+            'أحد المعرفات المقدمة غير صالح أو لا ينتمي لهذا الطلب',
+            'PRODUCTION_ORDER_LINE_INVALID_REORDER'
+          );
+        }
+      }
+
+      // 3. Update sortOrder for each line
+      for (let i = 0; i < dto.lineIds.length; i++) {
+        const id = dto.lineIds[i];
+        const line = activeLineMap.get(id)!;
+        line.sortOrder = i + 1;
+        await lineRepo.save(line);
+      }
+
+      const fullOrder = await this.getOrderByIdInternal(orderId, manager);
+      return fullOrder.lines || [];
+    });
+  }
+
+  // ==========================================
+  // 3. PATTERN SELECTION & SYNC
+  // ==========================================
+
+  /**
+   * Changes the selected option for a pattern on a draft order line.
+   */
+  async changePatternSelection(
+    orderId: string,
+    lineId: string,
+    patternId: string,
+    dto: UpdatePatternSelectionDto
+  ): Promise<ProductionOrderLineDto> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock Order
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Validate Line belongs to Order
+      const line = await this.guardService.requireExistingLine(orderId, lineId, manager);
+
+      // 3. Validate Pattern belongs to Line's Template and is active
+      const patternRepo = manager.getRepository(ProductionTemplatePatternEntity);
+      const pattern = await patternRepo.findOne({
+        where: { id: patternId, templateId: line.templateId, deletedAt: IsNull() },
+      });
+
+      if (!pattern) {
+        throw new NotFoundError(
+          'النمط غير موجود في قالب هذا البند',
+          'PRODUCTION_ORDER_LINE_PATTERN_NOT_FOUND'
+        );
+      }
+
+      // 4. Validate Option belongs to Pattern and is active
+      const optionRepo = manager.getRepository(ProductionTemplatePatternOptionEntity);
+      const option = await optionRepo.findOne({
+        where: { id: dto.optionId, patternId, deletedAt: IsNull() },
+      });
+
+      if (!option) {
+        throw new BusinessRuleError(
+          'الخيار المحدد غير فعال أو لا ينتمي لهذا النمط',
+          'PRODUCTION_ORDER_LINE_OPTION_INVALID'
+        );
+      }
+
+      // 5. Find or create selection record
+      const selectionRepo = manager.getRepository(ProductionOrderLinePatternSelectionEntity);
+      let selection = await selectionRepo.findOne({
+        where: { orderLineId: lineId, templatePatternId: patternId },
+      });
+
+      if (selection) {
+        selection.selectedOptionId = dto.optionId;
+        await selectionRepo.save(selection);
+      } else {
+        selection = selectionRepo.create({
+          orderLineId: lineId,
+          templatePatternId: patternId,
+          selectedOptionId: dto.optionId,
+        });
+        await selectionRepo.save(selection);
+      }
+
+      const fullOrder = await this.getOrderByIdInternal(orderId, manager);
+      const lineDto = fullOrder.lines?.find((l) => l.id === lineId);
+      if (!lineDto) {
+        throw new NotFoundError('تعذر استرجاع بند الإنتاج', 'PRODUCTION_ORDER_LINE_NOT_FOUND');
+      }
+
+      return lineDto;
+    });
+  }
+
+  /**
+   * Synchronizes a draft line's pattern selections with live template configuration.
+   * - Retains valid active selections.
+   * - Sets default (first active option) for missing patterns or invalid selected options.
+   * - Removes selections for deleted/inactive patterns.
+   * - Rollback occurs if any active pattern has no active options.
+   */
+  async syncDraftLineSelections(
+    orderId: string,
+    lineId: string
+  ): Promise<ProductionOrderLineDto> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock Order
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Validate Line belongs to Order
+      const line = await this.guardService.requireExistingLine(orderId, lineId, manager);
+
+      // 3. Load Template
+      const templateRepo = manager.getRepository(ProductionTemplateEntity);
+      const template = await templateRepo.findOne({
+        where: { id: line.templateId, deletedAt: IsNull() },
+      });
+
+      if (!template) {
+        throw new NotFoundError('قالب البند غير موجود', 'PRODUCTION_ORDER_TEMPLATE_NOT_FOUND');
+      }
+
+      if (!template.isActive) {
+        throw new BusinessRuleError(
+          'لا يمكن مزامنة بند لقالب غير فعال',
+          'PRODUCTION_ORDER_TEMPLATE_INACTIVE'
+        );
+      }
+
+      // 4. Load active patterns and active options
+      const patternRepo = manager.getRepository(ProductionTemplatePatternEntity);
+      const activePatterns = await patternRepo.find({
+        where: { templateId: line.templateId, deletedAt: IsNull() },
+        relations: { options: true },
+        order: { createdAt: 'ASC' },
+      });
+
+      const patternsWithOptions = activePatterns.map((p) => {
+        const activeOptions = (p.options || [])
+          .filter((opt) => !opt.deletedAt)
+          .sort((a, b) => a.sortOrder - b.sortOrder);
+        return {
+          pattern: p,
+          options: activeOptions,
+        };
+      });
+
+      for (const item of patternsWithOptions) {
+        if (item.options.length === 0) {
+          throw new BusinessRuleError(
+            `النمط "${item.pattern.name}" لا يحتوي على أي خيارات فعالة`,
+            'PRODUCTION_ORDER_TEMPLATE_PATTERN_HAS_NO_ACTIVE_OPTIONS'
+          );
+        }
+      }
+
+      // 5. Load existing selections on this line
+      const selectionRepo = manager.getRepository(ProductionOrderLinePatternSelectionEntity);
+      const existingSelections = await selectionRepo.find({
+        where: { orderLineId: lineId },
+      });
+
+      const activePatternMap = new Map(patternsWithOptions.map((item) => [item.pattern.id, item]));
+
+      // 6. Remove obsolete selections (pointing to patterns no longer active)
+      for (const sel of existingSelections) {
+        if (!activePatternMap.has(sel.templatePatternId)) {
+          await selectionRepo.remove(sel);
+        }
+      }
+
+      // 7. Reconcile selections for active patterns
+      const existingMap = new Map(existingSelections.map((s) => [s.templatePatternId, s]));
+
+      for (const item of patternsWithOptions) {
+        const sel = existingMap.get(item.pattern.id);
+        if (sel) {
+          // Check if current selected option is still valid and active
+          const isValidOption = item.options.some((opt) => opt.id === sel.selectedOptionId);
+          if (!isValidOption) {
+            // Option was deleted/invalidated: replace with default
+            sel.selectedOptionId = item.options[0].id;
+            await selectionRepo.save(sel);
+          }
+        } else {
+          // Missing selection: create with default
+          const newSel = selectionRepo.create({
+            orderLineId: lineId,
+            templatePatternId: item.pattern.id,
+            selectedOptionId: item.options[0].id,
+          });
+          await selectionRepo.save(newSel);
+        }
+      }
+
+      const fullOrder = await this.getOrderByIdInternal(orderId, manager);
+      const lineDto = fullOrder.lines?.find((l) => l.id === lineId);
+      if (!lineDto) {
+        throw new NotFoundError('تعذر استرجاع بند الإنتاج', 'PRODUCTION_ORDER_LINE_NOT_FOUND');
+      }
+
+      return lineDto;
+    });
+  }
+
+  // ==========================================
+  // 4. READ-ONLY RELEASE READINESS VALIDATION
+  // ==========================================
+
+  /**
+   * Evaluates readiness of a DRAFT order for future release against live template data.
+   * STRICTLY READ-ONLY: Never mutates order status, lines, or DB state.
+   */
+  async validateDraftForRelease(
+    orderId: string
+  ): Promise<ProductionOrderReadinessDto> {
+    const issues: ProductionOrderReadinessIssueDto[] = [];
+
+    // 1. Order exists and is DRAFT
+    const order = await this.guardService.requireExistingOrder(orderId);
+    if (order.status !== ProductionOrderStatus.DRAFT) {
+      issues.push({
+        code: 'PRODUCTION_ORDER_NOT_DRAFT',
+        message: 'طلب الإنتاج ليس في حالة مسودة',
+      });
+      return { ready: false, issues };
+    }
+
+    // 2. Load active lines
+    const activeLines = await this.lineRepo.find({
+      where: { orderId, deletedAt: IsNull() },
+      order: { sortOrder: 'ASC', createdAt: 'ASC' },
+    });
+
+    if (activeLines.length === 0) {
+      issues.push({
+        code: 'PRODUCTION_ORDER_EMPTY',
+        message: 'يجب أن يحتوي طلب الإنتاج على بند إنتاج واحد على الأقل',
+      });
+      return { ready: false, issues };
+    }
+
+    // 3. Batch load templates, patterns, options, workflow items, and selections
+    const templateIds = Array.from(new Set(activeLines.map((l) => l.templateId)));
+    const templates = await this.templateRepo.find({
+      where: { id: In(templateIds) },
+      withDeleted: true,
+    });
+    const templateMap = new Map(templates.map((t) => [t.id, t]));
+
+    // Batch load active workflow items for templates
+    const workflowItems = await this.workflowItemRepo.find({
+      where: { templateId: In(templateIds), deletedAt: IsNull() },
+    });
+    const workflowCountMap = new Map<string, number>();
+    for (const item of workflowItems) {
+      workflowCountMap.set(item.templateId, (workflowCountMap.get(item.templateId) || 0) + 1);
+    }
+
+    // Batch load active patterns and options
+    const patterns = await this.patternRepo.find({
+      where: { templateId: In(templateIds), deletedAt: IsNull() },
+      relations: { options: true },
+    });
+    const templatePatternsMap = new Map<string, ProductionTemplatePatternEntity[]>();
+    for (const p of patterns) {
+      const list = templatePatternsMap.get(p.templateId) || [];
+      list.push(p);
+      templatePatternsMap.set(p.templateId, list);
+    }
+
+    // Batch load all selections for the lines
+    const lineIds = activeLines.map((l) => l.id);
+    const selections = await this.selectionRepo.find({
+      where: { orderLineId: In(lineIds) },
+    });
+    const lineSelectionsMap = new Map<string, ProductionOrderLinePatternSelectionEntity[]>();
+    for (const sel of selections) {
+      const list = lineSelectionsMap.get(sel.orderLineId) || [];
+      list.push(sel);
+      lineSelectionsMap.set(sel.orderLineId, list);
+    }
+
+    // 4. Validate each line
+    for (const line of activeLines) {
+      const template = templateMap.get(line.templateId);
+
+      // Check Template status
+      if (!template || template.deletedAt !== null || !template.isActive) {
+        issues.push({
+          code: 'PRODUCTION_ORDER_TEMPLATE_INACTIVE',
+          lineId: line.id,
+          message: `القالب المرتبط بالبند #${line.sortOrder} غير موجود أو معطل أو تمت أرشفته`,
+        });
+        continue;
+      }
+
+      // Check Template workflow is not empty
+      const wfCount = workflowCountMap.get(template.id) || 0;
+      if (wfCount === 0) {
+        issues.push({
+          code: 'PRODUCTION_ORDER_TEMPLATE_WORKFLOW_EMPTY',
+          lineId: line.id,
+          message: `القالب "${template.name}" في البند #${line.sortOrder} لا يحتوي على أي مراحل أو أنماط في سير العمل`,
+        });
+      }
+
+      // Check Patterns & Selections
+      const activeTemplatePatterns = templatePatternsMap.get(template.id) || [];
+      const lineSelections = lineSelectionsMap.get(line.id) || [];
+
+      const selectionMap = new Map<string, ProductionOrderLinePatternSelectionEntity>();
+      for (const sel of lineSelections) {
+        if (selectionMap.has(sel.templatePatternId)) {
+          issues.push({
+            code: 'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_INVALID',
+            lineId: line.id,
+            patternId: sel.templatePatternId,
+            message: `تكرار غير صالح في خيارات النمط للبند #${line.sortOrder}`,
+          });
+        }
+        selectionMap.set(sel.templatePatternId, sel);
+      }
+
+      // Verify each active pattern has a valid active option selection
+      for (const pat of activeTemplatePatterns) {
+        const sel = selectionMap.get(pat.id);
+        if (!sel) {
+          issues.push({
+            code: 'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_INVALID',
+            lineId: line.id,
+            patternId: pat.id,
+            message: `البند #${line.sortOrder} ينقصه خيار محدد للنمط "${pat.name}"`,
+          });
+          continue;
+        }
+
+        const activeOptions = (pat.options || []).filter((o) => !o.deletedAt);
+        const matchedOption = activeOptions.find((o) => o.id === sel.selectedOptionId);
+        if (!matchedOption) {
+          issues.push({
+            code: 'PRODUCTION_ORDER_LINE_OPTION_INVALID',
+            lineId: line.id,
+            patternId: pat.id,
+            message: `الخيار المحدد للنمط "${pat.name}" في البند #${line.sortOrder} لم يعد فعالاً أو تم حذفه`,
+          });
+        }
+      }
+
+      // Check if line has foreign/obsolete selections pointing to patterns not belonging to this template
+      const activePatIdSet = new Set(activeTemplatePatterns.map((p) => p.id));
+      for (const sel of lineSelections) {
+        if (!activePatIdSet.has(sel.templatePatternId)) {
+          issues.push({
+            code: 'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_INVALID',
+            lineId: line.id,
+            patternId: sel.templatePatternId,
+            message: `البند #${line.sortOrder} يحتوي على خيارات لأنماط لم تعد تنتمي لهذا القالب`,
+          });
+        }
+      }
+    }
+
+    return {
+      ready: issues.length === 0,
+      issues,
+    };
+  }
+
+  // ==========================================
+  // INTERNAL HELPERS (BATCH LOADING)
+  // ==========================================
+
+  private async getOrderByIdInternal(
+    orderId: string,
+    manager?: EntityManager
+  ): Promise<ProductionOrderDto> {
+    const orderRepo = manager ? manager.getRepository(ProductionOrderEntity) : this.orderRepo;
+    const lineRepo = manager ? manager.getRepository(ProductionOrderLineEntity) : this.lineRepo;
+    const templateRepo = manager ? manager.getRepository(ProductionTemplateEntity) : this.templateRepo;
+    const patternRepo = manager ? manager.getRepository(ProductionTemplatePatternEntity) : this.patternRepo;
+    const selectionRepo = manager
+      ? manager.getRepository(ProductionOrderLinePatternSelectionEntity)
+      : this.selectionRepo;
+
+    // 1. Fetch Order with User
+    const order = await orderRepo.findOne({
+      where: { id: orderId, deletedAt: IsNull() },
+      relations: { createdByUser: true },
+    });
+
+    if (!order) {
+      throw new NotFoundError('طلب الإنتاج غير موجود أو تم أرشفته', 'PRODUCTION_ORDER_NOT_FOUND');
+    }
+
+    // 2. Fetch active Lines
+    const lines = await lineRepo.find({
+      where: { orderId, deletedAt: IsNull() },
+      order: { sortOrder: 'ASC', createdAt: 'ASC' },
+    });
+
+    if (lines.length === 0) {
+      return {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        description: order.description,
+        notes: order.notes,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        createdByUser: order.createdByUser
+          ? {
+              id: order.createdByUser.id,
+              fullName: order.createdByUser.fullName,
+            }
+          : undefined,
+        summary: { lineCount: 0, totalQuantity: 0 },
+        lines: [],
+      };
+    }
+
+    // 3. Batch load unique templates
+    const templateIds = Array.from(new Set(lines.map((l) => l.templateId)));
+    const templates = await templateRepo.find({
+      where: { id: In(templateIds) },
+      withDeleted: true,
+    });
+    const templateMap = new Map(templates.map((t) => [t.id, t]));
+
+    // 4. Batch load all selections for all lines
+    const lineIds = lines.map((l) => l.id);
+    const selections = await selectionRepo.find({
+      where: { orderLineId: In(lineIds) },
+    });
+    const selectionsByLineId = new Map<string, ProductionOrderLinePatternSelectionEntity[]>();
+    for (const sel of selections) {
+      const list = selectionsByLineId.get(sel.orderLineId) || [];
+      list.push(sel);
+      selectionsByLineId.set(sel.orderLineId, list);
+    }
+
+    // 5. Batch load active patterns and options for all unique templates
+    const patterns = await patternRepo.find({
+      where: { templateId: In(templateIds), deletedAt: IsNull() },
+      relations: { options: true },
+      order: { createdAt: 'ASC' },
+    });
+
+    const patternsByTemplateId = new Map<string, ProductionTemplatePatternEntity[]>();
+    const allPatternsMap = new Map<string, ProductionTemplatePatternEntity>();
+    for (const pat of patterns) {
+      allPatternsMap.set(pat.id, pat);
+      const list = patternsByTemplateId.get(pat.templateId) || [];
+      list.push(pat);
+      patternsByTemplateId.set(pat.templateId, list);
+    }
+
+    // 6. Map Line DTOs
+    let totalQuantity = 0;
+    const lineDtos: ProductionOrderLineDto[] = lines.map((line) => {
+      totalQuantity += line.quantity;
+      const tmpl = templateMap.get(line.templateId);
+      const lineSelections = selectionsByLineId.get(line.id) || [];
+      const templatePatterns = patternsByTemplateId.get(line.templateId) || [];
+
+      // Assemble pattern selections DTOs
+      const selectionDtos = lineSelections.map((sel) => {
+        const pat = allPatternsMap.get(sel.templatePatternId);
+        const patternName = pat ? pat.name : 'نمط محذوف أو غير معروف';
+
+        const activeOptions = pat
+          ? (pat.options || [])
+              .filter((o) => !o.deletedAt)
+              .sort((a, b) => a.sortOrder - b.sortOrder)
+          : [];
+
+        const selectedOption = activeOptions.find((o) => o.id === sel.selectedOptionId);
+        const selectedOptionName = selectedOption
+          ? selectedOption.name
+          : 'خيار غير معروف أو محذوف';
+
+        return {
+          id: sel.id,
+          templatePatternId: sel.templatePatternId,
+          patternName,
+          selectedOptionId: sel.selectedOptionId,
+          selectedOptionName,
+          availableOptions: activeOptions.map((o) => ({
+            id: o.id,
+            name: o.name,
+            sortOrder: o.sortOrder,
+          })),
+        };
+      });
+
+      return {
+        id: line.id,
+        orderId: line.orderId,
+        templateId: line.templateId,
+        quantity: line.quantity,
+        sortOrder: line.sortOrder,
+        createdAt: line.createdAt,
+        updatedAt: line.updatedAt,
+        template: tmpl
+          ? {
+              id: tmpl.id,
+              name: tmpl.name,
+              code: tmpl.code,
+              referenceNumber: tmpl.referenceNumber,
+              isActive: tmpl.isActive,
+            }
+          : undefined,
+        patternSelections: selectionDtos,
+      };
+    });
+
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      description: order.description,
+      notes: order.notes,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      createdByUser: order.createdByUser
+        ? {
+            id: order.createdByUser.id,
+            fullName: order.createdByUser.fullName,
+          }
+        : undefined,
+      summary: {
+        lineCount: lines.length,
+        totalQuantity,
+      },
+      lines: lineDtos,
+    };
+  }
+}
+
+export const productionOrderService = new ProductionOrderService();

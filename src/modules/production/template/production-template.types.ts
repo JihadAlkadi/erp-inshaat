@@ -111,6 +111,41 @@ export interface ProductionTemplateDetailDto {
   patterns?: ProductionTemplatePatternDto[];
 }
 
+export interface ProductionTemplateReferenceOptionDto {
+  id: string;
+  name: string;
+  code: string;
+  referenceNumber: string | null;
+}
+
+export interface PaginatedTemplateReferenceOptionsResult {
+  items: ProductionTemplateReferenceOptionDto[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface ProductionTemplateOrderConfigOptionDto {
+  id: string;
+  name: string;
+  sortOrder: number;
+}
+
+export interface ProductionTemplateOrderConfigPatternDto {
+  id: string;
+  name: string;
+  sortOrder?: number;
+  options: ProductionTemplateOrderConfigOptionDto[];
+  defaultOptionId: string | null;
+}
+
+export interface ProductionTemplateOrderConfigurationDto {
+  templateId: string;
+  templateName: string;
+  patterns: ProductionTemplateOrderConfigPatternDto[];
+}
+
 /**
  * Escapes characters that can break out of HTML/script contexts:
  * <, >, &, \u2028, \u2029
