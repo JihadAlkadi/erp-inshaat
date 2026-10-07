@@ -427,6 +427,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================================
   // Pending Lines: Render & Interactions
   // =========================================================================
+  // =========================================================================
+  // Pending Lines: Render & Interactions (Directly under search)
+  // =========================================================================
   function renderPendingLines() {
     const isValid = evaluatePendingLines();
 
@@ -434,13 +437,17 @@ document.addEventListener('DOMContentLoaded', () => {
       pendingLinesSection.classList.add('d-none');
       pendingLinesContainer.replaceChildren();
       submitPendingLinesBtn.disabled = true;
-      submitPendingLinesBtnText.textContent = 'إضافة البنود إلى الطلب (0)';
+      submitPendingLinesBtnText.textContent = 'حفظ جميع البنود الجديدة (0)';
+      if (!currentOrder.lines || currentOrder.lines.length === 0) {
+        emptyLinesState.classList.remove('d-none');
+      }
       return;
     }
 
+    emptyLinesState.classList.add('d-none');
     pendingLinesSection.classList.remove('d-none');
     pendingLinesCountBadge.textContent = `${pendingLines.length} بند`;
-    submitPendingLinesBtnText.textContent = `إضافة البنود إلى الطلب (${pendingLines.length})`;
+    submitPendingLinesBtnText.textContent = `حفظ جميع البنود الجديدة (${pendingLines.length})`;
     submitPendingLinesBtn.disabled = !isValid;
 
     pendingLinesContainer.replaceChildren();
@@ -450,16 +457,16 @@ document.addEventListener('DOMContentLoaded', () => {
       const hasErrors = line.validationErrors && line.validationErrors.length > 0;
       card.className = `card pending-line-card ${hasErrors ? 'is-invalid' : ''}`;
 
-      // 1. Header with Template Info and [X] Remove Button
+      // 1. Header with Template Info, Save Button, and [X] Remove Button
       const header = document.createElement('div');
-      header.className = 'pending-line-header d-flex justify-content-between align-items-center';
+      header.className = 'pending-line-header d-flex justify-content-between align-items-center flex-wrap gap-2';
 
       const headerInfo = document.createElement('div');
       headerInfo.className = 'd-flex align-items-center gap-2 flex-wrap';
 
       const badge = document.createElement('span');
-      badge.className = 'badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1 rounded-pill small';
-      badge.textContent = `بند مجهز #${index + 1}`;
+      badge.className = 'badge bg-primary text-white px-2 py-1 rounded-pill small';
+      badge.innerHTML = `<i class="fa-solid fa-sparkles me-1"></i> بند جديد #${index + 1}`;
       headerInfo.appendChild(badge);
 
       const title = document.createElement('h6');
@@ -474,19 +481,66 @@ document.addEventListener('DOMContentLoaded', () => {
 
       header.appendChild(headerInfo);
 
+      // Header Actions: Direct Save Button + Discard [X] Button
+      const headerActions = document.createElement('div');
+      headerActions.className = 'd-flex align-items-center gap-2';
+
+      const addSingleBtn = document.createElement('button');
+      addSingleBtn.type = 'button';
+      addSingleBtn.className = 'btn btn-sm production-theme-btn py-1 px-3 d-inline-flex align-items-center gap-1 shadow-sm';
+      addSingleBtn.innerHTML = '<i class="fa-solid fa-plus"></i> <span>إضافة إلى الطلب</span>';
+      addSingleBtn.disabled = hasErrors;
+
+      addSingleBtn.addEventListener('click', async () => {
+        if (line.validationErrors && line.validationErrors.length > 0) return;
+        addSingleBtn.disabled = true;
+        addSingleBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> جاري الإضافة...';
+
+        try {
+          const res = await window.erpFetch(`/api/production/orders/${orderId}/lines`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              templateId: line.template.id,
+              quantity: line.quantity,
+              patternSelections: line.patterns.map((p) => ({
+                patternId: p.patternId,
+                optionId: p.selectedOptionId,
+              })),
+            }),
+          });
+          const json = await res.json();
+          if (!res.ok || !json.success) {
+            throw new Error(getErrorMessage(json, 'فشل إضافة بند الإنتاج'));
+          }
+
+          pendingLines = pendingLines.filter((l) => l.localId !== line.localId);
+          renderPendingLines();
+          await refreshOrder();
+          showSuccessToast('تمت إضافة بند الإنتاج إلى الطلب بنجاح');
+        } catch (err) {
+          showComposerAlert(err.message || 'حدث خطأ أثناء إضافة البند');
+          addSingleBtn.disabled = false;
+          addSingleBtn.innerHTML = '<i class="fa-solid fa-plus"></i> <span>إضافة إلى الطلب</span>';
+        }
+      });
+
+      headerActions.appendChild(addSingleBtn);
+
       // X Remove button (Client-side removal, NO confirmation, NO API call)
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'btn remove-pending-btn p-0';
-      removeBtn.setAttribute('title', 'إزالة هذا البند');
-      removeBtn.setAttribute('aria-label', `إزالة بند ${line.template.name}`);
+      removeBtn.setAttribute('title', 'إلغاء هذا البند');
+      removeBtn.setAttribute('aria-label', `إلغاء بند ${line.template.name}`);
       removeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
       removeBtn.addEventListener('click', () => {
         pendingLines = pendingLines.filter((l) => l.localId !== line.localId);
         renderPendingLines();
       });
-      header.appendChild(removeBtn);
+      headerActions.appendChild(removeBtn);
 
+      header.appendChild(headerActions);
       card.appendChild(header);
 
       // 2. Card Body
@@ -662,7 +716,7 @@ document.addEventListener('DOMContentLoaded', () => {
       submitPendingSpinner.classList.add('d-none');
       submitPendingIcon.classList.remove('d-none');
       evaluatePendingLines();
-      submitPendingLinesBtnText.textContent = `إضافة البنود إلى الطلب (${pendingLines.length})`;
+      submitPendingLinesBtnText.textContent = `حفظ جميع البنود الجديدة (${pendingLines.length})`;
     }
   });
 
@@ -678,7 +732,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (!currentOrder.lines || currentOrder.lines.length === 0) {
-      emptyLinesState.classList.remove('d-none');
+      if (pendingLines.length === 0) {
+        emptyLinesState.classList.remove('d-none');
+      } else {
+        emptyLinesState.classList.add('d-none');
+      }
       return;
     }
 
