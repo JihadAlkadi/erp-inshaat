@@ -10,6 +10,7 @@ import { CreateProductionOrderDto } from './dto/create-production-order.dto.js';
 import { UpdateProductionOrderDto } from './dto/update-production-order.dto.js';
 import { ListProductionOrdersQueryDto } from './dto/list-production-orders-query.dto.js';
 import { AddProductionOrderLineDto } from '../order-line/dto/add-production-order-line.dto.js';
+import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
 import { UpdateProductionOrderLineDto } from '../order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
@@ -74,6 +75,15 @@ productionOrderApiRouter.delete(
 // ==========================================
 // 2. ORDER LINES ENDPOINTS
 // ==========================================
+
+// POST /api/production/orders/:orderId/lines/batch - Batch add lines to draft order (MUST be before :lineId)
+productionOrderApiRouter.post(
+  '/:orderId/lines/batch',
+  requirePermission(SystemPermission.PRODUCTION_ORDER_UPDATE),
+  validateUuidParam('orderId'),
+  validateDto(BatchAddProductionOrderLinesDto),
+  productionOrderController.addLinesBatch
+);
 
 // POST /api/production/orders/:orderId/lines - Add line to draft order
 productionOrderApiRouter.post(

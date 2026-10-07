@@ -6,7 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const limit = 15;
   let currentSearch = '';
   let searchTimeout = null;
-  let pendingArchiveOrderId = null;
 
   const tableBody = document.getElementById('ordersTableBody');
   const emptyState = document.getElementById('emptyOrdersState');
@@ -18,10 +17,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const kpiTotalOrders = document.getElementById('kpiTotalOrders');
   const kpiDraftOrders = document.getElementById('kpiDraftOrders');
   const kpiTotalQuantity = document.getElementById('kpiTotalQuantity');
-
-  const archiveModal = new bootstrap.Modal(document.getElementById('archiveOrderModal'));
-  const archiveModalOrderNumber = document.getElementById('archiveModalOrderNumber');
-  const confirmArchiveBtn = document.getElementById('confirmArchiveOrderBtn');
 
   // Initial load
   loadOrders();
@@ -45,33 +40,26 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Confirm archive handler
-  if (confirmArchiveBtn) {
-    confirmArchiveBtn.addEventListener('click', async () => {
-      if (!pendingArchiveOrderId) return;
+  function getErrorMessage(json, fallback) {
+    if (typeof window.extractApiErrorMessage === 'function') {
+      return window.extractApiErrorMessage(json, fallback);
+    }
+    return (json && json.message) || fallback;
+  }
 
-      confirmArchiveBtn.disabled = true;
-      confirmArchiveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> جاري الأرشفة...';
-
-      try {
-        const response = await window.erpFetch(`/api/production/orders/${pendingArchiveOrderId}`, {
-          method: 'DELETE',
-        });
-        const resJson = await response.json();
-        if (!response.ok || !resJson.success) {
-          throw new Error(resJson.message || 'فشل أرشفة الطلب');
-        }
-
-        archiveModal.hide();
-        loadOrders();
-      } catch (err) {
-        alert(err.message || 'حدث خطأ أثناء أرشفة الطلب');
-      } finally {
-        confirmArchiveBtn.disabled = false;
-        confirmArchiveBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i> <span>تأكيد الأرشفة</span>';
-        pendingArchiveOrderId = null;
-      }
-    });
+  function showSuccessToast(message) {
+    if (typeof Swal !== 'undefined') {
+      Swal.mixin({
+        toast: true,
+        position: 'top-start',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true,
+      }).fire({
+        icon: 'success',
+        title: message,
+      });
+    }
   }
 
   async function loadOrders() {
@@ -89,7 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(data.message || 'فشل جلب أوامر الإنتاج');
+        throw new Error(getErrorMessage(data, 'فشل جلب أوامر الإنتاج'));
       }
 
       renderOrdersTable(data.data);
@@ -99,53 +87,54 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function setLoadingState() {
-    tableBody.innerHTML = '';
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 8;
-    td.className = 'text-center py-5 text-muted';
-
-    const spinner = document.createElement('div');
-    spinner.className = 'spinner-border text-primary spinner-border-sm me-2';
-    spinner.setAttribute('role', 'status');
-
-    td.appendChild(spinner);
-    td.appendChild(document.createTextNode(' جاري تحميل أوامر الإنتاج...'));
-    tr.appendChild(td);
-    tableBody.appendChild(tr);
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="8" class="text-center py-5 text-muted">
+          <div class="spinner-border text-primary spinner-border-sm me-2" role="status"></div>
+          جاري تحميل أوامر الإنتاج...
+        </td>
+      </tr>
+    `;
     emptyState.classList.add('d-none');
   }
 
-  function renderErrorState(message) {
-    tableBody.innerHTML = '';
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 8;
-    td.className = 'text-center py-4 text-danger';
-
-    const icon = document.createElement('i');
-    icon.className = 'fa-solid fa-circle-exclamation me-2';
-    td.appendChild(icon);
-    td.appendChild(document.createTextNode(message));
-
-    tr.appendChild(td);
-    tableBody.appendChild(tr);
+  function renderErrorState(errorMessage) {
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="8" class="text-center py-5 text-danger">
+          <i class="fa-solid fa-triangle-exclamation fs-3 mb-2 d-block"></i>
+          <div>${errorMessage}</div>
+          <button class="btn btn-outline-secondary btn-sm mt-3" onclick="location.reload()">
+            إعادة المحاولة
+          </button>
+        </td>
+      </tr>
+    `;
+    emptyState.classList.add('d-none');
   }
 
-  function renderOrdersTable(result) {
-    const { items, total, page, totalPages } = result;
+  function updateKPIs(items, total) {
+    if (kpiTotalOrders) {
+      kpiTotalOrders.textContent = total.toString();
+    }
+    if (kpiDraftOrders) {
+      kpiDraftOrders.textContent = total.toString();
+    }
+    if (kpiTotalQuantity) {
+      const sum = items.reduce((acc, order) => {
+        const qty = order.summary && order.summary.totalQuantity ? order.summary.totalQuantity : 0;
+        return acc + qty;
+      }, 0);
+      kpiTotalQuantity.textContent = sum.toString();
+    }
+  }
+
+  function renderOrdersTable(data) {
+    const { items, total, page, totalPages } = data;
+
+    updateKPIs(items, total);
 
     tableBody.innerHTML = '';
-
-    // Update KPI metrics
-    let totalQty = 0;
-    items.forEach((item) => {
-      totalQty += item.summary.totalQuantity;
-    });
-
-    if (kpiTotalOrders) kpiTotalOrders.textContent = total.toString();
-    if (kpiDraftOrders) kpiDraftOrders.textContent = total.toString();
-    if (kpiTotalQuantity) kpiTotalQuantity.textContent = totalQty.toString();
 
     if (items.length === 0) {
       emptyState.classList.remove('d-none');
@@ -173,9 +162,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const tdStatus = document.createElement('td');
       tdStatus.className = 'py-3 px-3';
       const badge = document.createElement('span');
-      badge.className = 'badge bg-warning-subtle text-warning border border-warning-subtle px-2 py-1';
+      badge.className = 'badge bg-warning-subtle text-warning-emphasis px-2 py-1 rounded-pill';
       badge.style.fontSize = '0.75rem';
-      badge.textContent = 'مسودة DRAFT';
+      badge.textContent = 'مسودة';
       tdStatus.appendChild(badge);
       tr.appendChild(tdStatus);
 
@@ -242,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
         tdActions.appendChild(editBtn);
       }
 
-      // Archive Button (if permitted)
+      // Archive Button (if permitted) -> SweetAlert2
       if (window.canDeleteOrder && order.status === 'DRAFT') {
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
@@ -253,9 +242,38 @@ document.addEventListener('DOMContentLoaded', () => {
         delBtn.appendChild(delIcon);
 
         delBtn.addEventListener('click', () => {
-          pendingArchiveOrderId = order.id;
-          archiveModalOrderNumber.textContent = order.orderNumber;
-          archiveModal.show();
+          Swal.fire({
+            title: `أرشفة أمر الإنتاج ${order.orderNumber}`,
+            text: `هل أنت متأكد من أرشفة أمر الإنتاج "${order.orderNumber}"؟ سيختفي من الأوامر النشطة ولن تتمكن من تعديل مسودته من القوائم العادية.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#EE5253',
+            cancelButtonColor: '#6B7280',
+            confirmButtonText: 'نعم، أرشفة',
+            cancelButtonText: 'إلغاء',
+          }).then(async (result) => {
+            if (result.isConfirmed) {
+              try {
+                const response = await window.erpFetch(`/api/production/orders/${order.id}`, {
+                  method: 'DELETE',
+                });
+                const resJson = await response.json();
+                if (!response.ok || !resJson.success) {
+                  throw new Error(getErrorMessage(resJson, 'فشل أرشفة الطلب'));
+                }
+                showSuccessToast('تمت أرشفة أمر الإنتاج بنجاح');
+                loadOrders();
+              } catch (err) {
+                Swal.fire({
+                  icon: 'error',
+                  title: 'تعذر الأرشفة',
+                  text: err.message || 'حدث خطأ أثناء أرشفة الطلب',
+                  confirmButtonText: 'حسناً',
+                  confirmButtonColor: '#0984E3',
+                });
+              }
+            }
+          });
         });
 
         tdActions.appendChild(delBtn);

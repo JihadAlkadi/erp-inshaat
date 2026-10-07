@@ -54,25 +54,46 @@
     - **فحص التكرار الاستباقي في الواجهة (Client-Side Pre-check)**:
       - يحسب الـ JS في مساحة العمل كود التركيبة المختار ويقارنه فورياً مع البنود الحالية للطلب.
       - عند تطابق التركيبة، يُعرض تنبيه مباشر: "هذه التركيبة موجودة مسبقًا في البند #X. عدّل كمية البند الموجود بدل إضافة بند مكرر"، ويُعطل زر الإضافة تلقائياً.
-  - **فصل مساحات العمل في واجهات الويب (Web UI Architecture Separation)**:
-    - **صفحة العرض العامة (`/production/orders/:id` — `show.ejs` + `production-order-show.js`)**:
-      - صفحة قراءة فقط ومستقرة (Strictly Read-Only).
-      - لا تحتوي على أي أزرار أو حقول أو نوافذ منبثقة لتعديل أو إضافة أو أرشفة البنود أو الطلب.
-      - لا ينفذ ملف `production-order-show.js` أي طلبات HTTP معدلة (`POST`, `PATCH`, `DELETE`).
-      - تحتوي على زر تنقل واضح لمحرري الطلب: `تعديل / إعداد الطلب` يوجه إلى مسار التحرير `/production/orders/:id/edit`.
+  - **فصل مساحات العمل في واجهات الويب وتدفق إضافة البنود (Web UI Architecture & Search-First Line Composer)**:
+    > Production Order Show = read-only details
+    > Production Order Edit = draft workspace
+    - **صفحة العرض العامة (`/production/orders/:id` — `show.ejs`)**:
+      - صفحة قراءة فقط ومستقرة تماماً ومصيرة خادمياً بالكامل (Server-rendered EJS).
+      - لا تحتوي على أي أزرار أو حقول أو نوافذ منبثقة لتعديل أو إضافة أو أرشفة البنود أو الطلب (No mutation controls).
+      - عدم تكرار رقم الطلب بصرياً؛ يعرض كرقم رئيسي في ترويسة الصفحة القياسية وفق `ui-design-rules.md`.
+      - بطاقات KPI القياسية تقتصر على مؤشرين أساسيين: عدد البنود وإجمالي الكمية.
+      - بنود الإنتاج تعرض في جدول منظم بدقة يبرز القالب والكود والكمية والأنماط المختارة كـ Chips مرتبة.
+      - لا تتطلب صفحة العرض أي ملف JavaScript عميل (`production-order-show.js` أزيل منها لمنع التعقيد وتقليص مساحة الهجوم).
+      - تحتوي على زر تنقل مباشر للمحرر: `تعديل الطلب` يوجه إلى `/production/orders/:id/edit`.
     - **صفحة محرر المسودة الشامل (`/production/orders/:id/edit` — `edit.ejs` + `production-order-edit.js`)**:
-      - مساحة عمل متكاملة وشاملة لصياغة مسودة الطلب في صفحة واحدة دون نوافذ متداخلة معقدة.
-      - تضمين محرر البنود المباشر (`#addLineComposerCard`):
-        - البحث عن القالب مع ترقيم خادمي وزر "تحميل المزيد" وتطهير التكرارات.
+      - **منتقي القوالب المعتمد على البحث أولاً (Search-First Composer)**:
+        > No template data is loaded before the user provides a search keyword.
+        - تبدأ واجهة إضافة البنود بمربع بحث مركزي فقط دون تحميل أي قوالب مسبقاً (No fetch on initial boot, no spinner, no empty panels).
+        - البحث يبدأ حصراً عند إدخال نص غير فارغ (`searchTerm.trim().length > 0`) بعد Debounce مدته 300ms عبر `GET /api/production/templates/reference-options`.
         - حماية السباق عبر عداد تسلسلي متزايد حتماً `templatePickerRequestSeq`.
-        - استعلام تكوين القالب الخفيف بحماية سباق مستقلة `templateConfigurationRequestSeq`.
-        - فحص استباقي للتكرار قبل الإرسال.
-      - إدارة البنود الحالية:
-        - تعديل الكميات وحفظها فورياً.
-        - تغيير خيارات الأنماط مع التراجع التلقائي (Rollback) في الواجهة عند حدوث تعارض تكرار.
-        - إعادة ترتيب البنود (Move Up / Move Down).
-        - مزامنة البنود مع تحديثات القالب.
-        - أرشفة البنود والطلب.
+        - نتائج البحث تظهر مباشرة أسفل مربع البحث كأزرار متوافقة مع لوحة المفاتيح (`<button type="button">`) وتقتصر على اسم القالب وكوده ورقمه المرجعي.
+      - **إعداد البنود غير المحفوظة في الواجهة (Client-Side Pending Lines Staging)**:
+        > Template selections remain client-side pending configurations until submitted.
+        - اختيار القالب من نتائج البحث لا يحفظه في قاعدة البيانات، بل ينشئ بنداً مجهزاً غير محفوظ (`Pending Line`) أسفل البحث.
+        - يتيح إعداد أكثر من بند والبحث عن قوالب أخرى وإضافتها للقائمة المجهزة.
+        - كل بند مجهز يحتوي على الكمية مع تحقق فوري (1..10000)، وخيارات الأنماط، وزر إزالة مباشر `[X]` يحذفه فورياً دون أي تأكيد أو طلب شبكي.
+      - **قواعد منع التكرار للبنود المجهزة (Pending Duplicate Detection)**:
+        > Template + exact Pattern Options = unique within active lines. Quantity is not identity.
+        - حساب المفتاح المعياري للتركيبة: `templateId|sorted(patternId:optionId)`.
+        - فحص التكرار مقابل البنود الحالية في الطلب (`currentOrder.lines`): عند التطابق، يعرض تنبيه داخل البند المجهز ويوجه لتعديل كمية البند القائم.
+        - فحص التكرار البيني بين البنود المجهزة (`pendingLines`): عند تطابق بندين غير محفوظين، يعرض تحذير تكرار ويُعطل الحفظ.
+        - يسمح لنفس القالب بالوجود أكثر من مرة إذا كانت خيارات الأنماط مختلفة؛ ويمنع تكرار القالب بدون أنماط.
+      - **الإضافة الذرية للبنود دفعة واحدة (Atomic Batch Addition API)**:
+        > Batch addition of pending order lines is atomic under the ProductionOrder lock.
+        - زر الحفظ العام `إضافة البنود إلى الطلب (N)` يرسل كافة البنود المجهزة في طلب واحد: `POST /api/production/orders/:orderId/lines/batch`.
+        - العملية تنفذ داخل معاملة واحدة وتحت قفل أمر الإنتاج التشاؤمي (`ProductionOrder lock root`): إما تنجح بالكامل أو تتراجع بالكامل (All-or-Nothing)، دون أي إدخال جزئي.
+        - إعادة استخدام منطق التحقق الداخلي وحساب الترتيب المتسلسل المكثف (Dense Sort Order: N+1 .. N+K).
+      - **التوافق التام مع SweetAlert2 وإلغاء النوافذ البدائية (SweetAlert2 Invariants)**:
+        - حظر تام لـ `confirm()` و `alert()` البدائية للمتصفح.
+        - أرشفة البند، ومزامنة البند، وأرشفة الطلب تستخدم حصراً `Swal.fire` بألوان النظام المعتمدة (`#EE5253` للحذف/الأرشفة، `#0984E3` للمزامنة).
+        - إلغاء الـ Modals القديمة للأرشفة (`archiveOrderModal`) في كافة شاشات الأوامر (`edit.ejs` و `index.ejs`).
+        - استخراج موحد للأخطاء عبر `extractApiErrorMessage`، والتوجيه بعد أرشفة الطلب يعتمد نمط `pendingToast`.
+        - حماية المغادرة: تحذير المستخدم عبر SweetAlert2 عند وجود بنود مجهزة غير محفوظة عند الضغط على أزرار التنقل.
   - **صحة وسلامة الكمية (Line Quantity Invariant)**:
     - الكمية عدد صحيح موجب حصراً `1 <= quantity <= 10000`، ويتم التحقق منها على 3 مستويات: DTO Validation و Service Invariant (`validateLineQuantity` تطلق `PRODUCTION_ORDER_LINE_QUANTITY_INVALID` للأعداد العشرية أو السالبة أو الصفر أو التي تتجاوز 10,000) وقيد Check في قاعدة البيانات `CHK_production_order_line_quantity`.
     - الترتيب مكثف `sortOrder: 1..N` ومدعوم بإعادة ترتيب كامل `PATCH /api/production/orders/:orderId/lines/reorder` بتبديل كامل دقيق (Exact Permutation).

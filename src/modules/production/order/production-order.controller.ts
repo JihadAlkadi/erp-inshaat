@@ -5,6 +5,7 @@ import { CreateProductionOrderDto } from './dto/create-production-order.dto.js';
 import { UpdateProductionOrderDto } from './dto/update-production-order.dto.js';
 import { ListProductionOrdersQueryDto } from './dto/list-production-orders-query.dto.js';
 import { AddProductionOrderLineDto } from '../order-line/dto/add-production-order-line.dto.js';
+import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
 import { UpdateProductionOrderLineDto } from '../order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
@@ -78,6 +79,17 @@ export class ProductionOrderController {
       const dto = req.body as AddProductionOrderLineDto;
       const line = await this.orderService.addLine(orderId as string, dto);
       res.status(201).json(ApiResponse.success(line, 'تمت إضافة بند الإنتاج بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addLinesBatch = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { orderId } = req.params;
+      const dto = req.body as BatchAddProductionOrderLinesDto;
+      const lines = await this.orderService.addLinesBatch(orderId as string, dto);
+      res.status(201).json(ApiResponse.success(lines, 'تمت إضافة بنود الإنتاج بنجاح'));
     } catch (error) {
       next(error);
     }

@@ -43,6 +43,32 @@ window.erpFetch = function(url, options) {
   return fetch(url, fetchOptions);
 };
 
+/**
+ * Centralized API error extraction helper.
+ * Extracts user-friendly Arabic error message from ApiResponse errors array or map.
+ */
+window.extractApiErrorMessage = function(responseBody, fallback) {
+  if (!responseBody) return fallback || 'حدث خطأ غير متوقع';
+  var errorMessages = [];
+  if (responseBody.errors && typeof responseBody.errors === 'object' && !Array.isArray(responseBody.errors)) {
+    Object.keys(responseBody.errors).forEach(function(key) {
+      var val = responseBody.errors[key];
+      if (Array.isArray(val)) {
+        val.forEach(function(msg) { if (typeof msg === 'string' && msg.trim()) errorMessages.push(msg.trim()); });
+      } else if (typeof val === 'string' && val.trim()) {
+        errorMessages.push(val.trim());
+      }
+    });
+  } else if (Array.isArray(responseBody.errors)) {
+    responseBody.errors.forEach(function(msg) { if (typeof msg === 'string' && msg.trim()) errorMessages.push(msg.trim()); });
+  }
+  if (errorMessages.length === 0 && responseBody.message && typeof responseBody.message === 'string') {
+    errorMessages.push(responseBody.message);
+  }
+  var uniqueMessages = Array.from(new Set(errorMessages));
+  return uniqueMessages.length > 0 ? uniqueMessages.join('، ') : (fallback || 'حدث خطأ أثناء معالجة الطلب');
+};
+
 document.addEventListener('DOMContentLoaded', function() {
   // Password Visibility Toggle
   var togglePasswordBtn = document.getElementById('togglePasswordBtn');

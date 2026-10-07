@@ -21,6 +21,7 @@ import { CreateProductionOrderDto } from './dto/create-production-order.dto.js';
 import { UpdateProductionOrderDto } from './dto/update-production-order.dto.js';
 import { ListProductionOrdersQueryDto } from './dto/list-production-orders-query.dto.js';
 import { AddProductionOrderLineDto } from '../order-line/dto/add-production-order-line.dto.js';
+import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
 import { UpdateProductionOrderLineDto } from '../order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
@@ -271,6 +272,142 @@ export class ProductionOrderService {
   }
 
   /**
+   * Resolves and validates line configuration, active patterns, and selections.
+   */
+  private async resolveLineConfigurationInternal(
+    dto: AddProductionOrderLineDto,
+    manager: EntityManager
+  ): Promise<{
+    templateId: string;
+    quantity: number;
+    selectionsToCreate: Array<{ templatePatternId: string; selectedOptionId: string }>;
+    configHash: string;
+  }> {
+    this.validateLineQuantity(dto.quantity);
+
+    // Validate Template exists, not archived, and is active
+    const templateRepo = manager.getRepository(ProductionTemplateEntity);
+    const template = await templateRepo.findOne({
+      where: { id: dto.templateId, deletedAt: IsNull() },
+    });
+
+    if (!template) {
+      throw new NotFoundError('القالب غير موجود', 'PRODUCTION_ORDER_TEMPLATE_NOT_FOUND');
+    }
+
+    if (!template.isActive) {
+      throw new BusinessRuleError('لا يمكن إضافة قالب تصنيع غير فعال إلى طلب الإنتاج', 'PRODUCTION_ORDER_TEMPLATE_INACTIVE');
+    }
+
+    // Load active patterns and their active options
+    const patternRepo = manager.getRepository(ProductionTemplatePatternEntity);
+    const activePatterns = await patternRepo.find({
+      where: { templateId: dto.templateId, deletedAt: IsNull() },
+      relations: { options: true },
+      order: { createdAt: 'ASC' },
+    });
+
+    // Filter active options and sort them
+    const patternsWithOptions = activePatterns.map((p) => {
+      const activeOptions = (p.options || [])
+        .filter((opt) => !opt.deletedAt)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+      return {
+        pattern: p,
+        options: activeOptions,
+      };
+    });
+
+    // Verify that every active pattern has at least one active option
+    for (const item of patternsWithOptions) {
+      if (item.options.length === 0) {
+        throw new BusinessRuleError(
+          `النمط "${item.pattern.name}" لا يحتوي على أي خيارات فعالة`,
+          'PRODUCTION_ORDER_TEMPLATE_PATTERN_HAS_NO_ACTIVE_OPTIONS'
+        );
+      }
+    }
+
+    // Resolve pattern selections: either explicit payload validation or system defaults
+    const selectionsToCreate: Array<{ templatePatternId: string; selectedOptionId: string }> = [];
+
+    if (dto.patternSelections !== undefined) {
+      // Explicit payload provided: MUST be the exact set of active patterns
+      const payload = dto.patternSelections;
+
+      // Check for duplicates in payload
+      const patternIdSet = new Set<string>();
+      for (const item of payload) {
+        if (patternIdSet.has(item.patternId)) {
+          throw new BusinessRuleError(
+            'لا يمكن تكرار اختيار نفس النمط في نفس البند',
+            'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_INVALID'
+          );
+        }
+        patternIdSet.add(item.patternId);
+      }
+
+      // Must match exact count and keys of active patterns
+      if (patternIdSet.size !== patternsWithOptions.length) {
+        throw new BusinessRuleError(
+          'يجب تحديد خيار لكل نمط فعال في القالب بدقة',
+          'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
+        );
+      }
+
+      for (const item of patternsWithOptions) {
+        if (!patternIdSet.has(item.pattern.id)) {
+          throw new BusinessRuleError(
+            `لم يتم إرسال خيار للنمط "${item.pattern.name}"`,
+            'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
+          );
+        }
+      }
+
+      // Validate each selection: option belongs to pattern and is active
+      for (const pSel of payload) {
+        const matchedPatternItem = patternsWithOptions.find((p) => p.pattern.id === pSel.patternId);
+        if (!matchedPatternItem) {
+          throw new BusinessRuleError(
+            'النمط المحدد لا ينتمي إلى هذا القالب',
+            'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
+          );
+        }
+
+        const matchedOption = matchedPatternItem.options.find((o) => o.id === pSel.optionId);
+        if (!matchedOption) {
+          throw new BusinessRuleError(
+            'الخيار المحدد غير فعال أو لا يتبع هذا النمط',
+            'PRODUCTION_ORDER_LINE_OPTION_INVALID'
+          );
+        }
+
+        selectionsToCreate.push({
+          templatePatternId: matchedPatternItem.pattern.id,
+          selectedOptionId: matchedOption.id,
+        });
+      }
+    } else {
+      // No explicit payload: select default (first active option by sortOrder ASC)
+      for (const item of patternsWithOptions) {
+        selectionsToCreate.push({
+          templatePatternId: item.pattern.id,
+          selectedOptionId: item.options[0].id,
+        });
+      }
+    }
+
+    const configHash = hashLineConfiguration(dto.templateId, selectionsToCreate);
+
+    return {
+      templateId: dto.templateId,
+      quantity: dto.quantity,
+      selectionsToCreate,
+      configHash,
+    };
+  }
+
+  /**
    * Adds a new line to a DRAFT production order.
    * Atomic: creates line and pattern selections (default or explicit).
    */
@@ -278,142 +415,30 @@ export class ProductionOrderService {
     orderId: string,
     dto: AddProductionOrderLineDto
   ): Promise<ProductionOrderLineDto> {
-    this.validateLineQuantity(dto.quantity);
-
     return this.dataSource.transaction(async (manager) => {
       // 1. Lock Order (Unified Lock Root)
       await this.guardService.lockMutableOrder(orderId, manager);
 
-      // 2. Validate Template exists, not archived, and is active
-      const templateRepo = manager.getRepository(ProductionTemplateEntity);
-      const template = await templateRepo.findOne({
-        where: { id: dto.templateId, deletedAt: IsNull() },
-      });
+      // 2. Resolve Configuration
+      const resolved = await this.resolveLineConfigurationInternal(dto, manager);
 
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود', 'PRODUCTION_ORDER_TEMPLATE_NOT_FOUND');
-      }
+      // 3. Uniqueness assertion within order
+      await this.assertConfigurationAvailable(orderId, resolved.configHash, undefined, manager);
 
-      if (!template.isActive) {
-        throw new BusinessRuleError('لا يمكن إضافة قالب تصنيع غير فعال إلى طلب الإنتاج', 'PRODUCTION_ORDER_TEMPLATE_INACTIVE');
-      }
-
-      // 3. Load active patterns and their active options
-      const patternRepo = manager.getRepository(ProductionTemplatePatternEntity);
-      const activePatterns = await patternRepo.find({
-        where: { templateId: dto.templateId, deletedAt: IsNull() },
-        relations: { options: true },
-        order: { createdAt: 'ASC' },
-      });
-
-      // Filter active options and sort them
-      const patternsWithOptions = activePatterns.map((p) => {
-        const activeOptions = (p.options || [])
-          .filter((opt) => !opt.deletedAt)
-          .sort((a, b) => a.sortOrder - b.sortOrder);
-        return {
-          pattern: p,
-          options: activeOptions,
-        };
-      });
-
-      // Verify that every active pattern has at least one active option
-      for (const item of patternsWithOptions) {
-        if (item.options.length === 0) {
-          throw new BusinessRuleError(
-            `النمط "${item.pattern.name}" لا يحتوي على أي خيارات فعالة`,
-            'PRODUCTION_ORDER_TEMPLATE_PATTERN_HAS_NO_ACTIVE_OPTIONS'
-          );
-        }
-      }
-
-      // 4. Resolve pattern selections: either explicit payload validation or system defaults
-      const selectionsToCreate: Array<{ templatePatternId: string; selectedOptionId: string }> = [];
-
-      if (dto.patternSelections !== undefined) {
-        // Explicit payload provided: MUST be the exact set of active patterns
-        const payload = dto.patternSelections;
-
-        // Check for duplicates in payload
-        const patternIdSet = new Set<string>();
-        for (const item of payload) {
-          if (patternIdSet.has(item.patternId)) {
-            throw new BusinessRuleError(
-              'لا يمكن تكرار اختيار نفس النمط في نفس البند',
-              'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_INVALID'
-            );
-          }
-          patternIdSet.add(item.patternId);
-        }
-
-        // Must match exact count and keys of active patterns
-        if (patternIdSet.size !== patternsWithOptions.length) {
-          throw new BusinessRuleError(
-            'يجب تحديد خيار لكل نمط فعال في القالب بدقة',
-            'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
-          );
-        }
-
-        for (const item of patternsWithOptions) {
-          if (!patternIdSet.has(item.pattern.id)) {
-            throw new BusinessRuleError(
-              `لم يتم إرسال خيار للنمط "${item.pattern.name}"`,
-              'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
-            );
-          }
-        }
-
-        // Validate each selection: option belongs to pattern and is active
-        for (const pSel of payload) {
-          const matchedPatternItem = patternsWithOptions.find((p) => p.pattern.id === pSel.patternId);
-          if (!matchedPatternItem) {
-            throw new BusinessRuleError(
-              'النمط المحدد لا ينتمي إلى هذا القالب',
-              'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID'
-            );
-          }
-
-          const matchedOption = matchedPatternItem.options.find((o) => o.id === pSel.optionId);
-          if (!matchedOption) {
-            throw new BusinessRuleError(
-              'الخيار المحدد غير فعال أو لا يتبع هذا النمط',
-              'PRODUCTION_ORDER_LINE_OPTION_INVALID'
-            );
-          }
-
-          selectionsToCreate.push({
-            templatePatternId: matchedPatternItem.pattern.id,
-            selectedOptionId: matchedOption.id,
-          });
-        }
-      } else {
-        // No explicit payload: select default (first active option by sortOrder ASC)
-        for (const item of patternsWithOptions) {
-          selectionsToCreate.push({
-            templatePatternId: item.pattern.id,
-            selectedOptionId: item.options[0].id,
-          });
-        }
-      }
-
-      // 5. Compute canonical configuration hash and assert uniqueness within order
-      const configHash = hashLineConfiguration(dto.templateId, selectionsToCreate);
-      await this.assertConfigurationAvailable(orderId, configHash, undefined, manager);
-
-      // 6. Calculate next sort order dense (1..N)
+      // 4. Calculate next sort order dense (1..N)
       const lineRepo = manager.getRepository(ProductionOrderLineEntity);
       const activeLinesCount = await lineRepo.count({
         where: { orderId, deletedAt: IsNull() },
       });
       const nextSortOrder = activeLinesCount + 1;
 
-      // 7. Insert Line
+      // 5. Insert Line
       const newLine = lineRepo.create({
         orderId,
-        templateId: dto.templateId,
-        quantity: dto.quantity,
+        templateId: resolved.templateId,
+        quantity: resolved.quantity,
         sortOrder: nextSortOrder,
-        activeConfigurationHash: configHash,
+        activeConfigurationHash: resolved.configHash,
       });
 
       let savedLine: ProductionOrderLineEntity;
@@ -432,9 +457,9 @@ export class ProductionOrderService {
         throw err;
       }
 
-      // 7. Insert Selections
+      // 6. Insert Selections
       const selectionRepo = manager.getRepository(ProductionOrderLinePatternSelectionEntity);
-      for (const sel of selectionsToCreate) {
+      for (const sel of resolved.selectionsToCreate) {
         const newSel = selectionRepo.create({
           orderLineId: savedLine.id,
           templatePatternId: sel.templatePatternId,
@@ -443,7 +468,7 @@ export class ProductionOrderService {
         await selectionRepo.save(newSel);
       }
 
-      // 8. Return created line DTO
+      // 7. Return created line DTO
       const fullOrder = await this.getOrderByIdInternal(orderId, manager);
       const createdLineDto = fullOrder.lines?.find((l) => l.id === savedLine.id);
       if (!createdLineDto) {
@@ -451,6 +476,104 @@ export class ProductionOrderService {
       }
 
       return createdLineDto;
+    });
+  }
+
+  /**
+   * Adds multiple lines to a DRAFT production order in a single atomic transaction.
+   */
+  async addLinesBatch(
+    orderId: string,
+    dto: BatchAddProductionOrderLinesDto
+  ): Promise<ProductionOrderLineDto[]> {
+    if (!dto.lines || dto.lines.length === 0) {
+      throw new BusinessRuleError('يجب تقديم بند واحد على الأقل', 'PRODUCTION_ORDER_BATCH_EMPTY');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock Order (Unified Lock Root)
+      await this.guardService.lockMutableOrder(orderId, manager);
+
+      // 2. Resolve configuration for each line & detect intra-batch duplicates
+      const resolvedLines: Array<{
+        templateId: string;
+        quantity: number;
+        selectionsToCreate: Array<{ templatePatternId: string; selectedOptionId: string }>;
+        configHash: string;
+      }> = [];
+
+      const batchHashSet = new Set<string>();
+
+      for (const itemDto of dto.lines) {
+        const resolved = await this.resolveLineConfigurationInternal(itemDto, manager);
+        if (batchHashSet.has(resolved.configHash)) {
+          throw new BusinessRuleError(
+            'تتضمن قائمة البنود تراكيب مكررة لنفس القالب ونفس خيارات الأنماط',
+            'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+          );
+        }
+        batchHashSet.add(resolved.configHash);
+        resolvedLines.push(resolved);
+      }
+
+      // 3. Assert no duplicate against existing active lines in order
+      for (const resolved of resolvedLines) {
+        await this.assertConfigurationAvailable(orderId, resolved.configHash, undefined, manager);
+      }
+
+      // 4. Calculate starting sort order
+      const lineRepo = manager.getRepository(ProductionOrderLineEntity);
+      const activeLinesCount = await lineRepo.count({
+        where: { orderId, deletedAt: IsNull() },
+      });
+
+      const selectionRepo = manager.getRepository(ProductionOrderLinePatternSelectionEntity);
+      const createdLineIds: string[] = [];
+
+      for (let i = 0; i < resolvedLines.length; i++) {
+        const resLine = resolvedLines[i];
+        const nextSortOrder = activeLinesCount + i + 1;
+
+        const newLine = lineRepo.create({
+          orderId,
+          templateId: resLine.templateId,
+          quantity: resLine.quantity,
+          sortOrder: nextSortOrder,
+          activeConfigurationHash: resLine.configHash,
+        });
+
+        let savedLine: ProductionOrderLineEntity;
+        try {
+          savedLine = await lineRepo.save(newLine);
+        } catch (err: any) {
+          if (
+            err?.code === 'ER_DUP_ENTRY' ||
+            err?.message?.includes('UQ_prod_order_line_order_config_hash')
+          ) {
+            throw new BusinessRuleError(
+              'يوجد بند إنتاج آخر في هذا الطلب يستخدم نفس القالب ونفس خيارات الأنماط. عدّل كمية البند الموجود بدلاً من إضافة بند مكرر.',
+              'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+            );
+          }
+          throw err;
+        }
+
+        createdLineIds.push(savedLine.id);
+
+        for (const sel of resLine.selectionsToCreate) {
+          const newSel = selectionRepo.create({
+            orderLineId: savedLine.id,
+            templatePatternId: sel.templatePatternId,
+            selectedOptionId: sel.selectedOptionId,
+          });
+          await selectionRepo.save(newSel);
+        }
+      }
+
+      // 5. Return created lines DTOs
+      const fullOrder = await this.getOrderByIdInternal(orderId, manager);
+      const createdLines = (fullOrder.lines || []).filter((l) => createdLineIds.includes(l.id));
+      return createdLines;
     });
   }
 
