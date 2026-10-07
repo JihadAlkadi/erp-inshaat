@@ -35,12 +35,16 @@ import { AddProductionOrderLineDto } from '../src/modules/production/order-line/
 import { UpdateProductionOrderLineDto } from '../src/modules/production/order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../src/modules/production/order-line/dto/reorder-production-order-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../src/modules/production/order-line-pattern-selection/dto/update-pattern-selection.dto.js';
+import {
+  CommitProductionOrderDraftLinesDto,
+  CommitProductionOrderDraftLineDto,
+} from '../src/modules/production/order-line/dto/commit-production-order-draft-lines.dto.js';
 import { safeJsonStringify } from '../src/modules/production/order/production-order.types.js';
 
 describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation', () => {
   function createDuplicateTestContext() {
     const store = {
-      order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+      order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null } as any,
       lines: [] as any[],
       selections: [] as any[],
       templates: [
@@ -55,6 +59,10 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
         { id: 'opt-1a', patternId: 'p-1', name: 'خيار 1-أ', sortOrder: 1, deletedAt: null },
         { id: 'opt-1b', patternId: 'p-1', name: 'خيار 1-ب', sortOrder: 2, deletedAt: null },
         { id: 'opt-2a', patternId: 'p-2', name: 'خيار 2-أ', sortOrder: 1, deletedAt: null },
+      ],
+      workflowItems: [
+        { id: 'wf-1', templateId: 't-no-patterns', deletedAt: null },
+        { id: 'wf-2', templateId: 't-with-patterns', deletedAt: null },
       ],
       sequence: { id: 'PRODUCTION_ORDER', currentValue: 1 } as any,
     };
@@ -92,10 +100,10 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
         },
         find: async (opts: any) => {
           if (entityClass === ProductionOrderLineEntity) {
-            return store.lines.filter((l) => !opts?.withDeleted ? !l.deletedAt : true);
+            return store.lines.filter((l) => (!opts?.withDeleted ? !l.deletedAt : true)).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
           }
           if (entityClass === ProductionTemplateEntity) {
-            return store.templates.filter((t) => !opts?.withDeleted ? !t.deletedAt : true);
+            return store.templates.filter((t) => (!opts?.withDeleted ? !t.deletedAt : true));
           }
           if (entityClass === ProductionTemplatePatternEntity) {
             return store.patterns.filter((p) => {
@@ -112,7 +120,10 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
             });
           }
           if (entityClass === ProductionTemplatePatternOptionEntity) {
-            return store.options.filter((o) => !opts?.withDeleted ? !o.deletedAt : true);
+            return store.options.filter((o) => (!opts?.withDeleted ? !o.deletedAt : true));
+          }
+          if (entityClass === ProductionTemplateWorkflowItemEntity) {
+            return store.workflowItems.filter((w) => (!opts?.withDeleted ? !w.deletedAt : true));
           }
           if (entityClass === ProductionOrderLinePatternSelectionEntity) {
             return store.selections.filter((s) => {
@@ -132,28 +143,79 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
           return 0;
         },
         create: (data: any) => ({ id: data.id || `line-${Date.now()}-${Math.floor(Math.random() * 1000)}`, deletedAt: null, ...data }),
-        save: async (entity: any) => {
-          if (entityClass === ProductionOrderEntity) {
-            store.order = entity;
-          } else if (entityClass === ProductionOrderSequenceEntity) {
-            store.sequence = entity;
-          } else if (entityClass === ProductionOrderLineEntity) {
-            const idx = store.lines.findIndex((l) => l.id === entity.id);
-            if (idx >= 0) store.lines[idx] = entity;
-            else store.lines.push(entity);
-          } else if (entityClass === ProductionOrderLinePatternSelectionEntity) {
-            const idx = store.selections.findIndex((s) => s.id === entity.id);
-            if (idx >= 0) store.selections[idx] = entity;
-            else store.selections.push(entity);
-          }
-          return entity;
-        },
+        save: async (entityOrItems: any) => mockManager.save(entityClass, entityOrItems),
+        update: async (criteria: any, partial: any) => mockManager.update(entityClass, criteria, partial),
+        delete: async (criteria: any) => mockManager.delete(entityClass, criteria),
+        softDelete: async (criteria: any) => mockManager.softDelete(entityClass, criteria),
+        remove: async (entityOrItems: any) => mockManager.remove(entityClass, entityOrItems),
       };
     };
 
     const mockManager: any = {
       getRepository: (c: any) => createRepo(c),
-      save: async (e: any) => e,
+      save: async (entityClassOrEntity: any, maybeEntity?: any) => {
+        const raw = maybeEntity !== undefined ? maybeEntity : entityClassOrEntity;
+        const items = Array.isArray(raw) ? raw : [raw];
+        for (const entity of items) {
+          if (entity.orderNumber !== undefined) store.order = entity;
+          else if (entity.quantity !== undefined) {
+            const idx = store.lines.findIndex((l) => l.id === entity.id);
+            if (idx >= 0) store.lines[idx] = entity; else store.lines.push(entity);
+          } else if (entity.selectedOptionId !== undefined) {
+            const idx = store.selections.findIndex((s) => s.id === entity.id);
+            if (idx >= 0) store.selections[idx] = entity; else store.selections.push(entity);
+          }
+        }
+        return raw;
+      },
+      update: async (entityClass: any, criteria: any, partial: any) => {
+        if (entityClass === ProductionOrderLineEntity) {
+          if (criteria?.orderId) {
+            for (const l of store.lines) {
+              if (l.orderId === criteria.orderId && (!l.deletedAt || criteria.deletedAt !== undefined)) {
+                Object.assign(l, partial);
+              }
+            }
+          } else {
+            const ids: string[] = typeof criteria === 'string'
+              ? [criteria]
+              : (criteria?.id?._value || (Array.isArray(criteria?.id) ? criteria.id : (criteria?.id ? [criteria.id] : [])));
+            for (const id of ids) {
+              const l = store.lines.find((line) => line.id === id);
+              if (l) Object.assign(l, partial);
+            }
+          }
+        }
+      },
+      delete: async (entityClass: any, criteria: any) => {
+        if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+          if (criteria?.orderLineId) {
+            const lineIds: string[] = criteria.orderLineId._value || (Array.isArray(criteria.orderLineId) ? criteria.orderLineId : [criteria.orderLineId]);
+            store.selections = store.selections.filter((s) => !lineIds.includes(s.orderLineId));
+          }
+        }
+      },
+      softDelete: async (entityClass: any, criteria: any) => {
+        if (entityClass === ProductionOrderEntity && store.order) {
+          store.order.deletedAt = new Date();
+        } else if (entityClass === ProductionOrderLineEntity) {
+          const ids: string[] = typeof criteria === 'string'
+            ? [criteria]
+            : (criteria?.id?._value || (Array.isArray(criteria?.id) ? criteria.id : [criteria?.id]));
+          for (const id of ids) {
+            const l = store.lines.find((line) => line.id === id);
+            if (l) l.deletedAt = new Date();
+          }
+        }
+      },
+      remove: async (entityClassOrEntity: any, maybeEntity?: any) => {
+        const raw = maybeEntity !== undefined ? maybeEntity : entityClassOrEntity;
+        const items = Array.isArray(raw) ? raw : [raw];
+        for (const entity of items) {
+          const idx = store.selections.findIndex((s) => s.id === entity.id);
+          if (idx >= 0) store.selections.splice(idx, 1);
+        }
+      },
     };
 
     const mockDataSource: any = {
@@ -164,7 +226,7 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
     const guard = new ProductionOrderGuardService(mockDataSource);
     const service = new ProductionOrderService(mockDataSource, guard);
 
-    return { store, service };
+    return { store, service, mockManager, mockDataSource };
   }
 
   // ==========================================
@@ -183,6 +245,12 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       assert.ok(m14, 'Migration 0014 must be registered in databaseConfig');
     });
 
+    it('verifies Migration 0015 is registered in databaseConfig.migrations', () => {
+      const migrations = databaseConfig.migrations as Function[];
+      const m15 = migrations.find((m) => m.name === 'AddProductionOrderApprovalStatus1710000000015');
+      assert.ok(m15, 'Migration 0015 must be registered in databaseConfig');
+    });
+
     it('verifies all 4 Order aggregate entities are registered in databaseConfig.entities', () => {
       const entities = databaseConfig.entities as Function[];
       assert.ok(entities.includes(ProductionOrderEntity), 'ProductionOrderEntity must be registered');
@@ -194,23 +262,26 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       );
     });
 
-    it('defines all 4 production order permissions with correct identifiers', () => {
+    it('defines all 5 production order permissions with correct identifiers', () => {
       assert.equal(SystemPermission.PRODUCTION_ORDER_VIEW, 'production.order.view');
       assert.equal(SystemPermission.PRODUCTION_ORDER_CREATE, 'production.order.create');
       assert.equal(SystemPermission.PRODUCTION_ORDER_UPDATE, 'production.order.update');
       assert.equal(SystemPermission.PRODUCTION_ORDER_DELETE, 'production.order.delete');
+      assert.equal(SystemPermission.PRODUCTION_ORDER_APPROVE, 'production.order.approve');
     });
 
-    it('registers all 4 production order permissions in SYSTEM_PERMISSION_DEFINITIONS', () => {
+    it('registers all 5 production order permissions in SYSTEM_PERMISSION_DEFINITIONS', () => {
       const viewDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_VIEW];
       const createDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_CREATE];
       const updateDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_UPDATE];
       const deleteDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_DELETE];
+      const approveDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_APPROVE];
 
       assert.ok(viewDef && viewDef.module === 'production');
       assert.ok(createDef && createDef.module === 'production');
       assert.ok(updateDef && updateDef.module === 'production');
       assert.ok(deleteDef && deleteDef.module === 'production');
+      assert.ok(approveDef && approveDef.module === 'production');
     });
 
     it('verifies AccessScopeCapabilityRegistry maps production order permissions to [ALL]', () => {
@@ -228,6 +299,10 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       );
       assert.deepEqual(
         AccessScopeCapabilityRegistry.getAllowedPresetsForPermission(SystemPermission.PRODUCTION_ORDER_DELETE),
+        [AccessScopePreset.ALL]
+      );
+      assert.deepEqual(
+        AccessScopeCapabilityRegistry.getAllowedPresetsForPermission(SystemPermission.PRODUCTION_ORDER_APPROVE),
         [AccessScopePreset.ALL]
       );
     });
@@ -357,10 +432,11 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
   // 4. ORDER STATUS & LIFECYCLE INVARIANTS
   // ==========================================
   describe('4. Order Status & Lifecycle Invariants', () => {
-    it('ProductionOrderStatus has only DRAFT in Phase 1', () => {
+    it('ProductionOrderStatus has only DRAFT and APPROVED in foundation phase', () => {
       assert.equal(ProductionOrderStatus.DRAFT, 'DRAFT');
+      assert.equal(ProductionOrderStatus.APPROVED, 'APPROVED');
       const statuses = Object.values(ProductionOrderStatus);
-      assert.deepEqual(statuses, ['DRAFT'], 'Phase 1 must only permit DRAFT status');
+      assert.deepEqual(statuses, ['DRAFT', 'APPROVED'], 'Foundation phase must only permit DRAFT and APPROVED statuses');
     });
 
     it('verifies order.status cannot be changed via generic update', () => {
@@ -1611,14 +1687,12 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       assert.ok(showEjs.includes('/production/orders/<%= order.id %>/edit'), 'show.ejs must link to /edit');
     });
 
-    it('edit.ejs: contains search-first composer, pending staging list, and no Bootstrap archive modal', () => {
+    it('edit.ejs: contains search-first composer, unified order lines container, single save, and no Bootstrap archive modal', () => {
       const editEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/edit.ejs'), 'utf-8');
 
       assert.ok(editEjs.includes('addLineComposerCard'), 'edit.ejs must contain addLineComposerCard');
       assert.ok(editEjs.includes('templateSearchInput'), 'edit.ejs must contain templateSearchInput');
       assert.ok(editEjs.includes('templateLoadMoreBtn'), 'edit.ejs must contain templateLoadMoreBtn');
-      assert.ok(editEjs.includes('pendingLinesSection'), 'edit.ejs must contain pendingLinesSection');
-      assert.ok(editEjs.includes('pendingLinesContainer'), 'edit.ejs must contain pendingLinesContainer');
       assert.ok(editEjs.includes('submitPendingLinesBtn'), 'edit.ejs must contain submitPendingLinesBtn');
       assert.ok(editEjs.includes('orderLinesContainer'), 'edit.ejs must contain orderLinesContainer');
       assert.ok(editEjs.includes('editHeaderModal'), 'edit.ejs must contain editHeaderModal');
@@ -1634,10 +1708,10 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       assert.ok(!indexEjs.includes('confirmArchiveOrderBtn'), 'index.ejs must NOT contain confirmArchiveOrderBtn');
     });
 
-    it('production-order-show.js: does not execute any mutating API calls', () => {
+    it('production-order-show.js: does not execute line mutating calls (only workflow approval and reopen)', () => {
       const showJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-show.js'), 'utf-8');
 
-      assert.ok(!showJs.includes("method: 'POST'"), 'show.js must not perform POST requests');
+      assert.ok(!showJs.includes('lines/'), 'show.js must not perform line mutations');
       assert.ok(!showJs.includes("method: 'PATCH'"), 'show.js must not perform PATCH requests');
       assert.ok(!showJs.includes("method: 'DELETE'"), 'show.js must not perform DELETE requests');
     });
@@ -2110,6 +2184,543 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
 
       const readiness = await service.validateDraftForRelease('ord-1');
       assert.equal(readiness.ready, false);
+    });
+  });
+
+  // ==========================================
+  // 15. FINAL STABILIZATION: ATOMIC DRAFT COMMIT, APPROVAL WORKFLOW & UX
+  // ==========================================
+  describe('15. Final Stabilization: Atomic Draft Commit, Approval Workflow & UX', () => {
+    // ------------------------------------------
+    // DTO VALIDATION TESTS
+    // ------------------------------------------
+    it('CommitProductionOrderDraftLinesDto: accepts valid target lines state', async () => {
+      const dto = plainToInstance(CommitProductionOrderDraftLinesDto, {
+        lines: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            templateId: '22222222-2222-4222-8222-222222222222',
+            quantity: 5,
+            patternSelections: [
+              {
+                patternId: '33333333-3333-4333-8333-333333333333',
+                optionId: '44444444-4444-4444-8444-444444444444',
+              },
+            ],
+          },
+          {
+            templateId: '55555555-5555-4555-8555-555555555555',
+            quantity: 3,
+            patternSelections: [],
+          },
+        ],
+      });
+
+      const errors = await validate(dto);
+      assert.equal(errors.length, 0, 'Valid CommitProductionOrderDraftLinesDto must pass validation');
+    });
+
+    it('CommitProductionOrderDraftLinesDto: rejects decimal and negative quantities', async () => {
+      const dtoDecimal = plainToInstance(CommitProductionOrderDraftLinesDto, {
+        lines: [
+          {
+            templateId: '22222222-2222-4222-8222-222222222222',
+            quantity: 2.5,
+          },
+        ],
+      });
+
+      const errorsDecimal = await validate(dtoDecimal);
+      assert.ok(errorsDecimal.length > 0, 'Decimal quantity 2.5 must be rejected');
+
+      const dtoZero = plainToInstance(CommitProductionOrderDraftLinesDto, {
+        lines: [
+          {
+            templateId: '22222222-2222-4222-8222-222222222222',
+            quantity: 0,
+          },
+        ],
+      });
+
+      const errorsZero = await validate(dtoZero);
+      assert.ok(errorsZero.length > 0, 'Zero quantity must be rejected');
+
+      const dtoTooLarge = plainToInstance(CommitProductionOrderDraftLinesDto, {
+        lines: [
+          {
+            templateId: '22222222-2222-4222-8222-222222222222',
+            quantity: 10001,
+          },
+        ],
+      });
+
+      const errorsTooLarge = await validate(dtoTooLarge);
+      assert.ok(errorsTooLarge.length > 0, 'Quantity > 10000 must be rejected');
+    });
+
+    it('CommitProductionOrderDraftLinesDto: rejects duplicate existing IDs in payload', async () => {
+      const dto = plainToInstance(CommitProductionOrderDraftLinesDto, {
+        lines: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            templateId: '22222222-2222-4222-8222-222222222222',
+            quantity: 1,
+          },
+          {
+            id: '11111111-1111-4111-8111-111111111111', // duplicate ID!
+            templateId: '22222222-2222-4222-8222-222222222222',
+            quantity: 2,
+          },
+        ],
+      });
+
+      const errors = await validate(dto);
+      assert.ok(errors.length > 0, 'Duplicate line IDs in payload must be rejected');
+    });
+
+    // ------------------------------------------
+    // ATOMIC DRAFT COMMIT SERVICE TESTS
+    // ------------------------------------------
+    it('commitDraftLines(): executes mixed operations (delete A, update B, add C) atomically in one transaction with dense sort', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add pre-existing lines A and B
+      const lineA = await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 1,
+      });
+
+      const lineB = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 2,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      assert.equal(store.lines.filter((l) => !l.deletedAt).length, 2);
+
+      // Target payload:
+      // Line A is omitted (should be deleted)
+      // Line B is updated (quantity: 10, pattern opt-1b)
+      // Line C is newly added (t-no-patterns, quantity: 4)
+      const commitResult = await service.commitDraftLines('ord-1', {
+        lines: [
+          {
+            id: lineB.id,
+            templateId: 't-with-patterns',
+            quantity: 10,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1b' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+          {
+            templateId: 't-no-patterns',
+            quantity: 4,
+            patternSelections: [],
+          },
+        ],
+      });
+
+      // Assertions
+      assert.equal(commitResult.lines.length, 2);
+      assert.equal(commitResult.summary.lineCount, 2);
+      assert.equal(commitResult.summary.totalQuantity, 14);
+
+      // Check dense sortOrder
+      assert.equal(commitResult.lines[0].sortOrder, 1);
+      assert.equal(commitResult.lines[0].quantity, 10);
+      assert.equal(commitResult.lines[1].sortOrder, 2);
+      assert.equal(commitResult.lines[1].quantity, 4);
+
+      // Line A must be soft-deleted and its hash nulled
+      const storedLineA = store.lines.find((l) => l.id === lineA.id);
+      assert.ok(storedLineA.deletedAt !== null, 'Line A must be archived');
+      assert.equal(storedLineA.activeConfigurationHash, null, 'Archived line A must have NULL configuration hash');
+
+      // Active lines must all have non-null activeConfigurationHash
+      const activeLines = store.lines.filter((l) => !l.deletedAt);
+      assert.equal(activeLines.length, 2);
+      activeLines.forEach((l) => {
+        assert.ok(l.activeConfigurationHash, 'Every active line must have activeConfigurationHash');
+      });
+    });
+
+    it('commitDraftLines(): duplicate configuration inside target payload rejects and rolls back completely', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add pre-existing line A
+      const lineA = await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 1,
+      });
+
+      // Target payload attempts to add two lines with identical configuration (t-no-patterns)
+      await assert.rejects(
+        async () => {
+          await service.commitDraftLines('ord-1', {
+            lines: [
+              {
+                id: lineA.id,
+                templateId: 't-no-patterns',
+                quantity: 5,
+              },
+              {
+                templateId: 't-no-patterns', // DUPLICATE CONFIGURATION!
+                quantity: 3,
+              },
+            ],
+          });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION');
+          return true;
+        }
+      );
+
+      // Line A must remain unchanged (rollback intact)
+      const storedLineA = store.lines.find((l) => l.id === lineA.id);
+      assert.equal(storedLineA.quantity, 1, 'Quantity must not have changed');
+      assert.equal(storedLineA.deletedAt, null);
+    });
+
+    it('commitDraftLines(): configuration swap between two existing lines succeeds without collision', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Setup Line A with opt-1a, Line B with opt-1b
+      const lineA = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      const lineB = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 2,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1b' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      const hashAInitial = lineA.activeConfigurationHash;
+      const hashBInitial = lineB.activeConfigurationHash;
+
+      // Swap target state: Line A gets opt-1b, Line B gets opt-1a
+      const commitResult = await service.commitDraftLines('ord-1', {
+        lines: [
+          {
+            id: lineA.id,
+            templateId: 't-with-patterns',
+            quantity: 1,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1b' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+          {
+            id: lineB.id,
+            templateId: 't-with-patterns',
+            quantity: 2,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1a' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+        ],
+      });
+
+      assert.equal(commitResult.lines.length, 2);
+      const updatedA = commitResult.lines.find((l) => l.id === lineA.id);
+      const updatedB = commitResult.lines.find((l) => l.id === lineB.id);
+
+      assert.equal(updatedA?.activeConfigurationHash, hashBInitial, 'Line A now has original Hash B');
+      assert.equal(updatedB?.activeConfigurationHash, hashAInitial, 'Line B now has original Hash A');
+    });
+
+    it('commitDraftLines(): foreign existing line ID fails closed with PRODUCTION_ORDER_LINE_NOT_FOUND', async () => {
+      const { service } = createDuplicateTestContext();
+
+      await assert.rejects(
+        async () => {
+          await service.commitDraftLines('ord-1', {
+            lines: [
+              {
+                id: 'foreign-line-999',
+                templateId: 't-no-patterns',
+                quantity: 1,
+              },
+            ],
+          });
+        },
+        (err: any) => {
+          assert.ok(err instanceof NotFoundError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_LINE_NOT_FOUND');
+          return true;
+        }
+      );
+    });
+
+    it('commitDraftLines(): mutating templateId of existing line fails closed with PRODUCTION_ORDER_LINE_TEMPLATE_IMMUTABLE', async () => {
+      const { service } = createDuplicateTestContext();
+
+      const line = await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 1,
+      });
+
+      await assert.rejects(
+        async () => {
+          await service.commitDraftLines('ord-1', {
+            lines: [
+              {
+                id: line.id,
+                templateId: 't-with-patterns', // Attempting to change template of existing line!
+                quantity: 1,
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1a' },
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+            ],
+          });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_LINE_TEMPLATE_IMMUTABLE');
+          return true;
+        }
+      );
+    });
+
+    // ------------------------------------------
+    // SYNC PREVIEW TESTS
+    // ------------------------------------------
+    it('previewSyncDraftLine(): returns reconciled pattern selections preview WITHOUT mutating DB', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add a line with pattern p-1
+      const line = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      const initialSelectionsCount = store.selections.length;
+      const initialLineHash = store.lines.find((l) => l.id === line.id)?.activeConfigurationHash;
+
+      // Soft delete pattern p-1 (simulating template update)
+      const p1 = store.patterns.find((p) => p.id === 'p-1');
+      if (p1) p1.deletedAt = new Date();
+
+      // Call preview
+      const preview = await service.previewSyncDraftLine('ord-1', line.id);
+      assert.ok(preview);
+      assert.equal(preview.lineId, line.id);
+      assert.equal(preview.templateId, 't-with-patterns');
+      assert.ok(preview.patternSelections.length > 0);
+
+      // Verify DB was NOT mutated
+      assert.equal(store.selections.length, initialSelectionsCount, 'Selections count in store must not change');
+      const lineAfterPreview = store.lines.find((l) => l.id === line.id);
+      assert.equal(lineAfterPreview?.activeConfigurationHash, initialLineHash, 'Hash must not change in preview');
+    });
+
+    // ------------------------------------------
+    // APPROVAL WORKFLOW TESTS
+    // ------------------------------------------
+    it('order status lifecycle: created as DRAFT, saving lines keeps DRAFT', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      assert.equal(store.order.status, ProductionOrderStatus.DRAFT);
+
+      await service.commitDraftLines('ord-1', {
+        lines: [
+          {
+            templateId: 't-no-patterns',
+            quantity: 3,
+          },
+        ],
+      });
+
+      assert.equal(store.order.status, ProductionOrderStatus.DRAFT, 'Draft lines commit must maintain DRAFT status');
+    });
+
+    it('approveOrder(): approves ready draft order and sets approval metadata', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add a valid line to make order ready
+      await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 2,
+      });
+
+      const approvedOrder = await service.approveOrder('ord-1', 'user-approver-123');
+
+      assert.equal(approvedOrder.status, ProductionOrderStatus.APPROVED);
+      assert.ok(approvedOrder.approvedAt instanceof Date || typeof approvedOrder.approvedAt === 'string');
+      assert.equal(approvedOrder.approvedByUserId, 'user-approver-123');
+      assert.equal(store.order.status, ProductionOrderStatus.APPROVED);
+    });
+
+    it('approveOrder(): blocked with PRODUCTION_ORDER_NOT_READY_FOR_APPROVAL when order is empty or has issues', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Order has zero lines -> not ready
+      await assert.rejects(
+        async () => {
+          await service.approveOrder('ord-1', 'user-approver-123');
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_NOT_READY_FOR_APPROVAL');
+          return true;
+        }
+      );
+
+      assert.equal(store.order.status, ProductionOrderStatus.DRAFT);
+    });
+
+    it('approveOrder(): double approve throws PRODUCTION_ORDER_NOT_MUTABLE', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 2,
+      });
+
+      await service.approveOrder('ord-1', 'user-approver-123');
+      assert.equal(store.order.status, ProductionOrderStatus.APPROVED);
+
+      await assert.rejects(
+        async () => {
+          await service.approveOrder('ord-1', 'user-approver-123');
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.ok(err.code === 'PRODUCTION_ORDER_NOT_DRAFT' || err.code === 'PRODUCTION_ORDER_NOT_MUTABLE');
+          return true;
+        }
+      );
+    });
+
+    it('reopenOrder(): transitions APPROVED back to DRAFT and clears approval metadata', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 2,
+      });
+
+      await service.approveOrder('ord-1', 'user-approver-123');
+      assert.equal(store.order.status, ProductionOrderStatus.APPROVED);
+
+      const reopenedOrder = await service.reopenOrder('ord-1');
+      assert.equal(reopenedOrder.status, ProductionOrderStatus.DRAFT);
+      assert.equal(reopenedOrder.approvedAt, null);
+      assert.equal(reopenedOrder.approvedByUserId, null);
+      assert.equal(store.order.status, ProductionOrderStatus.DRAFT);
+    });
+
+    it('APPROVED order immutability: commitDraftLines and line mutations rejected on APPROVED order', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 2,
+      });
+
+      await service.approveOrder('ord-1', 'user-approver-123');
+
+      // Attempt commitDraftLines on APPROVED
+      await assert.rejects(
+        async () => {
+          await service.commitDraftLines('ord-1', { lines: [] });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.ok(err.code === 'PRODUCTION_ORDER_NOT_DRAFT' || err.code === 'PRODUCTION_ORDER_NOT_MUTABLE');
+          return true;
+        }
+      );
+
+      // Attempt addLine on APPROVED
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', { templateId: 't-no-patterns', quantity: 1 });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.ok(err.code === 'PRODUCTION_ORDER_NOT_DRAFT' || err.code === 'PRODUCTION_ORDER_NOT_MUTABLE');
+          return true;
+        }
+      );
+
+      // Attempt archiveOrder on APPROVED
+      await assert.rejects(
+        async () => {
+          await service.archiveOrder('ord-1');
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.ok(err.code === 'PRODUCTION_ORDER_NOT_DRAFT' || err.code === 'PRODUCTION_ORDER_NOT_MUTABLE');
+          return true;
+        }
+      );
+    });
+
+    // ------------------------------------------
+    // QUANTITY UX & CODE SAFETY STRUCTURAL TESTS
+    // ------------------------------------------
+    it('production-order-edit.js: strictly does NOT use parseInt() for quantity', () => {
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+      assert.ok(!editJs.includes('parseInt('), 'production-order-edit.js must not contain parseInt(');
+    });
+
+    it('production-order-edit.js: does NOT call renderLines() on quantity input keystrokes', () => {
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+      // Verify qtyInput input listener calls revalidateEditor() instead of renderLines()
+      const hasInputRenderLines = editJs.includes("qtyInput.addEventListener('input', (e) => {\n        renderLines();");
+      assert.ok(!hasInputRenderLines, 'qtyInput must not call renderLines() directly on keystroke');
+      assert.ok(editJs.includes('revalidateEditor()'), 'production-order-edit.js must define revalidateEditor()');
+    });
+
+    it('production-order-edit.js: does not inject dynamic messages into innerHTML', () => {
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+      assert.ok(!editJs.includes('${msg}'), 'production-order-edit.js must not interpolate validation message');
+      assert.ok(!editJs.includes('${errorMessage}'), 'production-order-edit.js must not interpolate error message');
+      assert.ok(!editJs.includes('alertItem.innerHTML'), 'production-order-edit.js must not use innerHTML on alert items');
+    });
+
+    it('production-orders.js: renderErrorState() uses DOM-safe textContent', () => {
+      const ordersJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-orders.js'), 'utf-8');
+      assert.ok(!ordersJs.includes('<div>${errorMessage}</div>'), 'production-orders.js must not inject errorMessage into innerHTML');
+      assert.ok(ordersJs.includes('msgDiv.textContent = errorMessage'), 'production-orders.js must use textContent for errorMessage');
+    });
+
+    it('show.ejs: contains data-label attributes on lines table for mobile stacked layout', () => {
+      const showEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/show.ejs'), 'utf-8');
+      assert.ok(showEjs.includes('data-label="#"'), 'show.ejs must contain data-label="#"');
+      assert.ok(showEjs.includes('data-label="القالب"'), 'show.ejs must contain data-label="القالب"');
+      assert.ok(showEjs.includes('data-label="الكود"'), 'show.ejs must contain data-label="الكود"');
+      assert.ok(showEjs.includes('data-label="الكمية"'), 'show.ejs must contain data-label="الكمية"');
+      assert.ok(showEjs.includes('data-label="الأنماط"'), 'show.ejs must contain data-label="الأنماط"');
+    });
+
+    it('production-orders.css: contains mobile stacked card rules for show page table', () => {
+      const css = readFileSync(resolve(process.cwd(), 'src/public/css/production-orders.css'), 'utf-8');
+      assert.ok(css.includes('@media (max-width: 767.98px)'), 'production-orders.css must contain mobile breakpoint');
+      assert.ok(css.includes('attr(data-label)'), 'production-orders.css must use attr(data-label) for mobile layout');
+      assert.ok(css.includes('.show-lines-card tbody tr td'), 'production-orders.css must style mobile table cells as stacked flex cards');
     });
   });
 });

@@ -320,5 +320,51 @@
     flex-wrap: wrap;
     gap: 0.5rem;
   }
+
+  /* Show Page Lines Table Mobile Stacked Cards */
+  .show-lines-card .table-responsive {
+    overflow-x: visible;
+  }
+  .show-lines-card table,
+  .show-lines-card tbody {
+    display: block;
+    width: 100%;
+  }
+  .show-lines-card thead,
+  .show-lines-card tfoot {
+    display: none !important;
+  }
+  .show-lines-card tbody tr {
+    display: block;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    margin-bottom: 0.75rem;
+    padding: 0.85rem 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  }
+  .show-lines-card tbody tr td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0 !important;
+    border: 0;
+    border-bottom: 1px dashed #f1f5f9;
+    font-size: 0.9rem;
+    text-align: right !important;
+  }
+  .show-lines-card tbody tr td:last-child {
+    border-bottom: 0;
+    padding-bottom: 0.25rem !important;
+  }
+  .show-lines-card tbody tr td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: #64748b;
+    font-size: 0.825rem;
+    margin-left: 1rem;
+    flex-shrink: 0;
+  }
 }
+
 

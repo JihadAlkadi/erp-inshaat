@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const kpiTotalOrders = document.getElementById('kpiTotalOrders');
   const kpiDraftOrders = document.getElementById('kpiDraftOrders');
+  const kpiApprovedOrders = document.getElementById('kpiApprovedOrders');
   const kpiTotalQuantity = document.getElementById('kpiTotalQuantity');
 
   // Initial load
@@ -99,40 +100,50 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderErrorState(errorMessage) {
-    tableBody.innerHTML = `
-      <tr>
-        <td colspan="8" class="text-center py-5 text-danger">
-          <i class="fa-solid fa-triangle-exclamation fs-3 mb-2 d-block"></i>
-          <div>${errorMessage}</div>
-          <button class="btn btn-outline-secondary btn-sm mt-3" onclick="location.reload()">
-            إعادة المحاولة
-          </button>
-        </td>
-      </tr>
-    `;
+    tableBody.replaceChildren();
+
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 8;
+    td.className = 'text-center py-5 text-danger';
+
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-triangle-exclamation fs-3 mb-2 d-block';
+
+    const msgDiv = document.createElement('div');
+    msgDiv.textContent = errorMessage;
+
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'btn btn-outline-secondary btn-sm mt-3';
+    retryBtn.textContent = 'إعادة المحاولة';
+    retryBtn.addEventListener('click', () => {
+      loadOrders();
+    });
+
+    td.append(icon, msgDiv, retryBtn);
+    tr.appendChild(td);
+    tableBody.appendChild(tr);
     emptyState.classList.add('d-none');
   }
 
-  function updateKPIs(items, total) {
-    if (kpiTotalOrders) {
-      kpiTotalOrders.textContent = total.toString();
-    }
-    if (kpiDraftOrders) {
-      kpiDraftOrders.textContent = total.toString();
-    }
-    if (kpiTotalQuantity) {
-      const sum = items.reduce((acc, order) => {
-        const qty = order.summary && order.summary.totalQuantity ? order.summary.totalQuantity : 0;
-        return acc + qty;
-      }, 0);
-      kpiTotalQuantity.textContent = sum.toString();
+  function updateKPIs(summary, total) {
+    if (summary) {
+      if (kpiTotalOrders) kpiTotalOrders.textContent = (summary.totalOrders ?? total ?? 0).toString();
+      if (kpiDraftOrders) kpiDraftOrders.textContent = (summary.draftOrders ?? 0).toString();
+      if (kpiApprovedOrders) kpiApprovedOrders.textContent = (summary.approvedOrders ?? 0).toString();
+      if (kpiTotalQuantity) kpiTotalQuantity.textContent = (summary.totalQuantity ?? 0).toString();
+    } else {
+      if (kpiTotalOrders) kpiTotalOrders.textContent = (total || 0).toString();
+      if (kpiDraftOrders) kpiDraftOrders.textContent = (total || 0).toString();
+      if (kpiApprovedOrders) kpiApprovedOrders.textContent = '0';
+      if (kpiTotalQuantity) kpiTotalQuantity.textContent = '0';
     }
   }
 
   function renderOrdersTable(data) {
-    const { items, total, page, totalPages } = data;
+    const { items, total, summary } = data;
 
-    updateKPIs(items, total);
+    updateKPIs(summary, total);
 
     tableBody.innerHTML = '';
 
@@ -162,9 +173,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const tdStatus = document.createElement('td');
       tdStatus.className = 'py-3 px-3';
       const badge = document.createElement('span');
-      badge.className = 'badge bg-warning-subtle text-warning-emphasis px-2 py-1 rounded-pill';
-      badge.style.fontSize = '0.75rem';
-      badge.textContent = 'مسودة';
+      if (order.status === 'APPROVED') {
+        badge.className = 'badge bg-success-subtle text-success-emphasis px-2 py-1 rounded-pill';
+        badge.style.fontSize = '0.75rem';
+        badge.textContent = 'معتمد';
+      } else {
+        badge.className = 'badge bg-warning-subtle text-warning-emphasis px-2 py-1 rounded-pill';
+        badge.style.fontSize = '0.75rem';
+        badge.textContent = 'مسودة';
+      }
       tdStatus.appendChild(badge);
       tr.appendChild(tdStatus);
 

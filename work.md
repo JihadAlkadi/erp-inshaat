@@ -1,12 +1,71 @@
 # Project Technical Map
 
 - **نظام صياغة أوامر الإنتاج وتحديد الأنماط — Production Order Drafting & Pattern Selection Foundation** (`src/modules/production/order/`):
-  - **طبيعة أوامر الإنتاج في المرحلة الحالية (Draft-Only Configuration Aggregate)**:
-    > Production Orders are currently draft-only configuration aggregates.
-    > No runtime snapshot exists yet.
-    > Release is intentionally NOT implemented in Phase 1. It will be atomic with production-unit and workflow snapshot generation in Phase 2.
-    - حالة أمر الإنتاج مقصورة حصراً على `status = DRAFT` ومحمية بقيد Check في قاعدة البيانات `CHK_production_order_status CHECK (status = 'DRAFT')`.
-    - لا توجد حالات زائفة غير منفذة (لا يوجد APPROVED أو RELEASED أو IN_PROGRESS).
+  - **طبيعة أوامر الإنتاج وحالاتها (Production Order Aggregate & Approval Lifecycle)**:
+    > ProductionOrder statuses: DRAFT, APPROVED.
+    > New orders default to DRAFT.
+    > Saving draft lines leaves the order in DRAFT.
+    > APPROVED is administrative approval only.
+    > APPROVED does NOT create production runtime, does NOT create snapshots, and does NOT release units.
+    > Transitions: DRAFT -> APPROVED, APPROVED -> DRAFT.
+    > Only DRAFT orders are mutable. APPROVED orders are strictly immutable.
+    - حالة أمر الإنتاج تحكمها قاعدة البيانات بقيد Check محدث في الهجرة 0015: `CHK_production_order_status CHECK (status IN ('DRAFT', 'APPROVED'))`.
+    - هجرة 0015 (`AddProductionOrderApprovalStatus`):
+      - تضيف العمودين `approved_at DATETIME(6) NULL` و `approved_by_user_id VARCHAR(36) NULL` مع فهرس وعلاقة أجنبية إلى `system_user`.
+      - التراجع عن الهجرة (Down migration) يفشل بصرامة وبصوت عالٍ (Fail Loudly) عند وجود أي طلبات بحالة `APPROVED` في قاعدة البيانات لمنع أي تلاعب صامت بالبيانات.
+    - مسار الاعتماد الصريح `POST /api/production/orders/:orderId/approve`:
+      - يتطلب صلاحية مخصصة مستقلة `production.order.approve` (لا تكفي صلاحية `order.update`).
+      - ينفذ داخل معاملة وتحت قفل تشاؤمي `pessimistic_write` على صف الطلب.
+      - يعيد التحقق الصارم من جاهزية الطلب `validateOrderReadinessInternal` ويرفض الاعتماد بالرمز `PRODUCTION_ORDER_NOT_READY_FOR_APPROVAL` إذا كان الطلب فارغاً أو يحتوي اختيارات غير متوافقة أو معطلة.
+      - يسجل `approvedAt = NOW()` و `approvedByUserId = authenticatedUserId`.
+    - مسار إعادة الفتح `POST /api/production/orders/:orderId/reopen`:
+      - يتطلب صلاحية `production.order.approve`.
+      - ينفذ داخل معاملة وتحت قفل تشاؤمي `pessimistic_write` على صف الطلب.
+      - يشترط أن يكون الطلب بحالة `APPROVED` ويعيده إلى `DRAFT` ويصفر `approvedAt = null` و `approvedByUserId = null`.
+    - حظر التعديل التام على الطلب المعتمد (APPROVED Immutability):
+      - ترفض كافة مسارات التعديل (تعديل الترويسة، الحفظ الذري للبنود، إضافة بند، تعديل كمية، تغيير نمط، مزامنة، إعادة ترتيب، أرشفة بند، وأرشفة الطلب) أي طلب غير موجود بحالة `DRAFT` بالرمز الثابت `PRODUCTION_ORDER_NOT_DRAFT`.
+  - **الحفظ الذري الموحد لبنود المسودة (Atomic Draft Lines Commit Endpoint)**:
+    > Unified editor commits the target active line set atomically in one transaction.
+    > ONE HTTP Request: PUT /api/production/orders/:orderId/draft-lines
+    > ONE Database Transaction under ONE ProductionOrder pessimistic_write lock root.
+    > ALL-OR-NOTHING: Zero partial saves possible.
+    - يستقبل الطلب الحالة النهائية المستهدفة الكاملة (`target lines[]`):
+      - البند الذي يحمل `id`: بند قائم يتم التحقق من تبعيته لنفس الطلب وثبات قالبه وعدم أرشفته مسبقاً.
+      - البند بدون `id`: بند جديد مضاف للمسودة.
+      - أي بند نشط في قاعدة البيانات غير موجود في الـ Payload: يُعتبر محذوفاً ويتم أرشفته ناعماً (`softDelete`) وتصفير الـ Hash الخاص به داخل نفس المعاملة.
+    - بروتوكول التبديل الآمن للفهرس الفريد (Safe Configuration Swap Protocol):
+      - لتفادي الاصطدام بالفهرس الفريد `UQ_prod_order_line_order_config_hash` عند تبديل التركيبات بين البنود القائمة (Swap Configs):
+        - المرحلة A: تصفير مؤقت للـ Hash لجميع البنود النشطة المعنية في المعاملة (`activeConfigurationHash = NULL`).
+        - المرحلة B: تطبيق التعديلات (تحديث الكميات، اختيارات الأنماط، الترتيب المكثف `1..N`، أرشفة البنود المحذوفة، وإدخال البنود الجديدة).
+        - المرحلة C: كتابة رموز الـ Hashes النهائية المعتمدة والتحقق الصارم من عدم خروج أي بند نشط بدون Hash.
+    - التحقق المسبق الشامل لكامل الحالة المستهدفة (Pre-Validation Before Mutation):
+      - يتم فحص صحة جميع الكميات، ووجود القوالب وفعاليتها، وصحة اختيارات الأنماط، وعدم تكرار الـ Hashes داخل الـ Target State (`PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION`)، وصلاحية المعرفات القائمة قبل إجراء أي تعديل في قاعدة البيانات.
+  - **معاينة المزامنة مع القالب في الذاكرة (In-Memory Sync Preview Endpoint)**:
+    > Sync Preview changes only in-memory editor state.
+    > Persistence occurs through atomic Draft Save.
+    > Sync preview mutates ZERO rows in database.
+    - مسار المعاينة `GET /api/production/orders/:orderId/lines/:lineId/sync-preview`:
+      - يستخدم خوارزمية التوفيق الخادمية المتطابقة مع سياسة المزامنة لتحديد الخيارات البديلة والتنبيهات دون أي تعديل في قاعدة البيانات.
+      - في الواجهة: الضغط على "مزامنة مع القالب" يطلب المعاينة ويحدث حالة البند محلياً في الذاكرة، ويظهر التغييرات للمستخدم كحالة غير محفوظة تخضع للحفظ الذري العام.
+      - الخيارات المؤرشفة تظهر صراحة كخيارات تاريخية غير فعالة ولا تُعرض كخيارات فعالة وهمية.
+  - **تحسينات تجربة المستخدم والأمان لواجهات أوامر الإنتاج**:
+    - **سلامة إدخال الكميات (Quantity Typing UX & No-parseInt Invariant)**:
+      - حظر تام لـ `parseInt` في معالجة كميات الأوامر؛ الاعتماد حصراً على `Number(value)` وفحص `Number.isInteger(value) && value >= 1 && value <= 10000`.
+      - الأعداد العشرية (مثل `2.5`) ترفض صراحة كقيمة غير صالحة ولا تتحول بصمت إلى `2`.
+      - عدم إعادة بناء كامل DOM (`no renderLines() on input`) عند الكتابة في حقل الكمية، مما يحافظ على تركيز المؤشر (Focus & Caret) وسلاسة الكتابة.
+    - **القضاء التام على ثغرات XSS الديناميكية (Zero Dynamic XSS Invariants)**:
+      - حظر دمج أي نصوص ديناميكية أو رسائل خطأ من الـ API أو أسماء القوالب والأنماط داخل `innerHTML`.
+      - بناء عناصر التنبيهات ورسائل الأخطاء في المحرر وقائمة الأوامر (`renderErrorState`) حصراً عبر Native DOM APIs الآمنة (`document.createElement`, `textContent`, `append`).
+    - **حماية التغييرات غير المحفوظة (Unsaved Changes Navigation Guard)**:
+      - دالة `hasUnsavedLineChanges()` تراقب بدقة أي تعديل على الكميات، أو خيارات الأنماط، أو البنود المضافة، أو المحذوفة، أو المزامنة، أو إعادة الترتيب.
+      - عند محاولة مغادرة الصفحة عبر أزرار التنقل أو الإلغاء، يُعرض تحذير SweetAlert2 لمنع فقدان البيانات.
+      - تفعيل حارس `beforeunload` فقط عندما تكون الصفحة متغيرة (`dirty`).
+    - **عرض تفاصيل الطلب على الهاتف المحمول (Mobile Show Stacked Cards)**:
+      - في الشاشات العريضة (Desktop): جدول تفصيلي منظم ومرن.
+      - في شاشات الجوال (`max-width: 767.98px`): تحويل صفوف الجدول إلى بطاقات مكدسة (Stacked Cards) معتمدة على `data-label` وعرض مرن يمنع التمرير الأفقي تماماً (No horizontal scrolling).
+    - **مؤشرات الأداء الشاملة لقائمة الأوامر (List KPI Aggregates)**:
+      - 4 بطاقات KPI في ترويسة قائمة الأوامر (`إجمالي الأوامر`, `المسودات`, `المعتمدة`, `إجمالي الكميات`).
+      - القيم مستمدة مباشرة من التجميع العام في قاعدة البيانات (`summary` من الـ SQL Aggregate) والمطابقة لكلمة البحث الحالية، وليست مقصورة على الصفحة المعروضة فقط.
   - **هيكل وتجميعة أمر الإنتاج (Order Aggregate Structure)**:
     ```text
     ProductionOrder

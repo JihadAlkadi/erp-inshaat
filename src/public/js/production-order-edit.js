@@ -9,11 +9,22 @@
  * 3. Immediate client duplicate detection across ALL lines:
  *    Canonical key = templateId + '|' + sorted(patternId:optionId).
  *    Blocks saving if any duplicate configurations exist.
- * 4. Single Save Action at the bottom:
- *    Synchronizes deletions, updates, and batch additions in one unified flow,
- *    then redirects to the Order Show page (/production/orders/:id) with success toast.
- * 5. SweetAlert2 Invariants: Zero native window dialogs; all actions use Swal.
- * 6. DOM XSS security: Native DOM APIs and textContent exclusively for user and API text.
+ * 4. Single Atomic Draft Save:
+ *    Sends ONE PUT /api/production/orders/:id/draft-lines request with target active lines state.
+ *    Single DB transaction, single pessimistic_write lock on backend, all-or-nothing.
+ *    Redirects to Order Show page (/production/orders/:id) on success with toast.
+ * 5. Quantity UX:
+ *    Number(val) and Number.isInteger(val) validation (1..10000).
+ *    Strictly NO parseInt (decimals like 2.5 rejected).
+ *    Zero DOM rebuilding on input keystrokes to preserve user focus and caret position.
+ * 6. Template Sync Preview:
+ *    Restores "مزامنة مع القالب" using GET /api/production/orders/:id/lines/:lineId/sync-preview.
+ *    Updates in-memory draft state only until final atomic save.
+ * 7. Unsaved Changes Guard:
+ *    hasUnsavedLineChanges() protects header links, bottom cancel button, and beforeunload.
+ * 8. Zero XSS:
+ *    Native DOM APIs (createElement, textContent, append) exclusively for user and API texts.
+ * 9. SweetAlert2 Invariants: Zero native window dialogs; all prompts use Swal.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -42,8 +53,11 @@ document.addEventListener('DOMContentLoaded', () => {
   let templateSearchDebounceTimer = null;
   const loadedTemplateIds = new Set();
 
+  // Navigation Guard Bypass Flag (set to true right before intentional redirect)
+  let isBypassingUnloadGuard = false;
+
   // Unified In-Memory Lines State
-  // Each line: { id, isNew, template: { id, name, code, referenceNumber }, quantity, originalQuantity, patterns: [{ patternId, patternName, selectedOptionId, availableOptions }], originalSelections: Map, validationErrors: [] }
+  // Each line: { id, isNew, template: { id, name, code, referenceNumber }, quantity, originalQuantity, patterns: [...], originalSelections: Map, isSynced: boolean, validationErrors: [] }
   let lines = (currentOrder.lines || []).map((line) => ({
     id: line.id,
     isNew: false,
@@ -63,14 +77,18 @@ document.addEventListener('DOMContentLoaded', () => {
         sel.availableOptions && sel.availableOptions.length > 0
           ? sel.availableOptions
           : [{ id: sel.selectedOptionId, name: sel.selectedOptionName }],
+      isHistorical: sel.isHistorical || false,
+      historicalOptionName: sel.selectedOptionName || null,
     })),
     originalSelections: new Map(
       (line.patternSelections || []).map((sel) => [sel.templatePatternId, sel.selectedOptionId])
     ),
+    isSynced: false,
     validationErrors: [],
   }));
 
-  const deletedLineIds = new Set();
+  const initialLineCount = lines.length;
+  const initialLineIds = lines.map((l) => l.id);
 
   // DOM Elements - Workspace & Summary
   const orderAlert = document.getElementById('orderAlert');
@@ -101,6 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements - Navigation & Actions
   const viewOrderNavBtn = document.getElementById('viewOrderNavBtn');
   const backToListNavBtn = document.getElementById('backToListNavBtn');
+  const bottomCancelBtn = document.getElementById('bottomCancelBtn');
   const archiveOrderBtn = document.getElementById('archiveOrderBtn');
 
   // DOM Elements - Edit Header Modal
@@ -140,19 +159,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function showOrderAlert(message) {
-    if (!orderAlert) return;
-    orderAlert.textContent = message;
-    orderAlert.classList.remove('d-none');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function clearOrderAlert() {
-    if (!orderAlert) return;
-    orderAlert.textContent = '';
-    orderAlert.classList.add('d-none');
-  }
-
   function showComposerAlert(message) {
     if (!composerAlert) return;
     composerAlert.textContent = message;
@@ -163,6 +169,46 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!composerAlert) return;
     composerAlert.textContent = '';
     composerAlert.classList.add('d-none');
+  }
+
+  // =========================================================================
+  // Dirty State Detection (Unsaved Changes)
+  // =========================================================================
+  function hasUnsavedLineChanges() {
+    // 1. Line count changed (additions or deletions)
+    if (lines.length !== initialLineCount) {
+      return true;
+    }
+
+    // 2. New lines added
+    if (lines.some((l) => l.isNew)) {
+      return true;
+    }
+
+    // 3. Line order changed or deleted lines replaced
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].id !== initialLineIds[i]) {
+        return true;
+      }
+    }
+
+    // 4. Existing line modifications (quantity, pattern selection, sync)
+    for (const line of lines) {
+      if (line.isSynced) {
+        return true;
+      }
+      if (line.quantity !== line.originalQuantity) {
+        return true;
+      }
+      for (const pat of line.patterns) {
+        const orig = line.originalSelections.get(pat.patternId);
+        if (pat.selectedOptionId !== orig) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   // =========================================================================
@@ -180,7 +226,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /**
    * Evaluates all lines for validity and duplicates across the entire order.
-   * Ensures that no two lines share the same template and exact same pattern options.
    * Returns true if all lines are valid.
    */
   function evaluateLines() {
@@ -190,9 +235,13 @@ document.addEventListener('DOMContentLoaded', () => {
     lines.forEach((line) => {
       line.validationErrors = [];
 
-      // 1. Validate Quantity
+      // 1. Validate Quantity (Strictly NO parseInt! Decimal 2.5 rejected)
       const q = line.quantity;
-      if (typeof q !== 'number' || isNaN(q) || !Number.isInteger(q) || q < 1 || q > 10000) {
+      const numQ = typeof q === 'number' ? q : Number(q);
+      if (typeof q === 'string' && q.trim() === '') {
+        line.validationErrors.push('الكمية مطلوبة.');
+        allValid = false;
+      } else if (isNaN(numQ) || !Number.isInteger(numQ) || numQ < 1 || numQ > 10000) {
         line.validationErrors.push('الكمية يجب أن تكون عدداً صحيحاً بين 1 و 10,000.');
         allValid = false;
       }
@@ -237,11 +286,80 @@ document.addEventListener('DOMContentLoaded', () => {
     return allValid;
   }
 
+  /**
+   * Revalidates editor state WITHOUT rebuilding DOM inputs on typing keystrokes.
+   * Updates error badges, input invalid classes, header summary, and save button state.
+   */
+  function revalidateEditor() {
+    const isValid = evaluateLines();
+    const isDirty = hasUnsavedLineChanges();
+
+    // Update Header Summary
+    if (headerTotalQuantity) {
+      const totalQty = lines.reduce((acc, cur) => {
+        const n = typeof cur.quantity === 'number' ? cur.quantity : Number(cur.quantity);
+        return acc + (Number.isInteger(n) && n > 0 ? n : 0);
+      }, 0);
+      headerTotalQuantity.textContent = String(totalQty);
+    }
+
+    // Update each line card's error UI in-place
+    const cardEls = orderLinesContainer.querySelectorAll('.editor-line-card');
+    lines.forEach((line, index) => {
+      const card = cardEls[index];
+      if (!card) return;
+
+      const hasErrors = line.validationErrors && line.validationErrors.length > 0;
+      card.classList.toggle('is-invalid', hasErrors);
+
+      const qtyInput = card.querySelector('input[type="number"]');
+      if (qtyInput) {
+        const numQ = typeof line.quantity === 'number' ? line.quantity : Number(line.quantity);
+        const qtyValid = typeof line.quantity !== 'string' || line.quantity.trim() !== ''
+          ? (Number.isInteger(numQ) && numQ >= 1 && numQ <= 10000)
+          : false;
+        qtyInput.classList.toggle('is-invalid', !qtyValid);
+      }
+
+      // Update or create error box safely
+      let alertBox = card.querySelector('.line-error-box');
+      if (hasErrors) {
+        if (!alertBox) {
+          alertBox = document.createElement('div');
+          alertBox.className = 'line-error-box alert alert-warning py-2 px-3 small mt-3 mb-0';
+          const body = card.querySelector('.editor-line-body');
+          if (body) body.appendChild(alertBox);
+        }
+        alertBox.replaceChildren();
+        line.validationErrors.forEach((msg) => {
+          const alertItem = document.createElement('div');
+          alertItem.className = 'd-flex align-items-center gap-2';
+
+          const icon = document.createElement('i');
+          icon.className = 'fa-solid fa-triangle-exclamation text-warning-emphasis';
+
+          const span = document.createElement('span');
+          span.textContent = msg;
+
+          alertItem.append(icon, span);
+          alertBox.appendChild(alertItem);
+        });
+      } else if (alertBox) {
+        alertBox.remove();
+      }
+    });
+
+    // Update Bottom Save Button State
+    // Enabled only when dirty and valid
+    submitPendingLinesBtn.disabled = !isDirty || !isValid;
+  }
+
   // =========================================================================
   // Unified Lines Render
   // =========================================================================
   function renderLines() {
     const isValid = evaluateLines();
+    const isDirty = hasUnsavedLineChanges();
 
     // Update Counter Badges & Summary
     if (existingLinesCountBadge) {
@@ -251,7 +369,10 @@ document.addEventListener('DOMContentLoaded', () => {
       headerLineCount.textContent = String(lines.length);
     }
     if (headerTotalQuantity) {
-      const totalQty = lines.reduce((acc, cur) => acc + (Number.isInteger(cur.quantity) && cur.quantity > 0 ? cur.quantity : 0), 0);
+      const totalQty = lines.reduce((acc, cur) => {
+        const n = typeof cur.quantity === 'number' ? cur.quantity : Number(cur.quantity);
+        return acc + (Number.isInteger(n) && n > 0 ? n : 0);
+      }, 0);
       headerTotalQuantity.textContent = String(totalQty);
     }
 
@@ -295,13 +416,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
       header.appendChild(rightDiv);
 
-      // Left Action: Remove Button [X]
+      // Header Actions (Sync Button for existing lines + Remove Button [X])
+      const actionsDiv = document.createElement('div');
+      actionsDiv.className = 'd-flex align-items-center gap-2';
+
+      // "مزامنة مع القالب" Button for Existing Lines
+      if (!line.isNew) {
+        const syncBtn = document.createElement('button');
+        syncBtn.type = 'button';
+        syncBtn.className = 'btn btn-outline-secondary btn-sm sync-line-btn py-1 px-2 d-inline-flex align-items-center gap-1';
+        syncBtn.style.fontSize = '0.75rem';
+        syncBtn.style.borderRadius = '6px';
+        syncBtn.setAttribute('title', 'مزامنة خيارات الأنماط مع أحدث إعدادات القالب');
+
+        const syncIcon = document.createElement('i');
+        syncIcon.className = 'fa-solid fa-arrows-rotate';
+
+        const syncText = document.createElement('span');
+        syncText.textContent = 'مزامنة مع القالب';
+
+        syncBtn.append(syncIcon, syncText);
+
+        syncBtn.addEventListener('click', () => {
+          onSyncLineWithTemplate(line, index, syncBtn);
+        });
+
+        actionsDiv.appendChild(syncBtn);
+      }
+
+      // Remove Button [X]
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'btn remove-line-btn';
       removeBtn.setAttribute('title', 'حذف هذا البند');
       removeBtn.setAttribute('aria-label', `حذف بند ${line.template.name}`);
-      removeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+
+      const removeIcon = document.createElement('i');
+      removeIcon.className = 'fa-solid fa-xmark';
+      removeBtn.appendChild(removeIcon);
 
       removeBtn.addEventListener('click', () => {
         if (line.isNew) {
@@ -321,7 +473,6 @@ document.addEventListener('DOMContentLoaded', () => {
             cancelButtonText: 'إلغاء',
           }).then((result) => {
             if (result.isConfirmed) {
-              deletedLineIds.add(line.id);
               lines.splice(index, 1);
               renderLines();
             }
@@ -329,7 +480,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
 
-      header.appendChild(removeBtn);
+      actionsDiv.appendChild(removeBtn);
+      header.appendChild(actionsDiv);
       card.appendChild(header);
 
       // 2. Card Body (Horizontal Aligned Controls)
@@ -356,10 +508,17 @@ document.addEventListener('DOMContentLoaded', () => {
       qtyInput.value = String(line.quantity);
       qtyInput.style.width = '100px';
 
+      // Quantity Input Event Listener:
+      // STRICTLY NO parseInt and NO renderLines() on input keystroke!
       qtyInput.addEventListener('input', (e) => {
-        const val = parseInt(e.target.value, 10);
-        line.quantity = isNaN(val) ? 0 : val;
-        renderLines();
+        const raw = e.target.value;
+        const num = Number(raw);
+        if (raw.trim() !== '' && Number.isInteger(num) && num >= 1 && num <= 10000) {
+          line.quantity = num;
+        } else {
+          line.quantity = raw; // stores raw value so revalidateEditor flags error
+        }
+        revalidateEditor();
       });
 
       qtyField.appendChild(qtyInput);
@@ -383,6 +542,14 @@ document.addEventListener('DOMContentLoaded', () => {
           patLabel.textContent = pat.patternName;
           patField.appendChild(patLabel);
 
+          // If option is historical/inactive, show historical note
+          if (pat.isHistorical) {
+            const histBadge = document.createElement('span');
+            histBadge.className = 'badge bg-danger-subtle text-danger px-2 py-1 mb-1 small';
+            histBadge.textContent = `الخيار السابق: ${pat.historicalOptionName || 'غير فعال'}`;
+            patField.appendChild(histBadge);
+          }
+
           const select = document.createElement('select');
           select.className = 'form-select form-select-sm';
           select.style.minWidth = '160px';
@@ -397,7 +564,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
           select.addEventListener('change', (e) => {
             pat.selectedOptionId = e.target.value;
-            renderLines();
+            pat.isHistorical = false;
+            revalidateEditor();
           });
 
           patField.appendChild(select);
@@ -410,11 +578,18 @@ document.addEventListener('DOMContentLoaded', () => {
       // Duplicate / Validation Alert
       if (hasErrors) {
         const alertBox = document.createElement('div');
-        alertBox.className = 'alert alert-warning py-2 px-3 small mt-3 mb-0';
+        alertBox.className = 'line-error-box alert alert-warning py-2 px-3 small mt-3 mb-0';
         line.validationErrors.forEach((msg) => {
           const alertItem = document.createElement('div');
           alertItem.className = 'd-flex align-items-center gap-2';
-          alertItem.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-warning-emphasis"></i> <span>${msg}</span>`;
+
+          const icon = document.createElement('i');
+          icon.className = 'fa-solid fa-triangle-exclamation text-warning-emphasis';
+
+          const span = document.createElement('span');
+          span.textContent = msg;
+
+          alertItem.append(icon, span);
           alertBox.appendChild(alertItem);
         });
         body.appendChild(alertBox);
@@ -425,7 +600,65 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Update Bottom Save Button State
-    submitPendingLinesBtn.disabled = !isValid;
+    submitPendingLinesBtn.disabled = !isDirty || !isValid;
+  }
+
+  // =========================================================================
+  // Template Sync Preview Action
+  // Fetches preview from server and updates in-memory line state ONLY
+  // =========================================================================
+  async function onSyncLineWithTemplate(line, index, syncBtn) {
+    Swal.fire({
+      title: 'مزامنة البند مع القالب',
+      text: `هل تريد مزامنة خيارات أنماط البند #${index + 1} (${line.template.name}) مع أحدث خيارات القالب؟ سيتم تحديث الخيارات في المحرر فقط ولن يتم الحفظ في قاعدة البيانات حتى تضغط حفظ أمر الإنتاج.`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#0984E3',
+      cancelButtonColor: '#6B7280',
+      confirmButtonText: 'نعم، مزامنة',
+      cancelButtonText: 'إلغاء',
+    }).then(async (result) => {
+      if (!result.isConfirmed) return;
+
+      syncBtn.disabled = true;
+      const originalText = syncBtn.innerHTML;
+      syncBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> جاري المزامنة...';
+
+      try {
+        const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/${line.id}/sync-preview`);
+        const json = await res.json();
+
+        if (!res.ok || !json.success || !json.data) {
+          throw new Error(getErrorMessage(json, 'فشل جلب معاينة المزامنة مع القالب'));
+        }
+
+        const previewData = json.data;
+
+        // Apply reconciled pattern selections to in-memory line
+        line.patterns = (previewData.patternSelections || []).map((p) => ({
+          patternId: p.patternId,
+          patternName: p.patternName,
+          selectedOptionId: p.selectedOptionId,
+          availableOptions: p.availableOptions || [],
+          isHistorical: p.isHistorical || false,
+          historicalOptionName: p.selectedOptionName || null,
+        }));
+        line.isSynced = true;
+
+        showSuccessToast('تمت مزامنة البند مع القالب في الذاكرة بنجاح');
+        renderLines();
+      } catch (err) {
+        syncBtn.disabled = false;
+        syncBtn.innerHTML = originalText;
+        Swal.fire({
+          icon: 'error',
+          title: 'خطأ في المزامنة',
+          text: err.message || 'تعذر مزامنة البند مع القالب',
+          confirmButtonText: 'حسناً',
+          confirmButtonColor: '#0984E3',
+        });
+      }
+    });
   }
 
   // =========================================================================
@@ -596,7 +829,10 @@ document.addEventListener('DOMContentLoaded', () => {
           selectedOptionId:
             pat.defaultOptionId || (pat.options && pat.options.length > 0 ? pat.options[0].id : null),
           availableOptions: pat.options || [],
+          isHistorical: false,
         })),
+        originalSelections: new Map(),
+        isSynced: false,
         validationErrors: [],
       };
 
@@ -615,12 +851,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================================
-  // Unified Save & Submit Handler (Bottom Save Button)
-  // Synchronizes deletes, updates, and additions, then navigates to /production/orders/:id
+  // Atomic Draft Commit (Single HTTP Request, Single Transaction)
+  // PUT /api/production/orders/:orderId/draft-lines
   // =========================================================================
   submitPendingLinesBtn.addEventListener('click', async () => {
     clearComposerAlert();
-    clearOrderAlert();
 
     const isValid = evaluateLines();
     if (!isValid) {
@@ -640,82 +875,33 @@ document.addEventListener('DOMContentLoaded', () => {
     submitPendingIcon.classList.add('d-none');
     submitPendingLinesBtnText.textContent = 'جاري الحفظ...';
 
+    // Build Target State Payload
+    const payload = {
+      lines: lines.map((l) => ({
+        ...(l.isNew ? {} : { id: l.id }),
+        templateId: l.template.id,
+        quantity: typeof l.quantity === 'number' ? l.quantity : Number(l.quantity),
+        patternSelections: l.patterns.map((p) => ({
+          patternId: p.patternId,
+          optionId: p.selectedOptionId,
+        })),
+      })),
+    };
+
     try {
-      // 1. Process Deletions
-      for (const delId of deletedLineIds) {
-        const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/${delId}`, {
-          method: 'DELETE',
-        });
-        const json = await res.json();
-        if (!res.ok || !json.success) {
-          throw new Error(getErrorMessage(json, 'فشل حذف أحد البنود'));
-        }
-      }
-      deletedLineIds.clear();
+      const res = await window.erpFetch(`/api/production/orders/${orderId}/draft-lines`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-      // 2. Process Updates for Existing Lines
-      for (const line of lines) {
-        if (!line.isNew) {
-          // Update quantity if modified
-          if (line.quantity !== line.originalQuantity) {
-            const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/${line.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ quantity: line.quantity }),
-            });
-            const json = await res.json();
-            if (!res.ok || !json.success) {
-              throw new Error(getErrorMessage(json, `فشل تحديث كمية البند ${line.template.name}`));
-            }
-            line.originalQuantity = line.quantity;
-          }
-
-          // Update pattern options if modified
-          for (const pat of line.patterns) {
-            const originalVal = line.originalSelections?.get(pat.patternId);
-            if (pat.selectedOptionId !== originalVal) {
-              const res = await window.erpFetch(
-                `/api/production/orders/${orderId}/lines/${line.id}/patterns/${pat.patternId}`,
-                {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ optionId: pat.selectedOptionId }),
-                }
-              );
-              const json = await res.json();
-              if (!res.ok || !json.success) {
-                throw new Error(getErrorMessage(json, `فشل تعديل نمط ${pat.patternName}`));
-              }
-              line.originalSelections.set(pat.patternId, pat.selectedOptionId);
-            }
-          }
-        }
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(getErrorMessage(json, 'فشل حفظ أمر الإنتاج'));
       }
 
-      // 3. Process Batch Additions for New Lines
-      const newLines = lines.filter((l) => l.isNew);
-      if (newLines.length > 0) {
-        const payloadLines = newLines.map((line) => ({
-          templateId: line.template.id,
-          quantity: line.quantity,
-          patternSelections: line.patterns.map((p) => ({
-            patternId: p.patternId,
-            optionId: p.selectedOptionId,
-          })),
-        }));
-
-        const res = await window.erpFetch(`/api/production/orders/${orderId}/lines/batch`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lines: payloadLines }),
-        });
-        const json = await res.json();
-        if (!res.ok || !json.success) {
-          throw new Error(getErrorMessage(json, 'فشل إضافة البنود الجديدة'));
-        }
-      }
-
-      // 4. Success: Set pending toast and redirect to Order Show Page
+      // Success: Bypass navigation guard, set pending toast, redirect to Order Show Page
+      isBypassingUnloadGuard = true;
       sessionStorage.setItem('pendingToast', 'تم حفظ أمر الإنتاج بنجاح');
       window.location.href = `/production/orders/${orderId}`;
     } catch (err) {
@@ -731,6 +917,46 @@ document.addEventListener('DOMContentLoaded', () => {
         confirmButtonText: 'حسناً',
         confirmButtonColor: '#0984E3',
       });
+    }
+  });
+
+  // =========================================================================
+  // Unsaved Changes Navigation Guards
+  // Protects viewOrderNavBtn, backToListNavBtn, bottomCancelBtn, and window.beforeunload
+  // =========================================================================
+  function guardNavigation(anchorEl) {
+    if (!anchorEl) return;
+    anchorEl.addEventListener('click', (e) => {
+      if (hasUnsavedLineChanges()) {
+        e.preventDefault();
+        const targetHref = anchorEl.href;
+        Swal.fire({
+          title: 'لديك تغييرات غير محفوظة',
+          text: 'سيتم فقدان التغييرات التي أجريتها على بنود أمر الإنتاج إذا غادرت الصفحة الآن.',
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonColor: '#EE5253',
+          cancelButtonColor: '#6B7280',
+          confirmButtonText: 'متابعة المغادرة',
+          cancelButtonText: 'البقاء',
+        }).then((result) => {
+          if (result.isConfirmed) {
+            isBypassingUnloadGuard = true;
+            window.location.href = targetHref;
+          }
+        });
+      }
+    });
+  }
+
+  guardNavigation(viewOrderNavBtn);
+  guardNavigation(backToListNavBtn);
+  guardNavigation(bottomCancelBtn);
+
+  window.addEventListener('beforeunload', (e) => {
+    if (!isBypassingUnloadGuard && hasUnsavedLineChanges()) {
+      e.preventDefault();
+      e.returnValue = '';
     }
   });
 
@@ -808,7 +1034,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (orderNotesBox) {
           if (currentOrder.notes) {
-            orderNotesBox.innerHTML = `<i class="fa-solid fa-note-sticky me-1 text-warning"></i> <strong>ملاحظات:</strong> ${currentOrder.notes}`;
+            orderNotesBox.replaceChildren();
+            const noteIcon = document.createElement('i');
+            noteIcon.className = 'fa-solid fa-note-sticky me-1 text-warning';
+            const strongTag = document.createElement('strong');
+            strongTag.textContent = 'ملاحظات: ';
+            const noteText = document.createTextNode(currentOrder.notes);
+            orderNotesBox.append(noteIcon, strongTag, noteText);
             orderNotesBox.classList.remove('d-none');
           } else {
             orderNotesBox.classList.add('d-none');
@@ -850,6 +1082,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const json = await res.json();
             if (!res.ok || !json.success) throw new Error(getErrorMessage(json, 'فشلت أرشفة الطلب'));
 
+            isBypassingUnloadGuard = true;
             sessionStorage.setItem('pendingToast', 'تمت أرشفة أمر الإنتاج بنجاح');
             window.location.href = '/production/orders';
           } catch (err) {
