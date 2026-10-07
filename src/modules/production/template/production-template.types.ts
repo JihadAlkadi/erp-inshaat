@@ -1,4 +1,6 @@
 import { ProductionTemplateEntity } from './production-template.entity.js';
+import { ProductionTemplateWorkflowItemDto } from '../template-workflow-item/production-template-workflow-item.types.js';
+import { ProductionTemplatePatternDto } from '../template-pattern/production-template-pattern.types.js';
 
 export interface ProductionTemplateDto {
   id: string;
@@ -20,6 +22,7 @@ export interface ProductionTemplateListItemDto {
   isActive: boolean;
   stagesCount: number;
   specsCount: number;
+  patternsCount?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,7 +43,8 @@ export function toProductionTemplateDto(entity: ProductionTemplateEntity): Produ
 export function toProductionTemplateListItemDto(
   entity: ProductionTemplateEntity,
   stagesCount = 0,
-  specsCount = 0
+  specsCount = 0,
+  patternsCount = 0
 ): ProductionTemplateListItemDto {
   return {
     id: entity.id,
@@ -51,6 +55,7 @@ export function toProductionTemplateListItemDto(
     isActive: entity.isActive,
     stagesCount,
     specsCount,
+    patternsCount,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
   };
@@ -63,7 +68,6 @@ export interface PaginatedProductionTemplatesResult {
   limit: number;
   totalPages: number;
 }
-
 
 export interface ProductionTemplateDetailSpecificationDto {
   id: string;
@@ -97,7 +101,14 @@ export interface ProductionTemplateDetailDto {
   createdAt: Date;
   updatedAt: Date;
   specifications: ProductionTemplateDetailSpecificationDto[];
+  /**
+   * Derived compatibility field for consumers expecting stages.
+   * Note: ProductionTemplateWorkflowItem is the true single source of truth for workflow ordering.
+   */
   stages: ProductionTemplateDetailStageDto[];
+  workflowItems: ProductionTemplateWorkflowItemDto[];
+  patternsCount: number;
+  patterns?: ProductionTemplatePatternDto[];
 }
 
 /**

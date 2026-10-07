@@ -18,6 +18,30 @@ import {
   ProductionTemplateStageAttachmentService,
   productionTemplateStageAttachmentService,
 } from '../template-stage-attachment/production-template-stage-attachment.service.js';
+import {
+  ProductionTemplateWorkflowService,
+  productionTemplateWorkflowService,
+} from '../template-workflow-item/production-template-workflow.service.js';
+import {
+  ProductionTemplatePatternService,
+  productionTemplatePatternService,
+} from '../template-pattern/production-template-pattern.service.js';
+import {
+  ProductionTemplatePatternOptionService,
+  productionTemplatePatternOptionService,
+} from '../template-pattern-option/production-template-pattern-option.service.js';
+import {
+  ProductionTemplatePatternOptionTaskService,
+  productionTemplatePatternOptionTaskService,
+} from '../template-pattern-option-task/production-template-pattern-option-task.service.js';
+import {
+  ProductionTemplatePatternOptionTaskMaterialService,
+  productionTemplatePatternOptionTaskMaterialService,
+} from '../template-pattern-option-task-material/production-template-pattern-option-task-material.service.js';
+import {
+  ProductionTemplatePatternOptionTaskAttachmentService,
+  productionTemplatePatternOptionTaskAttachmentService,
+} from '../template-pattern-option-task-attachment/production-template-pattern-option-task-attachment.service.js';
 import { CreateProductionTemplateDto } from './dto/create-template.dto.js';
 import { UpdateProductionTemplateDto } from './dto/update-template.dto.js';
 import { ListProductionTemplatesQueryDto } from './dto/list-templates-query.dto.js';
@@ -31,6 +55,19 @@ import { AddTemplateStageMaterialDto } from '../template-stage-material/dto/add-
 import { UpdateTemplateStageMaterialDto } from '../template-stage-material/dto/update-stage-material.dto.js';
 import { UpdateStageAttachmentDto } from '../template-stage-attachment/dto/update-stage-attachment.dto.js';
 import { ReorderStageAttachmentsDto } from '../template-stage-attachment/dto/reorder-stage-attachments.dto.js';
+import { ReorderWorkflowItemsDto } from '../template-workflow-item/dto/reorder-workflow-items.dto.js';
+import { CreateTemplatePatternDto } from '../template-pattern/dto/create-pattern.dto.js';
+import { UpdateTemplatePatternDto } from '../template-pattern/dto/update-pattern.dto.js';
+import { CreateTemplatePatternOptionDto } from '../template-pattern-option/dto/create-pattern-option.dto.js';
+import { UpdateTemplatePatternOptionDto } from '../template-pattern-option/dto/update-pattern-option.dto.js';
+import { ReorderPatternOptionsDto } from '../template-pattern-option/dto/reorder-pattern-options.dto.js';
+import { CreateTemplatePatternOptionTaskDto } from '../template-pattern-option-task/dto/create-pattern-option-task.dto.js';
+import { UpdateTemplatePatternOptionTaskDto } from '../template-pattern-option-task/dto/update-pattern-option-task.dto.js';
+import { ReorderPatternOptionTasksDto } from '../template-pattern-option-task/dto/reorder-pattern-option-tasks.dto.js';
+import { AddTemplatePatternOptionTaskMaterialDto } from '../template-pattern-option-task-material/dto/add-task-material.dto.js';
+import { UpdateTemplatePatternOptionTaskMaterialDto } from '../template-pattern-option-task-material/dto/update-task-material.dto.js';
+import { UpdatePatternOptionTaskAttachmentDto } from '../template-pattern-option-task-attachment/dto/update-task-attachment.dto.js';
+import { ReorderPatternOptionTaskAttachmentsDto } from '../template-pattern-option-task-attachment/dto/reorder-task-attachments.dto.js';
 
 export class ProductionTemplateController {
   constructor(
@@ -38,11 +75,17 @@ export class ProductionTemplateController {
     private specService: ProductionTemplateSpecificationService = productionTemplateSpecificationService,
     private stageService: ProductionTemplateStageService = productionTemplateStageService,
     private materialService: ProductionTemplateStageMaterialService = productionTemplateStageMaterialService,
-    private attachmentService: ProductionTemplateStageAttachmentService = productionTemplateStageAttachmentService
+    private attachmentService: ProductionTemplateStageAttachmentService = productionTemplateStageAttachmentService,
+    private workflowService: ProductionTemplateWorkflowService = productionTemplateWorkflowService,
+    private patternService: ProductionTemplatePatternService = productionTemplatePatternService,
+    private optionService: ProductionTemplatePatternOptionService = productionTemplatePatternOptionService,
+    private taskService: ProductionTemplatePatternOptionTaskService = productionTemplatePatternOptionTaskService,
+    private taskMaterialService: ProductionTemplatePatternOptionTaskMaterialService = productionTemplatePatternOptionTaskMaterialService,
+    private taskAttachmentService: ProductionTemplatePatternOptionTaskAttachmentService = productionTemplatePatternOptionTaskAttachmentService
   ) {}
 
   // ==========================================
-  // TEMPLATES
+  // 1. TEMPLATES
   // ==========================================
 
   listTemplates = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -97,7 +140,7 @@ export class ProductionTemplateController {
   };
 
   // ==========================================
-  // SPECIFICATIONS
+  // 2. SPECIFICATIONS
   // ==========================================
 
   addSpecification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -105,28 +148,7 @@ export class ProductionTemplateController {
       const { id } = req.params;
       const dto = req.body as CreateTemplateSpecificationDto;
       const spec = await this.specService.addSpecification(id as string, dto);
-      res.status(201).json(ApiResponse.success(spec, 'تمت إضافة الخاصية بنجاح'));
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  updateSpecification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const { id, specId } = req.params;
-      const dto = req.body as UpdateTemplateSpecificationDto;
-      const spec = await this.specService.updateSpecification(id as string, specId as string, dto);
-      res.status(200).json(ApiResponse.success(spec, 'تم تعديل الخاصية بنجاح'));
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  deleteSpecification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const { id, specId } = req.params;
-      await this.specService.deleteSpecification(id as string, specId as string);
-      res.status(200).json(ApiResponse.success(null, 'تم حذف الخاصية بنجاح'));
+      res.status(201).json(ApiResponse.success(spec, 'تمت إضافة الخاصية الهندسية بنجاح'));
     } catch (error) {
       next(error);
     }
@@ -137,14 +159,35 @@ export class ProductionTemplateController {
       const { id } = req.params;
       const dto = req.body as ReorderTemplateSpecificationsDto;
       const specs = await this.specService.reorderSpecifications(id as string, dto);
-      res.status(200).json(ApiResponse.success(specs, 'تم تحديث ترتيب المواصفات بنجاح'));
+      res.status(200).json(ApiResponse.success(specs, 'تم إعادة ترتيب المواصفات بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateSpecification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, specId } = req.params;
+      const dto = req.body as UpdateTemplateSpecificationDto;
+      const spec = await this.specService.updateSpecification(id as string, specId as string, dto);
+      res.status(200).json(ApiResponse.success(spec, 'تم تعديل الخاصية الهندسية بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteSpecification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, specId } = req.params;
+      await this.specService.deleteSpecification(id as string, specId as string);
+      res.status(200).json(ApiResponse.success(null, 'تم حذف الخاصية الهندسية بنجاح'));
     } catch (error) {
       next(error);
     }
   };
 
   // ==========================================
-  // STAGES
+  // 3. STAGES
   // ==========================================
 
   addStage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -153,6 +196,17 @@ export class ProductionTemplateController {
       const dto = req.body as CreateTemplateStageDto;
       const stage = await this.stageService.addStage(id as string, dto);
       res.status(201).json(ApiResponse.success(stage, 'تمت إضافة المرحلة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  reorderStages = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const dto = req.body as ReorderTemplateStagesDto;
+      const stages = await this.stageService.reorderStages(id as string, dto);
+      res.status(200).json(ApiResponse.success(stages, 'تم إعادة ترتيب المراحل بنجاح'));
     } catch (error) {
       next(error);
     }
@@ -173,25 +227,14 @@ export class ProductionTemplateController {
     try {
       const { id, stageId } = req.params;
       await this.stageService.softDeleteStage(id as string, stageId as string);
-      res.status(200).json(ApiResponse.success(null, 'تمت أرشفة المرحلة بنجاح'));
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  reorderStages = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const { id } = req.params;
-      const dto = req.body as ReorderTemplateStagesDto;
-      const stages = await this.stageService.reorderStages(id as string, dto);
-      res.status(200).json(ApiResponse.success(stages, 'تم تحديث ترتيب المراحل بنجاح'));
+      res.status(200).json(ApiResponse.success(null, 'تم أرشفة المرحلة بنجاح'));
     } catch (error) {
       next(error);
     }
   };
 
   // ==========================================
-  // PLANNED MATERIALS
+  // 4. STAGE PLANNED MATERIALS
   // ==========================================
 
   listStageMaterials = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -209,7 +252,7 @@ export class ProductionTemplateController {
       const { id, stageId } = req.params;
       const dto = req.body as AddTemplateStageMaterialDto;
       const material = await this.materialService.addPlannedMaterial(id as string, stageId as string, dto);
-      res.status(201).json(ApiResponse.success(material, 'تمت إضافة المادة المخططة للمرحلة بنجاح'));
+      res.status(201).json(ApiResponse.success(material, 'تمت إضافة المادة المخططة بنجاح'));
     } catch (error) {
       next(error);
     }
@@ -225,7 +268,7 @@ export class ProductionTemplateController {
         materialId as string,
         dto
       );
-      res.status(200).json(ApiResponse.success(material, 'تم تحديث المادة المخططة بنجاح'));
+      res.status(200).json(ApiResponse.success(material, 'تم تعديل كمية المادة بنجاح'));
     } catch (error) {
       next(error);
     }
@@ -235,7 +278,7 @@ export class ProductionTemplateController {
     try {
       const { id, stageId, materialId } = req.params;
       await this.materialService.removePlannedMaterial(id as string, stageId as string, materialId as string);
-      res.status(200).json(ApiResponse.success(null, 'تم حذف المادة المخططة بنجاح'));
+      res.status(200).json(ApiResponse.success(null, 'تمت إزالة المادة المخططة بنجاح'));
     } catch (error) {
       next(error);
     }
@@ -258,24 +301,23 @@ export class ProductionTemplateController {
   addStageAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { id, stageId } = req.params;
-      if (!req.file) {
-        throw new BusinessRuleError('الملف مطلوب', 'STAGE_ATTACHMENT_FILE_MISSING');
+      const file = req.file;
+      if (!file) {
+        throw new BusinessRuleError('الملف مطلوب', 'ATTACHMENT_FILE_MISSING');
       }
-      const description = typeof req.body?.description === 'string' ? req.body.description : undefined;
+
+      const description = typeof req.body?.description === 'string' ? req.body.description : null;
+      const userId = (req as any).user?.id || null;
+
       const attachment = await this.attachmentService.addStageAttachment(
         id as string,
         stageId as string,
-        {
-          originalname: req.file.originalname,
-          mimetype: req.file.mimetype,
-          size: req.file.size,
-          buffer: req.file.buffer,
-          path: req.file.path,
-        },
+        file,
         description,
-        req.user?.id
+        userId
       );
-      res.status(201).json(ApiResponse.success(attachment, 'تم رفع الوثيقة المرجعية بنجاح'));
+
+      res.status(201).json(ApiResponse.success(attachment, 'تم إرفاق الوثيقة المرجعية بنجاح'));
     } catch (error) {
       next(error);
     }
@@ -291,7 +333,7 @@ export class ProductionTemplateController {
         attachmentId as string,
         dto
       );
-      res.status(200).json(ApiResponse.success(attachment, 'تم تحديث بيانات الوثيقة بنجاح'));
+      res.status(200).json(ApiResponse.success(attachment, 'تم تحديث وصف الوثيقة بنجاح'));
     } catch (error) {
       next(error);
     }
@@ -343,6 +385,438 @@ export class ProductionTemplateController {
         `inline; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`
       );
       res.sendFile(absoluteFilePath);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 6. WORKFLOW ITEMS
+  // ==========================================
+
+  listWorkflowItems = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const items = await this.workflowService.listWorkflowItems(id as string);
+      res.status(200).json(ApiResponse.success(items));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  reorderWorkflow = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const dto = req.body as ReorderWorkflowItemsDto;
+      const items = await this.workflowService.reorderWorkflow(id as string, dto.workflowItemIds);
+      res.status(200).json(ApiResponse.success(items, 'تم إعادة ترتيب سير العمل بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 7. PATTERNS
+  // ==========================================
+
+  listPatterns = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const patterns = await this.patternService.listPatterns(id as string);
+      res.status(200).json(ApiResponse.success(patterns));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getPatternById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId } = req.params;
+      const pattern = await this.patternService.getPatternById(id as string, patternId as string);
+      res.status(200).json(ApiResponse.success(pattern));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addPattern = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const dto = req.body as CreateTemplatePatternDto;
+      const pattern = await this.patternService.addPattern(id as string, dto);
+      res.status(201).json(ApiResponse.success(pattern, 'تمت إضافة النمط بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updatePattern = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId } = req.params;
+      const dto = req.body as UpdateTemplatePatternDto;
+      const pattern = await this.patternService.updatePattern(id as string, patternId as string, dto);
+      res.status(200).json(ApiResponse.success(pattern, 'تم تحديث النمط بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  archivePattern = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId } = req.params;
+      await this.patternService.archivePattern(id as string, patternId as string);
+      res.status(200).json(ApiResponse.success(null, 'تم أرشفة النمط بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 8. PATTERN OPTIONS
+  // ==========================================
+
+  listOptions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId } = req.params;
+      const options = await this.optionService.listOptions(id as string, patternId as string);
+      res.status(200).json(ApiResponse.success(options));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addOption = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId } = req.params;
+      const dto = req.body as CreateTemplatePatternOptionDto;
+      const option = await this.optionService.addOption(id as string, patternId as string, dto);
+      res.status(201).json(ApiResponse.success(option, 'تمت إضافة الخيار بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateOption = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId } = req.params;
+      const dto = req.body as UpdateTemplatePatternOptionDto;
+      const option = await this.optionService.updateOption(
+        id as string,
+        patternId as string,
+        optionId as string,
+        dto
+      );
+      res.status(200).json(ApiResponse.success(option, 'تم تحديث الخيار بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  archiveOption = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId } = req.params;
+      await this.optionService.archiveOption(id as string, patternId as string, optionId as string);
+      res.status(200).json(ApiResponse.success(null, 'تم أرشفة الخيار بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  reorderOptions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId } = req.params;
+      const dto = req.body as ReorderPatternOptionsDto;
+      const options = await this.optionService.reorderOptions(id as string, patternId as string, dto);
+      res.status(200).json(ApiResponse.success(options, 'تم إعادة ترتيب الخيارات بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 9. PATTERN OPTION TASKS
+  // ==========================================
+
+  listTasks = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId } = req.params;
+      const tasks = await this.taskService.listTasks(
+        id as string,
+        patternId as string,
+        optionId as string
+      );
+      res.status(200).json(ApiResponse.success(tasks));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getTaskById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId } = req.params;
+      const task = await this.taskService.getTaskById(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string
+      );
+      res.status(200).json(ApiResponse.success(task));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addTask = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId } = req.params;
+      const dto = req.body as CreateTemplatePatternOptionTaskDto;
+      const task = await this.taskService.addTask(
+        id as string,
+        patternId as string,
+        optionId as string,
+        dto
+      );
+      res.status(201).json(ApiResponse.success(task, 'تمت إضافة المهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateTask = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId } = req.params;
+      const dto = req.body as UpdateTemplatePatternOptionTaskDto;
+      const task = await this.taskService.updateTask(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string,
+        dto
+      );
+      res.status(200).json(ApiResponse.success(task, 'تم تحديث المهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  archiveTask = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId } = req.params;
+      await this.taskService.archiveTask(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string
+      );
+      res.status(200).json(ApiResponse.success(null, 'تم أرشفة المهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  reorderTasks = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId } = req.params;
+      const dto = req.body as ReorderPatternOptionTasksDto;
+      const tasks = await this.taskService.reorderTasks(
+        id as string,
+        patternId as string,
+        optionId as string,
+        dto
+      );
+      res.status(200).json(ApiResponse.success(tasks, 'تم إعادة ترتيب المهام بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 10. TASK PLANNED MATERIALS
+  // ==========================================
+
+  listTaskMaterials = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId } = req.params;
+      const materials = await this.taskMaterialService.listTaskMaterials(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string
+      );
+      res.status(200).json(ApiResponse.success(materials));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addTaskMaterial = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId } = req.params;
+      const dto = req.body as AddTemplatePatternOptionTaskMaterialDto;
+      const material = await this.taskMaterialService.addTaskMaterial(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string,
+        dto
+      );
+      res.status(201).json(ApiResponse.success(material, 'تمت إضافة المادة للمهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateTaskMaterial = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId, materialId } = req.params;
+      const dto = req.body as UpdateTemplatePatternOptionTaskMaterialDto;
+      const material = await this.taskMaterialService.updateTaskMaterial(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string,
+        materialId as string,
+        dto
+      );
+      res.status(200).json(ApiResponse.success(material, 'تم تعديل كمية مادة المهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  removeTaskMaterial = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId, materialId } = req.params;
+      await this.taskMaterialService.removeTaskMaterial(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string,
+        materialId as string
+      );
+      res.status(200).json(ApiResponse.success(null, 'تمت إزالة مادة المهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ==========================================
+  // 11. TASK REFERENCE ATTACHMENTS
+  // ==========================================
+
+  listTaskAttachments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId } = req.params;
+      const attachments = await this.taskAttachmentService.listTaskAttachments(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string
+      );
+      res.status(200).json(ApiResponse.success(attachments));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addTaskAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId } = req.params;
+      const file = req.file;
+      if (!file) {
+        throw new BusinessRuleError('الملف مطلوب', 'TASK_ATTACHMENT_FILE_MISSING');
+      }
+
+      const description = typeof req.body?.description === 'string' ? req.body.description : null;
+      const userId = (req as any).user?.id || null;
+
+      const attachment = await this.taskAttachmentService.addTaskAttachment(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string,
+        file,
+        description,
+        userId
+      );
+
+      res.status(201).json(ApiResponse.success(attachment, 'تم إرفاق الوثيقة بالمهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateTaskAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId, attachmentId } = req.params;
+      const dto = req.body as UpdatePatternOptionTaskAttachmentDto;
+      const attachment = await this.taskAttachmentService.updateTaskAttachment(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string,
+        attachmentId as string,
+        dto
+      );
+      res.status(200).json(ApiResponse.success(attachment, 'تم تحديث وصف وثيقة المهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  softDeleteTaskAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId, attachmentId } = req.params;
+      await this.taskAttachmentService.softDeleteTaskAttachment(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string,
+        attachmentId as string
+      );
+      res.status(200).json(ApiResponse.success(null, 'تم حذف وثيقة المهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  reorderTaskAttachments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId } = req.params;
+      const dto = req.body as ReorderPatternOptionTaskAttachmentsDto;
+      const attachments = await this.taskAttachmentService.reorderTaskAttachments(
+        id as string,
+        patternId as string,
+        optionId as string,
+        taskId as string,
+        dto
+      );
+      res.status(200).json(ApiResponse.success(attachments, 'تم إعادة ترتيب وثائق المهمة بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  downloadTaskAttachment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, patternId, optionId, taskId, attachmentId } = req.params;
+      const { absolutePath, originalFileName, mimeType } =
+        await this.taskAttachmentService.getTaskAttachmentForDownload(
+          id as string,
+          patternId as string,
+          optionId as string,
+          taskId as string,
+          attachmentId as string
+        );
+
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Type', mimeType);
+      const encodedFilename = encodeURIComponent(originalFileName);
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`
+      );
+      res.sendFile(absolutePath);
     } catch (error) {
       next(error);
     }
