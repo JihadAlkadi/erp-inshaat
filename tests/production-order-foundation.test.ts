@@ -38,6 +38,134 @@ import { UpdatePatternSelectionDto } from '../src/modules/production/order-line-
 import { safeJsonStringify } from '../src/modules/production/order/production-order.types.js';
 
 describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation', () => {
+  function createDuplicateTestContext() {
+    const store = {
+      order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null },
+      lines: [] as any[],
+      selections: [] as any[],
+      templates: [
+        { id: 't-with-patterns', name: 'قالب مع أنماط', isActive: true, deletedAt: null },
+        { id: 't-no-patterns', name: 'قالب بدون أنماط', isActive: true, deletedAt: null },
+      ],
+      patterns: [
+        { id: 'p-1', templateId: 't-with-patterns', name: 'النمط 1', deletedAt: null, createdAt: new Date() },
+        { id: 'p-2', templateId: 't-with-patterns', name: 'النمط 2', deletedAt: null, createdAt: new Date() },
+      ],
+      options: [
+        { id: 'opt-1a', patternId: 'p-1', name: 'خيار 1-أ', sortOrder: 1, deletedAt: null },
+        { id: 'opt-1b', patternId: 'p-1', name: 'خيار 1-ب', sortOrder: 2, deletedAt: null },
+        { id: 'opt-2a', patternId: 'p-2', name: 'خيار 2-أ', sortOrder: 1, deletedAt: null },
+      ],
+      sequence: { id: 'PRODUCTION_ORDER', currentValue: 1 } as any,
+    };
+
+    const createRepo = (entityClass: any) => {
+      return {
+        findOne: async (opts: any) => {
+          if (entityClass === ProductionOrderEntity) return store.order;
+          if (entityClass === ProductionOrderSequenceEntity) return store.sequence;
+          if (entityClass === ProductionTemplateEntity) {
+            return store.templates.find((t) => t.id === opts.where.id && !t.deletedAt) || null;
+          }
+          if (entityClass === ProductionTemplatePatternEntity) {
+            return store.patterns.find((p) => p.id === opts.where.id && (!opts.where.templateId || p.templateId === opts.where.templateId) && !p.deletedAt) || null;
+          }
+          if (entityClass === ProductionTemplatePatternOptionEntity) {
+            return store.options.find((o) => o.id === opts.where.id && (!opts.where.patternId || o.patternId === opts.where.patternId) && !o.deletedAt) || null;
+          }
+          if (entityClass === ProductionOrderLineEntity) {
+            return store.lines.find((l) => {
+              if (opts?.where?.id) {
+                if (opts.where.id._type === 'not' && l.id === opts.where.id._value) return false;
+                if (opts.where.id._type !== 'not' && l.id !== opts.where.id) return false;
+              }
+              if (opts?.where?.orderId && l.orderId !== opts.where.orderId) return false;
+              if (opts?.where?.activeConfigurationHash && l.activeConfigurationHash !== opts.where.activeConfigurationHash) return false;
+              if (opts?.where?.deletedAt && l.deletedAt !== null) return false;
+              return true;
+            }) || null;
+          }
+          if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+            return store.selections.find((s) => s.orderLineId === opts.where.orderLineId && s.templatePatternId === opts.where.templatePatternId) || null;
+          }
+          return null;
+        },
+        find: async (opts: any) => {
+          if (entityClass === ProductionOrderLineEntity) {
+            return store.lines.filter((l) => !opts?.withDeleted ? !l.deletedAt : true);
+          }
+          if (entityClass === ProductionTemplateEntity) {
+            return store.templates.filter((t) => !opts?.withDeleted ? !t.deletedAt : true);
+          }
+          if (entityClass === ProductionTemplatePatternEntity) {
+            return store.patterns.filter((p) => {
+              if (opts?.where?.templateId) {
+                const tmplList = opts.where.templateId._value || (Array.isArray(opts.where.templateId) ? opts.where.templateId : [opts.where.templateId]);
+                if (!tmplList.includes(p.templateId)) return false;
+              }
+              return !opts?.withDeleted ? !p.deletedAt : true;
+            }).map((p) => {
+              if (opts?.relations?.options) {
+                return { ...p, options: store.options.filter((o) => o.patternId === p.id && !o.deletedAt) };
+              }
+              return p;
+            });
+          }
+          if (entityClass === ProductionTemplatePatternOptionEntity) {
+            return store.options.filter((o) => !opts?.withDeleted ? !o.deletedAt : true);
+          }
+          if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+            return store.selections.filter((s) => {
+              if (opts?.where?.orderLineId) {
+                const lineList = opts.where.orderLineId._value || (Array.isArray(opts.where.orderLineId) ? opts.where.orderLineId : [opts.where.orderLineId]);
+                if (!lineList.includes(s.orderLineId)) return false;
+              }
+              return true;
+            });
+          }
+          return [];
+        },
+        count: async (opts: any) => {
+          if (entityClass === ProductionOrderLineEntity) {
+            return store.lines.filter((l) => !l.deletedAt).length;
+          }
+          return 0;
+        },
+        create: (data: any) => ({ id: data.id || `line-${Date.now()}-${Math.floor(Math.random() * 1000)}`, deletedAt: null, ...data }),
+        save: async (entity: any) => {
+          if (entityClass === ProductionOrderEntity) {
+            store.order = entity;
+          } else if (entityClass === ProductionOrderSequenceEntity) {
+            store.sequence = entity;
+          } else if (entityClass === ProductionOrderLineEntity) {
+            const idx = store.lines.findIndex((l) => l.id === entity.id);
+            if (idx >= 0) store.lines[idx] = entity;
+            else store.lines.push(entity);
+          } else if (entityClass === ProductionOrderLinePatternSelectionEntity) {
+            const idx = store.selections.findIndex((s) => s.id === entity.id);
+            if (idx >= 0) store.selections[idx] = entity;
+            else store.selections.push(entity);
+          }
+          return entity;
+        },
+      };
+    };
+
+    const mockManager: any = {
+      getRepository: (c: any) => createRepo(c),
+      save: async (e: any) => e,
+    };
+
+    const mockDataSource: any = {
+      getRepository: (c: any) => createRepo(c),
+      transaction: async (cb: any) => cb(mockManager),
+    };
+
+    const guard = new ProductionOrderGuardService(mockDataSource);
+    const service = new ProductionOrderService(mockDataSource, guard);
+
+    return { store, service };
+  }
 
   // ==========================================
   // 1. ARCHITECTURAL BOUNDARIES & CONFIGURATION
@@ -1481,20 +1609,29 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       // Must contain navigation button to /edit
       assert.ok(showEjs.includes('editOrderNavBtn'), 'show.ejs must contain editOrderNavBtn navigation');
       assert.ok(showEjs.includes('/production/orders/<%= order.id %>/edit'), 'show.ejs must link to /edit');
-      assert.ok(showEjs.includes('/js/production-order-show.js'), 'show.ejs must load production-order-show.js');
     });
 
-    it('edit.ejs: contains comprehensive Draft Order Editor controls', () => {
+    it('edit.ejs: contains search-first composer, pending staging list, and no Bootstrap archive modal', () => {
       const editEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/edit.ejs'), 'utf-8');
 
       assert.ok(editEjs.includes('addLineComposerCard'), 'edit.ejs must contain addLineComposerCard');
       assert.ok(editEjs.includes('templateSearchInput'), 'edit.ejs must contain templateSearchInput');
       assert.ok(editEjs.includes('templateLoadMoreBtn'), 'edit.ejs must contain templateLoadMoreBtn');
-      assert.ok(editEjs.includes('composerQuantityInput'), 'edit.ejs must contain composerQuantityInput');
-      assert.ok(editEjs.includes('composerAddLineBtn'), 'edit.ejs must contain composerAddLineBtn');
+      assert.ok(editEjs.includes('pendingLinesSection'), 'edit.ejs must contain pendingLinesSection');
+      assert.ok(editEjs.includes('pendingLinesContainer'), 'edit.ejs must contain pendingLinesContainer');
+      assert.ok(editEjs.includes('submitPendingLinesBtn'), 'edit.ejs must contain submitPendingLinesBtn');
+      assert.ok(editEjs.includes('orderLinesContainer'), 'edit.ejs must contain orderLinesContainer');
       assert.ok(editEjs.includes('editHeaderModal'), 'edit.ejs must contain editHeaderModal');
-      assert.ok(editEjs.includes('archiveOrderModal'), 'edit.ejs must contain archiveOrderModal');
+      assert.ok(!editEjs.includes('archiveOrderModal'), 'edit.ejs must NOT contain archiveOrderModal (Bootstrap modal eliminated)');
+      assert.ok(!editEjs.includes('confirmArchiveOrderBtn'), 'edit.ejs must NOT contain confirmArchiveOrderBtn');
       assert.ok(editEjs.includes('/js/production-order-edit.js'), 'edit.ejs must load production-order-edit.js');
+    });
+
+    it('index.ejs: does not contain Bootstrap archive confirmation modal', () => {
+      const indexEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/index.ejs'), 'utf-8');
+
+      assert.ok(!indexEjs.includes('archiveOrderModal'), 'index.ejs must NOT contain archiveOrderModal');
+      assert.ok(!indexEjs.includes('confirmArchiveOrderBtn'), 'index.ejs must NOT contain confirmArchiveOrderBtn');
     });
 
     it('production-order-show.js: does not execute any mutating API calls', () => {
@@ -1505,14 +1642,476 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       assert.ok(!showJs.includes("method: 'DELETE'"), 'show.js must not perform DELETE requests');
     });
 
-    it('production-order-edit.js: uses monotonically increasing sequence counters', () => {
+    it('production-order-edit.js: uses search-first approach without boot fetch and tracks monotonic sequence counters', () => {
       const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
 
       assert.ok(editJs.includes('templatePickerRequestSeq'), 'edit.js must track templatePickerRequestSeq');
       assert.ok(editJs.includes('templateConfigurationRequestSeq'), 'edit.js must track templateConfigurationRequestSeq');
-      assert.ok(editJs.includes('++templatePickerRequestSeq'), 'templatePickerRequestSeq must increment monotonically');
-      assert.ok(editJs.includes('++templateConfigurationRequestSeq'), 'templateConfigurationRequestSeq must increment monotonically');
+      assert.ok(!editJs.includes('fetchTemplates(false);'), 'edit.js must NOT execute fetchTemplates(false) at boot');
+    });
+
+    it('production order client scripts: do NOT use native alert() or confirm()', () => {
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+      const ordersJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-orders.js'), 'utf-8');
+
+      assert.ok(!editJs.includes('confirm('), 'production-order-edit.js must NOT use native confirm()');
+      assert.ok(!editJs.includes('alert('), 'production-order-edit.js must NOT use native alert()');
+      assert.ok(!ordersJs.includes('confirm('), 'production-orders.js must NOT use native confirm()');
+      assert.ok(!ordersJs.includes('alert('), 'production-orders.js must NOT use native alert()');
+    });
+
+    it('extractApiErrorMessage: extracts and formats error messages from response body', () => {
+      const appJs = readFileSync(resolve(process.cwd(), 'src/public/js/app.js'), 'utf-8');
+      assert.ok(appJs.includes('window.extractApiErrorMessage'), 'app.js must define window.extractApiErrorMessage');
+
+      function extractApiErrorMessage(responseBody: any, fallback?: string) {
+        if (!responseBody) return fallback || 'حدث خطأ غير متوقع';
+        const errorMessages: string[] = [];
+        if (responseBody.errors && typeof responseBody.errors === 'object' && !Array.isArray(responseBody.errors)) {
+          Object.keys(responseBody.errors).forEach((key) => {
+            const val = responseBody.errors[key];
+            if (Array.isArray(val)) {
+              val.forEach((msg) => { if (typeof msg === 'string' && msg.trim()) errorMessages.push(msg.trim()); });
+            } else if (typeof val === 'string' && val.trim()) {
+              errorMessages.push(val.trim());
+            }
+          });
+        } else if (Array.isArray(responseBody.errors)) {
+          responseBody.errors.forEach((msg) => { if (typeof msg === 'string' && msg.trim()) errorMessages.push(msg.trim()); });
+        }
+        if (errorMessages.length === 0 && responseBody.message && typeof responseBody.message === 'string') {
+          errorMessages.push(responseBody.message);
+        }
+        const uniqueMessages = Array.from(new Set(errorMessages));
+        return uniqueMessages.length > 0 ? uniqueMessages.join('، ') : (fallback || 'حدث خطأ أثناء معالجة الطلب');
+      }
+
+      const extracted = extractApiErrorMessage({
+        errors: {
+          quantity: ['الكمية غير صالحة'],
+          templateId: ['القالب غير موجود'],
+        },
+      });
+      assert.equal(extracted, 'الكمية غير صالحة، القالب غير موجود');
+    });
+  });
+
+  // ==========================================
+  // 14. DRAFT HARDENING & INVARIANT TESTS
+  // ==========================================
+  describe('14. Draft Hardening & Invariant Tests', () => {
+    it('changePatternSelection(): throws PRODUCTION_ORDER_TEMPLATE_INACTIVE when template is inactive or archived', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add line while template is active
+      const line = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Deactivate template
+      const tmpl = store.templates.find((t) => t.id === 't-with-patterns');
+      if (tmpl) tmpl.isActive = false;
+
+      // Attempt to change pattern selection
+      await assert.rejects(
+        async () => {
+          await service.changePatternSelection('ord-1', line.id, 'p-1', { optionId: 'opt-1b' });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_TEMPLATE_INACTIVE');
+          return true;
+        }
+      );
+    });
+
+    it('addLine(): patternSelections: [] when template has patterns throws PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID', async () => {
+      const { service } = createDuplicateTestContext();
+
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', {
+            templateId: 't-with-patterns',
+            quantity: 1,
+            patternSelections: [], // explicit empty array, not undefined!
+          });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_LINE_PATTERN_SELECTION_SET_INVALID');
+          return true;
+        }
+      );
+    });
+
+    it('addLine(): absent patternSelections (undefined) resolves default active options', async () => {
+      const { service } = createDuplicateTestContext();
+
+      const line = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        // patternSelections omitted -> undefined
+      });
+
+      assert.ok(line.id);
+      assert.equal(line.patternSelections.length, 2);
+      assert.equal(line.patternSelections.find((s: any) => s.templatePatternId === 'p-1')?.selectedOptionId, 'opt-1a');
+      assert.equal(line.patternSelections.find((s: any) => s.templatePatternId === 'p-2')?.selectedOptionId, 'opt-2a');
+    });
+
+    it('validateLineQuantity: rejects quantity <= 0, > 10000, or non-integer with PRODUCTION_ORDER_LINE_QUANTITY_INVALID', async () => {
+      const { service } = createDuplicateTestContext();
+
+      // Quantity 0
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', { templateId: 't-no-patterns', quantity: 0 });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_QUANTITY_INVALID'
+      );
+
+      // Quantity > 10000
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', { templateId: 't-no-patterns', quantity: 10001 });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_QUANTITY_INVALID'
+      );
+
+      // Decimal quantity
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', { templateId: 't-no-patterns', quantity: 2.5 });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_QUANTITY_INVALID'
+      );
+    });
+
+    it('addLinesBatch(): adds multiple lines transactionally and validates quantities and configurations', async () => {
+      const { service } = createDuplicateTestContext();
+
+      const result = await service.addLinesBatch('ord-1', {
+        lines: [
+          {
+            templateId: 't-with-patterns',
+            quantity: 3,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1a' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+          {
+            templateId: 't-with-patterns',
+            quantity: 5,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1b' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+        ],
+      });
+
+      assert.equal(result.length, 2);
+      assert.equal(result[0].sortOrder, 1);
+      assert.equal(result[1].sortOrder, 2);
+    });
+
+    it('addLinesBatch(): intra-batch duplicate throws PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION', async () => {
+      const { service } = createDuplicateTestContext();
+
+      await assert.rejects(
+        async () => {
+          await service.addLinesBatch('ord-1', {
+            lines: [
+              {
+                templateId: 't-with-patterns',
+                quantity: 1,
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1a' },
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+              {
+                templateId: 't-with-patterns',
+                quantity: 2,
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1a' },
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+            ],
+          });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+      );
+    });
+
+    it('addLinesBatch(): atomic rollback when any line in batch fails validation (0 lines created)', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      const initialLinesCount = store.lines.length;
+
+      // Line 1 is valid, Line 2 has invalid quantity (0)
+      await assert.rejects(
+        async () => {
+          await service.addLinesBatch('ord-1', {
+            lines: [
+              {
+                templateId: 't-with-patterns',
+                quantity: 2,
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1a' },
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+              {
+                templateId: 't-with-patterns',
+                quantity: 0, // Invalid!
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1b' },
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+            ],
+          });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_QUANTITY_INVALID'
+      );
+
+      // Verify no partial insert occurred (All-or-nothing rollback)
+      assert.equal(store.lines.length, initialLinesCount);
+    });
+
+    it('addLinesBatch(): collision with existing active line throws PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION and rolls back', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Existing line in DB with config (opt-1a, opt-2a)
+      const existing = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+      assert.ok(existing.id);
+
+      const countBeforeBatch = store.lines.length;
+
+      // Batch contains duplicate of existing line plus a new distinct line
+      await assert.rejects(
+        async () => {
+          await service.addLinesBatch('ord-1', {
+            lines: [
+              {
+                templateId: 't-with-patterns',
+                quantity: 4,
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1b' },
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+              {
+                templateId: 't-with-patterns',
+                quantity: 5,
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1a' }, // Conflicts with existing!
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+            ],
+          });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+      );
+
+      // Verify rollback: 0 new lines added
+      assert.equal(store.lines.length, countBeforeBatch);
+    });
+
+    it('addLinesBatch(): allows same template with DIFFERENT pattern option selections in same batch', async () => {
+      const { service } = createDuplicateTestContext();
+
+      const created = await service.addLinesBatch('ord-1', {
+        lines: [
+          {
+            templateId: 't-with-patterns',
+            quantity: 3,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1a' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+          {
+            templateId: 't-with-patterns',
+            quantity: 4,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1b' }, // Different!
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+        ],
+      });
+
+      assert.equal(created.length, 2);
+      assert.notEqual(created[0].id, created[1].id);
+    });
+
+    it('addLinesBatch(): same template without patterns duplicated in batch throws PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION', async () => {
+      const { service } = createDuplicateTestContext();
+
+      await assert.rejects(
+        async () => {
+          await service.addLinesBatch('ord-1', {
+            lines: [
+              {
+                templateId: 't-no-patterns',
+                quantity: 1,
+              },
+              {
+                templateId: 't-no-patterns',
+                quantity: 2,
+              },
+            ],
+          });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+      );
+    });
+
+    it('addLinesBatch(): quantity difference does NOT avoid duplicate detection', async () => {
+      const { service } = createDuplicateTestContext();
+
+      await assert.rejects(
+        async () => {
+          await service.addLinesBatch('ord-1', {
+            lines: [
+              {
+                templateId: 't-with-patterns',
+                quantity: 1,
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1a' },
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+              {
+                templateId: 't-with-patterns',
+                quantity: 50, // Different quantity, same configuration!
+                patternSelections: [
+                  { patternId: 'p-1', optionId: 'opt-1a' },
+                  { patternId: 'p-2', optionId: 'opt-2a' },
+                ],
+              },
+            ],
+          });
+        },
+        (err: any) => err instanceof BusinessRuleError && err.code === 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+      );
+    });
+
+    it('createOrder(): throws PRODUCTION_ORDER_SEQUENCE_NOT_INITIALIZED if sequence row is missing', async () => {
+      const { service, store } = createDuplicateTestContext();
+      (store as any).sequence = null; // simulate missing sequence row in DB
+
+      await assert.rejects(
+        async () => {
+          await service.createOrder({
+            description: 'New Order',
+          });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_SEQUENCE_NOT_INITIALIZED');
+          return true;
+        }
+      );
+    });
+
+    it('getOrderByIdInternal(): foreign pattern ID on line throws PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add a foreign pattern that belongs to another template
+      store.patterns.push({
+        id: 'foreign-p',
+        templateId: 'other-template-id',
+        name: 'نمط خارجي',
+        deletedAt: null,
+        createdAt: new Date(),
+      });
+      store.options.push({
+        id: 'foreign-opt',
+        patternId: 'foreign-p',
+        name: 'خيار خارجي',
+        sortOrder: 1,
+        deletedAt: null,
+      });
+
+      const lineId = 'line-corrupt-foreign';
+      const hash = hashLineConfiguration('t-with-patterns', [
+        { templatePatternId: 'foreign-p', selectedOptionId: 'foreign-opt' },
+      ]);
+      store.lines.push({
+        id: lineId,
+        orderId: 'ord-1',
+        templateId: 't-with-patterns',
+        quantity: 1,
+        sortOrder: 1,
+        activeConfigurationHash: hash,
+        deletedAt: null,
+      });
+      store.selections.push({
+        id: 'sel-corrupt',
+        orderLineId: lineId,
+        templatePatternId: 'foreign-p',
+        selectedOptionId: 'foreign-opt',
+      });
+
+      await assert.rejects(
+        async () => {
+          await service.getOrderById('ord-1');
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT');
+          return true;
+        }
+      );
+    });
+
+    it('getOrderByIdInternal(): soft-deleted pattern returns historical name and sets isReleaseReady to false without corrupt error', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add a line with pattern p-1
+      const line = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Soft-delete pattern p-1 (historical / stale)
+      const p1 = store.patterns.find((p) => p.id === 'p-1');
+      if (p1) p1.deletedAt = new Date();
+
+      const orderDetail = await service.getOrderById('ord-1');
+      assert.ok(orderDetail);
+      const detailLine = orderDetail.lines.find((l) => l.id === line.id);
+      assert.ok(detailLine);
+      const selP1 = detailLine.patternSelections.find((s) => s.templatePatternId === 'p-1');
+      assert.ok(selP1);
+      assert.equal(selP1.patternName, 'النمط 1'); // historical name preserved!
+
+      const readiness = await service.validateDraftForRelease('ord-1');
+      assert.equal(readiness.ready, false);
     });
   });
 });
+
 
