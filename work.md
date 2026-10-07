@@ -44,9 +44,10 @@
     - ترتيب عناصر المستوى الأول في سير العمل يخضع حصراً لجدول `production_template_workflow_item`:
       - الترتيب مكثف ومتسلسل `sortOrder: 1..N`.
       - كل عنصر في سير العمل هو إما مرحلة مباشرة `STAGE` (`stage_id IS NOT NULL AND pattern_id IS NULL`) أو عقدة قرار/نمط `PATTERN` (`pattern_id IS NOT NULL AND stage_id IS NULL`).
-      - محمي على مستوى قاعدة البيانات عبر Check Constraint: `CHK_prod_tmpl_wf_item_polymorphic`.
+      - محمي على مستوى قاعدة البيانات عبر Check Constraint: `CHK_production_workflow_item_polymorphic`.
       - سلامة وتتابع الترتيب مضمونان حصراً عبر قفل التزامن التشاؤمي لسجل القالب الأب (`ProductionTemplateEntity pessimistic write lock`) مع التحقق الدقيق من التبديل الكامل لعناصر الترتيب (`exact permutation validation`) وإعادة الترتيب المكثف (`dense reorder/compaction`). لا يوجد قيد UNIQUE مركب على `(template_id, sort_order)` على مستوى قاعدة البيانات لتفادي التعارض مع السجلات المؤرشفة ناعماً والاصطدام المؤقت أثناء التحديثات.
-      - كل مرحلة وكل نمط يرتبط بعنصر سير عمل واحد حصراً عبر قيود فريدة `UQ_production_workflow_item_stage` و `UQ_production_workflow_item_pattern`.
+      - `stage_id` فريد عالمياً داخل جدول عناصر سير العمل، فلا يمكن ربط نفس Stage بأكثر من Workflow Item.
+      - `pattern_id` فريد عالمياً داخل جدول عناصر سير العمل، فلا يمكن ربط نفس Pattern بأكثر من Workflow Item.
       - تم حذف عمود `sort_order` نهائياً من جدول `production_template_stage`؛ وأي ترتيب قديم للمراحل أصبح مشتقاً بصرياً ودلالياً من `workflowItem.sortOrder`.
   - **مجال الأنماط والخيارات والمهام (Pattern Domain: Pattern -> Options -> Tasks)**:
     > Pattern and Option have NO departmentId.

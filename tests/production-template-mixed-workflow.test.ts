@@ -1154,6 +1154,138 @@ describe('Production Template Mixed Workflow, Patterns & Options Architecture In
       assert.strictEqual(taskDto.plannedMaterialsCount, 2);
       assert.strictEqual(taskDto.attachmentsCount, 3);
     });
+
+    it('updatePattern preserves task reference counts using same manager and excludes archived attachments', async () => {
+      const mockPattern = {
+        id: 'pat-1',
+        templateId: 'tmpl-1',
+        name: 'نوع الصب القديم',
+        deletedAt: null,
+        options: [
+          {
+            id: 'opt-1',
+            patternId: 'pat-1',
+            name: 'مسلح',
+            sortOrder: 1,
+            deletedAt: null,
+            tasks: [
+              {
+                id: 'task-1',
+                optionId: 'opt-1',
+                name: 'تجهيز الحديد',
+                departmentId: 'dept-1',
+                sortOrder: 1,
+                deletedAt: null,
+                department: { id: 'dept-1', name: 'الحدادة', code: 'STEEL' },
+              },
+            ],
+          },
+        ],
+      };
+
+      let managerUsedForMaterials = false;
+      let managerUsedForAttachments = false;
+      let attWhereClause = '';
+
+      const mockManager = {
+        findOne: async (entity: any, opts: any) => {
+          if (entity === ProductionTemplateEntity || opts?.lock?.mode === 'pessimistic_write') {
+            return { id: 'tmpl-1', deletedAt: null };
+          }
+          if (entity === ProductionTemplatePatternEntity) {
+            return mockPattern;
+          }
+          return null;
+        },
+        save: async (entity: any) => entity,
+        getRepository: (entity: any) => {
+          if (entity === ProductionTemplateEntity) {
+            return {
+              findOne: async () => ({ id: 'tmpl-1', deletedAt: null }),
+            };
+          }
+          if (entity === ProductionTemplatePatternEntity) {
+            return {
+              findOne: async () => mockPattern,
+            };
+          }
+          if (entity === ProductionTemplatePatternOptionTaskMaterialEntity) {
+            managerUsedForMaterials = true;
+            return {
+              createQueryBuilder: () => ({
+                select: () => ({
+                  addSelect: () => ({
+                    where: () => ({
+                      groupBy: () => ({
+                        getRawMany: async () => [
+                          { taskId: 'task-1', cnt: '2' },
+                        ],
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (entity === ProductionTemplatePatternOptionTaskAttachmentEntity) {
+            managerUsedForAttachments = true;
+            return {
+              createQueryBuilder: () => ({
+                select: () => ({
+                  addSelect: () => ({
+                    where: (w: string) => {
+                      attWhereClause = w;
+                      return {
+                        groupBy: () => ({
+                          getRawMany: async () => [
+                            { taskId: 'task-1', cnt: '3' }, // 3 active, 1 archived excluded
+                          ],
+                        }),
+                      };
+                    },
+                  }),
+                }),
+              }),
+            };
+          }
+          return { findOne: async () => null, find: async () => [] };
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: (entity: any) => {
+          if (
+            entity === ProductionTemplatePatternOptionTaskMaterialEntity ||
+            entity === ProductionTemplatePatternOptionTaskAttachmentEntity
+          ) {
+            throw new Error('Global repository must not be called inside transaction');
+          }
+          return { findOne: async () => ({ id: 'tmpl-1', deletedAt: null }), find: async () => [] };
+        },
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const wfService = new ProductionTemplateWorkflowService(mockDs, guard);
+      const patternService = new ProductionTemplatePatternService(mockDs, guard, wfService);
+
+      const result = await patternService.updatePattern('tmpl-1', 'pat-1', {
+        name: 'نوع الصب المعدل',
+      });
+
+      assert.strictEqual(managerUsedForMaterials, true);
+      assert.strictEqual(managerUsedForAttachments, true);
+      assert.ok(attWhereClause.includes('att.deletedAt IS NULL'));
+
+      assert.strictEqual(result.name, 'نوع الصب المعدل');
+      assert.strictEqual(result.options?.length, 1);
+      const taskDto = result.options[0].tasks?.[0];
+      assert.ok(taskDto);
+      assert.strictEqual(taskDto.plannedMaterialsCount, 2);
+      assert.strictEqual(taskDto.attachmentsCount, 3);
+      assert.strictEqual((taskDto as any).plannedMaterials, undefined);
+      assert.strictEqual((taskDto as any).attachments, undefined);
+    });
   });
 
   // ========================================================

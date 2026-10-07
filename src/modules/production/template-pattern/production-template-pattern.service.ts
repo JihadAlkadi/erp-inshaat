@@ -209,6 +209,19 @@ export class ProductionTemplatePatternService {
       pattern.name = dto.name.trim();
       const saved = await manager.save(pattern);
 
+      const allTaskIds: string[] = [];
+      for (const opt of saved.options || []) {
+        if (!opt.deletedAt) {
+          for (const t of opt.tasks || []) {
+            if (!t.deletedAt) {
+              allTaskIds.push(t.id);
+            }
+          }
+        }
+      }
+
+      const countMap = await loadTaskReferenceCounts(allTaskIds, this.dataSource, manager);
+
       const activeOptions = (saved.options || [])
         .filter((o) => !o.deletedAt)
         .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -216,7 +229,14 @@ export class ProductionTemplatePatternService {
           const activeTasks = (opt.tasks || [])
             .filter((t) => !t.deletedAt)
             .sort((a, b) => a.sortOrder - b.sortOrder)
-            .map((t) => toProductionTemplatePatternOptionTaskDto(t));
+            .map((t) => {
+              const counts = countMap.get(t.id);
+              return toProductionTemplatePatternOptionTaskDto(
+                t,
+                counts?.plannedMaterialsCount,
+                counts?.attachmentsCount
+              );
+            });
           return toProductionTemplatePatternOptionDto(opt, activeTasks);
         });
 
