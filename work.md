@@ -38,7 +38,7 @@
     > Templates without patterns cannot be repeated on the same order.
     > Uniqueness applies strictly to active lines (`deleted_at IS NULL`). Archived lines do not block reuse.
     - **رمز التحقق الهيكلي وفرادة قاعدة البيانات (active_configuration_hash & Database Index)**:
-      - عمود `active_configuration_hash VARCHAR(64) NULL` في جدول `production_order_line`.
+      - عمود `active_configuration_hash CHAR(64) NULL` في جدول `production_order_line`.
       - فهرس فريد مركب `UQ_prod_order_line_order_config_hash UNIQUE (order_id, active_configuration_hash)`.
       - للبند النشط: يحسب الرمز الحتمي عبر `hashLineConfiguration(templateId, selections)` (SHA-256 بتنسيق 64 hex lowercase بعد فرز الأنماط حتمياً).
       - للبند المؤرشف: يتم تصفير الرمز حتماً إلى `NULL` عند الأرشفة (`archiveLine`) لتفادي أي حجز للتركيبة من قبل البنود المحذوفة في محرك MySQL.
@@ -90,7 +90,8 @@
     - إذا احتوى القالب على نمط فعال بدون أي خيار فعال، تفشل إضافة البند ذرياً مع Rollback بالرمز `PRODUCTION_ORDER_TEMPLATE_PATTERN_HAS_NO_ACTIVE_OPTIONS`.
   - **التعامل مع تلف البيانات الهيكلي مقابل الحالات القديمة (Structural Corruption vs Stale State Contract)**:
     - **الحالات القديمة المقبولة (Stale State)**:
-      - إذا أُرشِف النمط أو الخيار لاحقاً في القالب (`deletedAt !== null`) ولكن ملكيتهما صحيحة وسليمة (النمط ينتمي لقالب البند والخيار ينتمي لنمطه): هذا ليس تلفاً؛ تبقى المسودة مقروءة مع عرض الأسماء التاريخية الحقيقية من السجلات المؤرشفة وتعيين `availableOptions = []` وخفض الجاهزية (`ready: false`).
+      - نمط مؤرشف: يتم الاحتفاظ بالاسم التاريخي للنمط والاسم التاريخي للخيار المختار، وتعيين `availableOptions = []` وخفض الجاهزية (`ready: false`).
+      - نمط فعال لكن الخيار المختار أصبح مؤرشفاً: يتم الاحتفاظ بالاسم التاريخي للخيار المختار مع بقاء الخيارات الفعالة البديلة متاحة للاختيار، وخفض الجاهزية (`ready: false`) حتى يتم تصحيح أو مزامنة الاختيار.
     - **التلف الهيكلي غير المقبول (Structural Corruption — Fail Closed)**:
       - إذا كان سجل النمط أو الخيار مفقوداً تماماً من قاعدة البيانات، أو كان النمط أجنبياً لا ينتمي لقالب البند (`pattern.templateId !== line.templateId`)، أو كان الخيار أجنبياً لا ينتمي لنمطه المحدد (`option.patternId !== sel.templatePatternId`): تفشل القراءة وعمليات الجاهزية والمزامنة فوراً ومنغلقة أمنياً بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
       - يُمنع إخفاء التلف أو معالجته صامتاً (No Silent Repair).

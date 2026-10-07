@@ -14,6 +14,7 @@ import { ProductionOrderEntity } from '../order/production-order.entity.js';
 import { ProductionTemplateEntity } from '../template/production-template.entity.js';
 import { ProductionOrderLinePatternSelectionEntity } from '../order-line-pattern-selection/production-order-line-pattern-selection.entity.js';
 
+@Index('UQ_prod_order_line_order_config_hash', ['orderId', 'activeConfigurationHash'], { unique: true })
 @Entity('production_order_line')
 export class ProductionOrderLineEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -33,7 +34,6 @@ export class ProductionOrderLineEntity {
   @Column({ name: 'sort_order', type: 'int' })
   sortOrder!: number;
 
-  @Index('UQ_prod_order_line_order_config_hash')
   @Column({ name: 'active_configuration_hash', type: 'char', length: 64, nullable: true })
   activeConfigurationHash!: string | null;
 

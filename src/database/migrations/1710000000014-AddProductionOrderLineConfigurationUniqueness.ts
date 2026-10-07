@@ -4,7 +4,29 @@ import {
   TableColumn,
   TableIndex,
 } from 'typeorm';
-import { hashLineConfiguration } from '../../modules/production/order-line/production-order-line-configuration.helper.js';
+import { createHash } from 'node:crypto';
+
+function canonicalizeConfigurationV1(
+  templateId: string,
+  selections: Array<{ templatePatternId: string; selectedOptionId: string }>
+): string {
+  if (!selections || selections.length === 0) {
+    return templateId;
+  }
+  const sorted = [...selections].sort((a, b) =>
+    a.templatePatternId.localeCompare(b.templatePatternId)
+  );
+  const parts = sorted.map((s) => `${s.templatePatternId}:${s.selectedOptionId}`);
+  return `${templateId}|${parts.join('|')}`;
+}
+
+function hashConfigurationV1(
+  templateId: string,
+  selections: Array<{ templatePatternId: string; selectedOptionId: string }>
+): string {
+  const canonical = canonicalizeConfigurationV1(templateId, selections);
+  return createHash('sha256').update(canonical, 'utf8').digest('hex');
+}
 
 export class AddProductionOrderLineConfigurationUniqueness1710000000014
   implements MigrationInterface
@@ -35,13 +57,22 @@ export class AddProductionOrderLineConfigurationUniqueness1710000000014
       );
 
     if (activeLines.length > 0) {
-      const lineIds = activeLines.map((l) => `'${l.id}'`).join(',');
       const selections: Array<{
         order_line_id: string;
         template_pattern_id: string;
         selected_option_id: string;
       }> = await queryRunner.query(
-        `SELECT order_line_id, template_pattern_id, selected_option_id FROM production_order_line_pattern_selection WHERE order_line_id IN (${lineIds})`
+        `SELECT
+            s.order_line_id,
+            s.template_pattern_id,
+            s.selected_option_id
+         FROM production_order_line_pattern_selection s
+         INNER JOIN production_order_line l
+            ON l.id = s.order_line_id
+         WHERE l.deleted_at IS NULL
+         ORDER BY
+            s.order_line_id ASC,
+            s.template_pattern_id ASC`
       );
 
       const selectionsByLineId = new Map<
@@ -63,7 +94,7 @@ export class AddProductionOrderLineConfigurationUniqueness1710000000014
 
       for (const line of activeLines) {
         const lineSelections = selectionsByLineId.get(line.id) || [];
-        const hash = hashLineConfiguration(line.template_id, lineSelections);
+        const hash = hashConfigurationV1(line.template_id, lineSelections);
         lineHashes.set(line.id, hash);
 
         if (!seenHashesByOrder.has(line.order_id)) {

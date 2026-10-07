@@ -187,11 +187,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================================
   async function fetchTemplates(isLoadMore = false) {
     const seq = ++templatePickerRequestSeq;
+    const requestedPage = isLoadMore ? templateCurrentPage + 1 : 1;
 
     if (!isLoadMore) {
       templateCurrentPage = 1;
       loadedTemplateIds.clear();
-      templateListContainer.innerHTML = '';
+      templateListContainer.replaceChildren();
       const loader = document.createElement('div');
       loader.className = 'text-center py-3 text-muted small';
       loader.innerHTML = '<div class="spinner-border spinner-border-sm me-1 text-primary"></div> جاري تحميل القوالب...';
@@ -203,7 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const url = new URL('/api/production/templates/reference-options', window.location.origin);
-      url.searchParams.set('page', String(templateCurrentPage));
+      url.searchParams.set('page', String(requestedPage));
       url.searchParams.set('limit', '20');
       if (templateSearchTerm) {
         url.searchParams.set('search', templateSearchTerm);
@@ -215,15 +216,21 @@ document.addEventListener('DOMContentLoaded', () => {
       // Discard out-of-order stale responses
       if (seq !== templatePickerRequestSeq) return;
 
-      if (!res.ok || !json.success) {
+      if (!res.ok || !json.success || !json.data) {
         throw new Error(json.message || 'تعذر جلب قائمة القوالب');
       }
 
-      const { items, pagination } = json.data;
-      templateTotalPages = pagination ? pagination.totalPages : 1;
+      const { items, page, totalPages } = json.data;
+
+      if (!Array.isArray(items) || typeof page !== 'number' || typeof totalPages !== 'number') {
+        throw new Error('بيانات استجابة القوالب غير صالحة من الخادم');
+      }
+
+      templateCurrentPage = page;
+      templateTotalPages = totalPages;
 
       if (!isLoadMore) {
-        templateListContainer.innerHTML = '';
+        templateListContainer.replaceChildren();
       }
 
       if (items.length === 0 && templateCurrentPage === 1) {
@@ -279,11 +286,16 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       if (seq !== templatePickerRequestSeq) return;
       if (!isLoadMore) {
-        templateListContainer.innerHTML = '';
+        templateListContainer.replaceChildren();
         const errorEl = document.createElement('div');
         errorEl.className = 'text-center py-2 text-danger small';
         errorEl.textContent = err.message || 'حدث خطأ أثناء تحميل القوالب';
         templateListContainer.appendChild(errorEl);
+        templateLoadMoreBtn.classList.add('d-none');
+      } else {
+        templateLoadMoreBtn.disabled = false;
+        templateLoadMoreBtn.innerHTML = '<i class="fa-solid fa-arrow-down me-1"></i> تحميل المزيد من القوالب';
+        showComposerAlert(err.message || 'تعذر تحميل المزيد من القوالب');
       }
     }
   }
@@ -790,9 +802,20 @@ document.addEventListener('DOMContentLoaded', () => {
       if (orderNotesBox) {
         if (currentOrder.notes) {
           orderNotesBox.classList.remove('d-none');
-          orderNotesBox.innerHTML = `<i class="fa-solid fa-note-sticky me-1 text-secondary"></i> <strong>ملاحظات:</strong> ${currentOrder.notes}`;
+          orderNotesBox.replaceChildren();
+
+          const icon = document.createElement('i');
+          icon.className = 'fa-solid fa-note-sticky me-1 text-secondary';
+
+          const strong = document.createElement('strong');
+          strong.textContent = 'ملاحظات:';
+
+          const text = document.createTextNode(` ${currentOrder.notes}`);
+
+          orderNotesBox.append(icon, strong, text);
         } else {
           orderNotesBox.classList.add('d-none');
+          orderNotesBox.replaceChildren();
         }
       }
 
@@ -811,22 +834,31 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!res.ok || !json.success) return;
 
       const readiness = json.data;
-      readinessStatusBadge.innerHTML = '';
+      readinessStatusBadge.replaceChildren();
 
       if (readiness.ready) {
         const badge = document.createElement('span');
         badge.className = 'badge bg-success-subtle text-success border border-success-subtle px-2 py-1';
-        badge.innerHTML = '<i class="fa-solid fa-circle-check me-1"></i> جاهز للإطلاق';
+
+        const icon = document.createElement('i');
+        icon.className = 'fa-solid fa-circle-check me-1';
+
+        badge.append(icon, document.createTextNode(' جاهز للإطلاق'));
         readinessStatusBadge.appendChild(badge);
         readinessPanel.classList.add('d-none');
       } else {
+        const issueCount = Array.isArray(readiness.issues) ? readiness.issues.length : 0;
         const badge = document.createElement('span');
         badge.className = 'badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-2 py-1';
-        badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation me-1"></i> بانتظار استكمال الجاهزية (${readiness.issues.length})`;
+
+        const icon = document.createElement('i');
+        icon.className = 'fa-solid fa-triangle-exclamation me-1';
+
+        badge.append(icon, document.createTextNode(` بانتظار استكمال الجاهزية (${issueCount})`));
         readinessStatusBadge.appendChild(badge);
 
-        readinessIssuesList.innerHTML = '';
-        readiness.issues.forEach((issue) => {
+        readinessIssuesList.replaceChildren();
+        (readiness.issues || []).forEach((issue) => {
           const li = document.createElement('li');
           li.className = 'small text-danger mb-1';
           li.textContent = issue.message;
@@ -928,7 +960,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   templateLoadMoreBtn.addEventListener('click', () => {
     if (templateCurrentPage < templateTotalPages) {
-      templateCurrentPage++;
       fetchTemplates(true);
     }
   });

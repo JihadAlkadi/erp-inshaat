@@ -36,7 +36,7 @@ async function runConcurrencyVerification(): Promise<void> {
     });
 
     await ds.initialize();
-    console.log('Applying all migrations (0001 -> 0013)...');
+    console.log('Applying all migrations (0001 -> 0014)...');
     await ds.runMigrations();
     console.log('Migrations applied successfully.');
 
@@ -153,6 +153,16 @@ async function runConcurrencyVerification(): Promise<void> {
     const rejection: any = addLineResults.find((r) => r.status === 'rejected');
     const rejectionReason = rejection.reason;
     console.log('Rejected concurrent call reason:', rejectionReason?.code || rejectionReason?.message);
+
+    if (
+      !(rejectionReason instanceof BusinessRuleError) ||
+      rejectionReason.code !== 'PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION'
+    ) {
+      throw new Error(
+        `Expected rejection with BusinessRuleError code PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION, got: ${rejectionReason}`
+      );
+    }
+    console.log('✔ Rejected concurrent call correctly failed with BusinessRuleError (PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION).');
 
     // Verify DB count: exactly 1 active line with this configuration
     const [lineCountRow] = await ds.query(
