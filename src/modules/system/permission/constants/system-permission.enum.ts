@@ -31,6 +31,10 @@ export enum SystemPermission {
   PRODUCTION_TEMPLATE_CREATE = 'production.template.create',
   PRODUCTION_TEMPLATE_UPDATE = 'production.template.update',
   PRODUCTION_TEMPLATE_DELETE = 'production.template.delete',
+  PRODUCTION_ORDER_VIEW = 'production.order.view',
+  PRODUCTION_ORDER_CREATE = 'production.order.create',
+  PRODUCTION_ORDER_UPDATE = 'production.order.update',
+  PRODUCTION_ORDER_DELETE = 'production.order.delete',
 }
 
 

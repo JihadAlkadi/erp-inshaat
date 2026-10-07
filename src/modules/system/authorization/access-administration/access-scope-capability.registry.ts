@@ -72,6 +72,18 @@ export const PERMISSION_SCOPE_CAPABILITIES: Record<string, AccessScopePresetType
   'production.template.delete': [
     AccessScopePreset.ALL,
   ],
+  'production.order.view': [
+    AccessScopePreset.ALL,
+  ],
+  'production.order.create': [
+    AccessScopePreset.ALL,
+  ],
+  'production.order.update': [
+    AccessScopePreset.ALL,
+  ],
+  'production.order.delete': [
+    AccessScopePreset.ALL,
+  ],
 };
 
 export class AccessScopeCapabilityRegistry {

@@ -1,0 +1,65 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  DeleteDateColumn,
+  ManyToOne,
+  OneToMany,
+  JoinColumn,
+  Index,
+} from 'typeorm';
+import { UserEntity } from '../../system/user/user.entity.js';
+import { ProductionOrderLineEntity } from '../order-line/production-order-line.entity.js';
+
+export enum ProductionOrderStatus {
+  DRAFT = 'DRAFT',
+}
+
+@Entity('production_order')
+export class ProductionOrderEntity {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Index('IDX_production_order_order_number', { unique: true })
+  @Column({ name: 'order_number', type: 'varchar', length: 50, unique: true })
+  orderNumber!: string;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: ProductionOrderStatus.DRAFT,
+  })
+  status!: ProductionOrderStatus;
+
+  @Column({ type: 'text', nullable: true })
+  description!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  notes!: string | null;
+
+  @Index('IDX_production_order_created_by')
+  @Column({ name: 'created_by_user_id', type: 'varchar', length: 36 })
+  createdByUserId!: string;
+
+  @ManyToOne(() => UserEntity, { eager: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'created_by_user_id' })
+  createdByUser?: UserEntity;
+
+  @OneToMany(() => ProductionOrderLineEntity, (line) => line.order, {
+    cascade: false,
+    eager: false,
+  })
+  lines?: ProductionOrderLineEntity[];
+
+  @CreateDateColumn({ name: 'created_at', precision: 6 })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', precision: 6 })
+  updatedAt!: Date;
+
+  @Index('IDX_production_order_deleted_at')
+  @DeleteDateColumn({ name: 'deleted_at', precision: 6, nullable: true })
+  deletedAt!: Date | null;
+}

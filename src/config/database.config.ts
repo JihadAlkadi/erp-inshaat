@@ -24,6 +24,10 @@ import { ProductionTemplatePatternOptionEntity } from '../modules/production/tem
 import { ProductionTemplatePatternOptionTaskEntity } from '../modules/production/template-pattern-option-task/production-template-pattern-option-task.entity.js';
 import { ProductionTemplatePatternOptionTaskMaterialEntity } from '../modules/production/template-pattern-option-task-material/production-template-pattern-option-task-material.entity.js';
 import { ProductionTemplatePatternOptionTaskAttachmentEntity } from '../modules/production/template-pattern-option-task-attachment/production-template-pattern-option-task-attachment.entity.js';
+import { ProductionOrderSequenceEntity } from '../modules/production/order/production-order-sequence.entity.js';
+import { ProductionOrderEntity } from '../modules/production/order/production-order.entity.js';
+import { ProductionOrderLineEntity } from '../modules/production/order-line/production-order-line.entity.js';
+import { ProductionOrderLinePatternSelectionEntity } from '../modules/production/order-line-pattern-selection/production-order-line-pattern-selection.entity.js';
 import { CreateSystemCoreTables1710000000000 } from '../database/migrations/1710000000000-CreateSystemCoreTables.js';
 import { CreateSystemSessionTable1710000000001 } from '../database/migrations/1710000000001-CreateSystemSessionTable.js';
 import { CreateProductionDepartmentsAndYards1710000000002 } from '../database/migrations/1710000000002-CreateProductionDepartmentsAndYards.js';
@@ -37,6 +41,7 @@ import { HardenProductionTemplateCoreAndStageAttachments1710000000009 } from '..
 import { FinalizeProductionTemplateHardening1710000000010 } from '../database/migrations/1710000000010-FinalizeProductionTemplateHardening.js';
 import { AddProductionTemplateMixedWorkflowPatterns1710000000011 } from '../database/migrations/1710000000011-AddProductionTemplateMixedWorkflowPatterns.js';
 import { HardenProductionTemplateMixedWorkflow1710000000012 } from '../database/migrations/1710000000012-HardenProductionTemplateMixedWorkflow.js';
+import { CreateProductionOrderDraftingFoundation1710000000013 } from '../database/migrations/1710000000013-CreateProductionOrderDraftingFoundation.js';
 
 export const databaseConfig: DataSourceOptions = {
   type: 'mysql',
@@ -72,6 +77,10 @@ export const databaseConfig: DataSourceOptions = {
     ProductionTemplatePatternOptionTaskEntity,
     ProductionTemplatePatternOptionTaskMaterialEntity,
     ProductionTemplatePatternOptionTaskAttachmentEntity,
+    ProductionOrderSequenceEntity,
+    ProductionOrderEntity,
+    ProductionOrderLineEntity,
+    ProductionOrderLinePatternSelectionEntity,
   ],
   migrations: [
     CreateSystemCoreTables1710000000000,
@@ -87,6 +96,7 @@ export const databaseConfig: DataSourceOptions = {
     FinalizeProductionTemplateHardening1710000000010,
     AddProductionTemplateMixedWorkflowPatterns1710000000011,
     HardenProductionTemplateMixedWorkflow1710000000012,
+    CreateProductionOrderDraftingFoundation1710000000013,
   ],
   subscribers: [],
 };

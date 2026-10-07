@@ -188,6 +188,28 @@ export const SYSTEM_PERMISSION_DEFINITIONS: Record<SystemPermission, PermissionD
     description: 'أرشفة قوالب التصنيع ومراحلها',
     module: 'production',
   },
+
+  // Production Order Permissions
+  [SystemPermission.PRODUCTION_ORDER_VIEW]: {
+    name: SystemPermission.PRODUCTION_ORDER_VIEW,
+    description: 'عرض ومتابعة أوامر الإنتاج ومسوداتها',
+    module: 'production',
+  },
+  [SystemPermission.PRODUCTION_ORDER_CREATE]: {
+    name: SystemPermission.PRODUCTION_ORDER_CREATE,
+    description: 'إنشاء أوامر إنتاج جديدة',
+    module: 'production',
+  },
+  [SystemPermission.PRODUCTION_ORDER_UPDATE]: {
+    name: SystemPermission.PRODUCTION_ORDER_UPDATE,
+    description: 'تعديل مسودات أوامر الإنتاج وبنودها وخيارات الأنماط',
+    module: 'production',
+  },
+  [SystemPermission.PRODUCTION_ORDER_DELETE]: {
+    name: SystemPermission.PRODUCTION_ORDER_DELETE,
+    description: 'أرشفة مسودات أوامر الإنتاج',
+    module: 'production',
+  },
 };
 
 export const ALL_SYSTEM_PERMISSION_DEFINITIONS: PermissionDefinition[] = Object.values(
