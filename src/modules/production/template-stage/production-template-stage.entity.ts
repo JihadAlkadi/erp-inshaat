@@ -7,12 +7,14 @@ import {
   DeleteDateColumn,
   ManyToOne,
   OneToMany,
+  OneToOne,
   JoinColumn,
   Index,
 } from 'typeorm';
 import { ProductionTemplateEntity } from '../template/production-template.entity.js';
 import { ProductionDepartmentEntity } from '../department/production-department.entity.js';
 import { ProductionTemplateStageMaterialEntity } from '../template-stage-material/production-template-stage-material.entity.js';
+import { ProductionTemplateWorkflowItemEntity } from '../template-workflow-item/production-template-workflow-item.entity.js';
 
 @Entity('production_template_stage')
 export class ProductionTemplateStageEntity {
@@ -32,10 +34,6 @@ export class ProductionTemplateStageEntity {
 
   @Column({ type: 'text', nullable: true })
   description!: string | null;
-
-  @Index('IDX_production_template_stage_sort_order')
-  @Column({ name: 'sort_order', type: 'int' })
-  sortOrder!: number;
 
   @Column({ name: 'estimated_duration_minutes', type: 'int', nullable: true })
   estimatedDurationMinutes!: number | null;
@@ -80,4 +78,16 @@ export class ProductionTemplateStageEntity {
     eager: false,
   })
   attachments?: any[];
+
+  @OneToOne(() => ProductionTemplateWorkflowItemEntity, (wf) => wf.stage, {
+    cascade: false,
+    eager: false,
+  })
+  workflowItem?: ProductionTemplateWorkflowItemEntity;
+
+  /**
+   * Transient/Derived sortOrder populated from workflowItem.sortOrder.
+   * Not a database column on production_template_stage.
+   */
+  sortOrder?: number;
 }

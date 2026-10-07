@@ -43,7 +43,7 @@ export function toProductionTemplateStageDto(
     departmentId: stage.departmentId,
     name: stage.name,
     description: stage.description,
-    sortOrder: stage.sortOrder,
+    sortOrder: stage.workflowItem?.sortOrder ?? stage.sortOrder ?? 0,
     estimatedDurationMinutes: stage.estimatedDurationMinutes,
     estimatedCost: stage.estimatedCost ? String(stage.estimatedCost) : null,
     createdAt: stage.createdAt,

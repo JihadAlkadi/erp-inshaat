@@ -7,7 +7,10 @@ import {
   productionDepartmentService,
   ProductionDepartmentService,
 } from '../department/production-department.service.js';
-import { deriveConsecutiveDepartmentGroups } from '../template-stage/consecutive-department-grouping.helper.js';
+import {
+  deriveConsecutiveDepartmentGroups,
+  deriveMixedWorkflowGroups,
+} from '../template-stage/consecutive-department-grouping.helper.js';
 import { ProductionTemplateStageBrowserDto } from '../template-stage/production-template-stage.types.js';
 import { safeJsonStringify } from './production-template.types.js';
 
@@ -114,6 +117,7 @@ export class ProductionTemplateWebController {
 
       // Calculate consecutive groups for presentation
       const consecutiveGroups = deriveConsecutiveDepartmentGroups(initialStages);
+      const mixedGroups = deriveMixedWorkflowGroups(template.workflowItems || []);
 
       res.render('dashboard/production/templates/show', {
         layout: 'dashboard/production/layout',
@@ -126,6 +130,9 @@ export class ProductionTemplateWebController {
         user: currentUser,
         template,
         consecutiveGroups,
+        mixedGroups,
+        workflowItems: template.workflowItems || [],
+        patterns: template.patterns || [],
         departments,
         initialStages,
         canUpdateTemplate,

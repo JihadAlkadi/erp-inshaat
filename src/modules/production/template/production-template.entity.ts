@@ -10,6 +10,8 @@ import {
 } from 'typeorm';
 import { ProductionTemplateSpecificationEntity } from '../template-specification/production-template-specification.entity.js';
 import { ProductionTemplateStageEntity } from '../template-stage/production-template-stage.entity.js';
+import { ProductionTemplateWorkflowItemEntity } from '../template-workflow-item/production-template-workflow-item.entity.js';
+import { ProductionTemplatePatternEntity } from '../template-pattern/production-template-pattern.entity.js';
 
 @Entity('production_template')
 export class ProductionTemplateEntity {
@@ -54,4 +56,16 @@ export class ProductionTemplateEntity {
     eager: false,
   })
   stages?: ProductionTemplateStageEntity[];
+
+  @OneToMany(() => ProductionTemplateWorkflowItemEntity, (wf) => wf.template, {
+    cascade: false,
+    eager: false,
+  })
+  workflowItems?: ProductionTemplateWorkflowItemEntity[];
+
+  @OneToMany(() => ProductionTemplatePatternEntity, (pat) => pat.template, {
+    cascade: false,
+    eager: false,
+  })
+  patterns?: ProductionTemplatePatternEntity[];
 }

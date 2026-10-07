@@ -1,7 +1,7 @@
-import { DataSource, Repository, IsNull } from 'typeorm';
+import { DataSource, Repository, EntityManager, IsNull } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
-import { ProductionTemplateEntity } from '../template/production-template.entity.js';
 import { ProductionTemplateStageEntity } from './production-template-stage.entity.js';
+import { ProductionTemplateWorkflowItemEntity } from '../template-workflow-item/production-template-workflow-item.entity.js';
 import {
   ProductionTemplateGuardService,
   productionTemplateGuardService,
@@ -10,6 +10,10 @@ import {
   ProductionDepartmentService,
   productionDepartmentService,
 } from '../department/production-department.service.js';
+import {
+  ProductionTemplateWorkflowService,
+  productionTemplateWorkflowService,
+} from '../template-workflow-item/production-template-workflow.service.js';
 import { CreateTemplateStageDto } from './dto/create-stage.dto.js';
 import { UpdateTemplateStageDto } from './dto/update-stage.dto.js';
 import { ReorderTemplateStagesDto } from './dto/reorder-stages.dto.js';
@@ -24,21 +28,30 @@ export class ProductionTemplateStageService {
   private stageRepo: Repository<ProductionTemplateStageEntity>;
   private departmentService: ProductionDepartmentService;
   private guardService: ProductionTemplateGuardService;
+  private workflowService: ProductionTemplateWorkflowService;
 
   constructor(
     private dataSource: DataSource = AppDataSource,
     deptService: ProductionDepartmentService = productionDepartmentService,
-    guardService: ProductionTemplateGuardService = productionTemplateGuardService
+    guardService: ProductionTemplateGuardService = productionTemplateGuardService,
+    workflowService: ProductionTemplateWorkflowService = productionTemplateWorkflowService
   ) {
     this.stageRepo = this.dataSource.getRepository(ProductionTemplateStageEntity);
     this.departmentService = deptService;
     this.guardService = guardService;
+    this.workflowService = workflowService;
   }
 
-  async listStages(templateId: string): Promise<ProductionTemplateStageDto[]> {
-    await this.guardService.requireExistingTemplate(templateId);
+  async listStages(
+    templateId: string,
+    manager?: EntityManager
+  ): Promise<ProductionTemplateStageDto[]> {
+    await this.guardService.requireExistingTemplate(templateId, manager);
 
-    const stages = await this.stageRepo.find({
+    const repo: Repository<ProductionTemplateStageEntity> = manager
+      ? manager.getRepository(ProductionTemplateStageEntity)
+      : this.stageRepo;
+    const stages: ProductionTemplateStageEntity[] = await repo.find({
       where: { templateId, deletedAt: IsNull() },
       relations: {
         department: true,
@@ -46,11 +59,19 @@ export class ProductionTemplateStageService {
           product: true,
           productUnit: true,
         },
+        workflowItem: true,
       },
-      order: { sortOrder: 'ASC' },
     });
 
-    return stages.map(toProductionTemplateStageDto);
+    const activeStages = stages
+      .filter((s: ProductionTemplateStageEntity) => s.workflowItem && !s.workflowItem.deletedAt)
+      .map((s: ProductionTemplateStageEntity) => {
+        s.sortOrder = s.workflowItem?.sortOrder ?? 1;
+        return s;
+      })
+      .sort((a: ProductionTemplateStageEntity, b: ProductionTemplateStageEntity) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+    return activeStages.map(toProductionTemplateStageDto);
   }
 
   async getStageById(templateId: string, stageId: string): Promise<ProductionTemplateStageDto> {
@@ -64,13 +85,15 @@ export class ProductionTemplateStageService {
           product: true,
           productUnit: true,
         },
+        workflowItem: true,
       },
     });
 
-    if (!stage) {
+    if (!stage || !stage.workflowItem || stage.workflowItem.deletedAt !== null) {
       throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
     }
 
+    stage.sortOrder = stage.workflowItem.sortOrder;
     return toProductionTemplateStageDto(stage);
   }
 
@@ -78,50 +101,37 @@ export class ProductionTemplateStageService {
     // 1. Cross-module boundary: validate department via department service
     await this.departmentService.validateDepartmentForStage(dto.departmentId);
 
-    // 2. Transaction with explicit pessimistic_write lock on Template row
+    // 2. Transaction with explicit pessimistic_write lock on parent Template row
     return await this.dataSource.transaction(async (manager) => {
       await this.guardService.lockMutableTemplate(templateId, manager);
-
-      // Read current active stages under lock
-      const activeStages = await manager.find(ProductionTemplateStageEntity, {
-        where: { templateId, deletedAt: IsNull() },
-        order: { sortOrder: 'ASC' },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      const maxOrder = activeStages.length > 0 ? activeStages[activeStages.length - 1].sortOrder : 0;
-      const nextOrder = maxOrder + 1;
-      const sortOrder = dto.sortOrder && dto.sortOrder >= 1 && dto.sortOrder <= nextOrder ? dto.sortOrder : nextOrder;
-
-      // If inserted before end, shift later stages
-      if (sortOrder < nextOrder) {
-        await manager
-          .createQueryBuilder()
-          .update(ProductionTemplateStageEntity)
-          .set({ sortOrder: () => 'sort_order + 1' })
-          .where('template_id = :templateId AND sort_order >= :sortOrder AND deleted_at IS NULL', {
-            templateId,
-            sortOrder,
-          })
-          .execute();
-      }
 
       const stage = manager.create(ProductionTemplateStageEntity, {
         templateId,
         departmentId: dto.departmentId,
         name: dto.name.trim(),
         description: dto.description ? dto.description.trim() : null,
-        sortOrder,
         estimatedDurationMinutes: dto.estimatedDurationMinutes !== undefined ? dto.estimatedDurationMinutes : null,
         estimatedCost: dto.estimatedCost ? dto.estimatedCost : null,
       });
 
       const savedStage = await manager.save(stage);
 
+      // 3. Atomically insert into workflow item under template lock
+      const workflowItem = await this.workflowService.insertWorkflowItem(
+        manager,
+        templateId,
+        'STAGE',
+        savedStage.id,
+        dto.sortOrder
+      );
+
+      savedStage.sortOrder = workflowItem.sortOrder;
+
       const reloaded = await manager.findOneOrFail(ProductionTemplateStageEntity, {
         where: { id: savedStage.id },
         relations: { department: true },
       });
+      reloaded.sortOrder = workflowItem.sortOrder;
 
       return toProductionTemplateStageDto(reloaded);
     });
@@ -139,8 +149,13 @@ export class ProductionTemplateStageService {
       // 2. Find stage belonging to template
       const stage = await manager.findOne(ProductionTemplateStageEntity, {
         where: { id: stageId, templateId, deletedAt: IsNull() },
+        relations: { workflowItem: true },
       });
-      if (!stage) {
+      if (
+        !stage ||
+        (stage.workflowItem !== undefined &&
+          (stage.workflowItem === null || stage.workflowItem.deletedAt !== null))
+      ) {
         throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
       }
 
@@ -158,8 +173,9 @@ export class ProductionTemplateStageService {
 
       const reloaded = await manager.findOneOrFail(ProductionTemplateStageEntity, {
         where: { id: stageId },
-        relations: { department: true },
+        relations: { department: true, workflowItem: true },
       });
+      reloaded.sortOrder = reloaded.workflowItem?.sortOrder ?? 1;
 
       return toProductionTemplateStageDto(reloaded);
     });
@@ -177,22 +193,11 @@ export class ProductionTemplateStageService {
         throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
       }
 
+      // 2. Soft delete stage
       await manager.softDelete(ProductionTemplateStageEntity, stageId);
 
-      // Re-compact remaining active stages into dense 1..N
-      const remainingStages = await manager.find(ProductionTemplateStageEntity, {
-        where: { templateId, deletedAt: IsNull() },
-        order: { sortOrder: 'ASC' },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      for (let i = 0; i < remainingStages.length; i++) {
-        await manager.update(
-          ProductionTemplateStageEntity,
-          { id: remainingStages[i].id },
-          { sortOrder: i + 1 }
-        );
-      }
+      // 3. Atomically soft delete corresponding workflow item & compact workflow items 1..N
+      await this.workflowService.archiveWorkflowItem(manager, templateId, 'STAGE', stageId);
     });
   }
 
@@ -204,16 +209,25 @@ export class ProductionTemplateStageService {
       // 1. Lock template row & verify not archived
       await this.guardService.lockMutableTemplate(templateId, manager);
 
-      // 2. Lock active stages for this template
-      const existingStages = await manager.find(ProductionTemplateStageEntity, {
-        where: { templateId, deletedAt: IsNull() },
+      // 2. Reject legacy reorder if template contains any active patterns
+      const hasPatterns = await this.workflowService.hasActivePatterns(templateId, manager);
+      if (hasPatterns) {
+        throw new BusinessRuleError(
+          'يحتوي القالب على أنماط، يجب استخدام إعادة ترتيب سير العمل الشامل',
+          'PRODUCTION_TEMPLATE_MIXED_WORKFLOW_REORDER_REQUIRED'
+        );
+      }
+
+      // 3. Lock active stage workflow items for this template
+      const workflowItems = await manager.find(ProductionTemplateWorkflowItemEntity, {
+        where: { templateId, itemType: 'STAGE', deletedAt: IsNull() },
         lock: { mode: 'pessimistic_write' },
       });
 
       const uniqueIds = new Set(dto.stageIds);
       if (
         uniqueIds.size !== dto.stageIds.length ||
-        dto.stageIds.length !== existingStages.length
+        dto.stageIds.length !== workflowItems.length
       ) {
         throw new BusinessRuleError(
           'قائمة المعرفات غير متطابقة مع مراحل القالب',
@@ -221,36 +235,37 @@ export class ProductionTemplateStageService {
         );
       }
 
-      const existingMap = new Map(existingStages.map((s) => [s.id, s]));
-      for (const id of dto.stageIds) {
-        if (!existingMap.has(id)) {
+      const stageToWorkflowMap = new Map<string, string>();
+      for (const wi of workflowItems) {
+        if (wi.stageId) {
+          stageToWorkflowMap.set(wi.stageId, wi.id);
+        }
+      }
+
+      const orderedWorkflowItemIds: string[] = [];
+      for (const sid of dto.stageIds) {
+        const wiId = stageToWorkflowMap.get(sid);
+        if (!wiId) {
           throw new BusinessRuleError(
             'أحد المعرفات لا يتبع لهذا القالب',
             'PRODUCTION_TEMPLATE_STAGE_INVALID_REORDER'
           );
         }
+        orderedWorkflowItemIds.push(wiId);
       }
 
-      // Re-order densely 1..N
-      for (let i = 0; i < dto.stageIds.length; i++) {
-        const id = dto.stageIds[i];
+      // 4. Dense re-order 1..N on workflow items
+      for (let i = 0; i < orderedWorkflowItemIds.length; i++) {
         await manager.update(
-          ProductionTemplateStageEntity,
-          { id },
+          ProductionTemplateWorkflowItemEntity,
+          { id: orderedWorkflowItemIds[i] },
           { sortOrder: i + 1 }
         );
       }
 
-      const updated = await manager.find(ProductionTemplateStageEntity, {
-        where: { templateId, deletedAt: IsNull() },
-        relations: { department: true },
-        order: { sortOrder: 'ASC' },
-      });
-
-      return updated.map(toProductionTemplateStageDto);
+      return await this.listStages(templateId, manager);
     });
   }
 }
 
 export const productionTemplateStageService = new ProductionTemplateStageService();
-

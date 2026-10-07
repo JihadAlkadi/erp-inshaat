@@ -3,6 +3,7 @@ import { AppDataSource } from '../../../database/data-source.js';
 import { ProductionTemplateEntity } from './production-template.entity.js';
 import { ProductionTemplateStageEntity } from '../template-stage/production-template-stage.entity.js';
 import { ProductionTemplateSpecificationEntity } from '../template-specification/production-template-specification.entity.js';
+import { ProductionTemplatePatternEntity } from '../template-pattern/production-template-pattern.entity.js';
 import { CreateProductionTemplateDto } from './dto/create-template.dto.js';
 import { UpdateProductionTemplateDto } from './dto/update-template.dto.js';
 import { ListProductionTemplatesQueryDto } from './dto/list-templates-query.dto.js';
@@ -19,17 +20,31 @@ import {
   ProductionTemplateGuardService,
   productionTemplateGuardService,
 } from './production-template-guard.service.js';
+import {
+  ProductionTemplateWorkflowService,
+  productionTemplateWorkflowService,
+} from '../template-workflow-item/production-template-workflow.service.js';
+import {
+  ProductionTemplatePatternService,
+  productionTemplatePatternService,
+} from '../template-pattern/production-template-pattern.service.js';
 
 export class ProductionTemplateService {
   private templateRepo: Repository<ProductionTemplateEntity>;
   private guardService: ProductionTemplateGuardService;
+  private workflowService: ProductionTemplateWorkflowService;
+  private patternService: ProductionTemplatePatternService;
 
   constructor(
     private dataSource: DataSource = AppDataSource,
-    guardService: ProductionTemplateGuardService = productionTemplateGuardService
+    guardService: ProductionTemplateGuardService = productionTemplateGuardService,
+    workflowService: ProductionTemplateWorkflowService = productionTemplateWorkflowService,
+    patternService: ProductionTemplatePatternService = productionTemplatePatternService
   ) {
     this.templateRepo = this.dataSource.getRepository(ProductionTemplateEntity);
     this.guardService = guardService;
+    this.workflowService = workflowService;
+    this.patternService = patternService;
   }
 
   async listTemplates(query: ListProductionTemplatesQueryDto): Promise<PaginatedProductionTemplatesResult> {
@@ -67,6 +82,13 @@ export class ProductionTemplateService {
           .from(ProductionTemplateSpecificationEntity, 'spec')
           .where('spec.template_id = t.id');
       }, 'specs_count')
+      .addSelect((subQb) => {
+        return subQb
+          .select('COUNT(pat.id)', 'patterns_count')
+          .from(ProductionTemplatePatternEntity, 'pat')
+          .where('pat.template_id = t.id')
+          .andWhere('pat.deleted_at IS NULL');
+      }, 'patterns_count')
       .orderBy('t.created_at', 'DESC')
       .skip(skip)
       .take(limit)
@@ -76,7 +98,8 @@ export class ProductionTemplateService {
       const raw = rawItems.raw[index];
       const stagesCount = parseInt(raw.stages_count || '0', 10);
       const specsCount = parseInt(raw.specs_count || '0', 10);
-      return toProductionTemplateListItemDto(entity, stagesCount, specsCount);
+      const patternsCount = parseInt(raw.patterns_count || '0', 10);
+      return toProductionTemplateListItemDto(entity, stagesCount, specsCount, patternsCount);
     });
 
     return {
@@ -93,11 +116,6 @@ export class ProductionTemplateService {
       where: { id, deletedAt: IsNull() },
       relations: {
         specifications: true,
-        stages: {
-          department: true,
-          plannedMaterials: true,
-          attachments: true,
-        },
       },
     });
 
@@ -115,27 +133,32 @@ export class ProductionTemplateService {
         sortOrder: s.sortOrder,
       }));
 
-    const stages = (template.stages || [])
-      .filter((s) => !s.deletedAt)
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((s) => {
-        const plannedMaterialsCount = (s.plannedMaterials || []).length;
-        const attachmentsCount = (s.attachments || []).filter((a: any) => !a.deletedAt).length;
+    // Top-level single source of truth for workflow
+    const workflowItems = await this.workflowService.listWorkflowItems(id);
 
+    // Derived compatibility stages list
+    const stages = workflowItems
+      .filter((w) => w.itemType === 'STAGE' && w.stage)
+      .map((w) => {
+        const s = w.stage!;
         return {
           id: s.id,
           name: s.name,
           description: s.description,
           departmentId: s.departmentId,
-          departmentName: s.department?.name,
-          departmentCode: s.department?.code,
-          sortOrder: s.sortOrder,
+          departmentName: s.departmentName,
+          departmentCode: s.departmentCode,
+          sortOrder: w.sortOrder,
           estimatedDurationMinutes: s.estimatedDurationMinutes,
           estimatedCost: s.estimatedCost ? String(s.estimatedCost) : null,
-          plannedMaterialsCount,
-          attachmentsCount,
+          plannedMaterialsCount: s.plannedMaterialsCount,
+          attachmentsCount: s.attachmentsCount,
         };
       });
+
+    // Patterns details
+    const patterns = await this.patternService.listPatterns(id);
+    const patternsCount = patterns.length;
 
     return {
       id: template.id,
@@ -148,6 +171,9 @@ export class ProductionTemplateService {
       updatedAt: template.updatedAt,
       specifications,
       stages,
+      workflowItems,
+      patternsCount,
+      patterns,
     };
   }
 
