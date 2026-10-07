@@ -52,6 +52,27 @@ export class ProductionTemplateGuardService {
   }
 
   /**
+   * Acquires a pessimistic write lock on the parent ProductionTemplate row within an active transaction.
+   * Enforces that the template exists and is NOT archived (deletedAt IS NULL).
+   * Serves as the unified Lock Root for the entire Production Template aggregate.
+   */
+  async lockMutableTemplate(
+    templateId: string,
+    manager: EntityManager
+  ): Promise<ProductionTemplateEntity> {
+    const template = await manager.findOne(ProductionTemplateEntity, {
+      where: { id: templateId, deletedAt: IsNull() },
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (!template) {
+      throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
+    }
+
+    return template;
+  }
+
+  /**
    * Guards read access to a stage: ensures parent template is active and stage belongs to it.
    */
   async requireStageBelongsToTemplate(

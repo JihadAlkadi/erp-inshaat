@@ -61,13 +61,18 @@
     - كافة مسارات HTTP الخاصة بالقوالب والمواصفات والمراحل والمواد المخططة والوثائق المرجعية تعيد DTOs صريحة ومحددة (`ProductionTemplateDto`, `ProductionTemplateListItemDto`, `ProductionTemplateDetailDto`, `ProductionTemplateSpecificationDto`, `ProductionTemplateStageDto`, `ProductionTemplateStageMaterialDto`, `ProductionTemplateStageAttachmentDto`).
     - يمنع كلياً إرجاع أي كائن TypeORM Entity مباشرة كعقد عام لـ API.
     - واجهات المراحل تعيد كائن قسم مبسط `{ id, name, code }` ويحظر نهائياً تسريب أي حقول داخلية لإدارة الأقسام مثل `headUserId`, `isActive`, `deletedAt`, `engineers`, `yards`, `headUser`.
-  - **حماية دورة حياة القالب الأب والموارد التابعة (Parent Template Lifecycle Protection)**:
+  - **حماية دورة حياة القالب الأب وقفل التزامن الموحد (Unified Pessimistic Lock Root & Atomic Archival)**:
+    > ProductionTemplateEntity is the unified pessimistic lock root for every mutation in the Production Template aggregate.
+    > All template and nested-resource mutations lock the parent template row inside the same database transaction before revalidating lifecycle state and writing child data.
+    > Template archival is atomic: setting `isActive = false` and applying the soft delete occur inside one transaction under the template row lock.
     > Nested template resources are inaccessible once the parent template is archived.
-    - تم اعتماد `ProductionTemplateGuardService` لفرض قيود موحدة على مستوى العمليات والكيانات التابعة:
-      - `requireExistingTemplate`: للقراءة النشطة، يتحقق من `deletedAt IS NULL`.
-      - `requireMutableTemplate`: لكافة العمليات التعديلية، يمنع أي تعديل على قالب مؤرشف.
-      - `requireStageBelongsToTemplate`: يضمن انتماء المرحلة لقالب نشط وغير مؤرشف.
-    - أرشفة القالب الأب (`deletedAt != null`) تؤدي فوراً لحظر تعديل أو إضافة أو أرشفة أو إعادة ترتيب أي من موارده التابعة (المواصفات، المراحل، المواد المخططة، والوثائق المرجعية)، كما تحظر قراءة أو تنزيل الوثائق والمواد عبر واجهات القالب النشطة.
+    - تم اعتماد `ProductionTemplateGuardService` ودالة `lockMutableTemplate` لفرض بروتوكول تسلسلي صارم لكافة العمليات التعديلية في الـ Aggregate:
+      - `ProductionTemplateEntity` هو الـ Lock Root الوحيد لكافة العمليات التعديلية على القالب أو أي مورد تابع له (`updateTemplate`, `softDeleteTemplate`, `addSpecification`, `updateSpecification`, `deleteSpecification`, `reorderSpecifications`, `addStage`, `updateStage`, `softDeleteStage`, `reorderStages`, `addPlannedMaterial`, `updatePlannedMaterial`, `removePlannedMaterial`, `addStageAttachment`, `updateStageAttachment`, `softDeleteStageAttachment`, `reorderStageAttachments`).
+      - كل عملية تعديل تعمل داخل معاملة واحدة تبدأ بقفل سجل القالب الأب بوضع `pessimistic_write` والتحقق من أنه غير مؤرشف (`deletedAt IS NULL`) قبل إجراء أي تعديل على الجداول التابعة.
+      - أرشفة القالب `softDeleteTemplate` ذرية بالكامل: تعديل `isActive = false` وتطبيق `softDelete` يتمان داخل نفس المعاملة وتحت قفل القالب، وفي حال فشل أي خطوة يتم التراجع التام (Full Rollback) لمنع أي حالة أرشفة جزئية (`No partial archive`).
+      - التعطيل التشغيلي `isActive = false` لا يعتبر أرشفة؛ القالب المعطل غير المؤرشف يبقى قابلاً للتعديل الإداري ما لم يتم حذفه ناعماً (`deletedAt != null`).
+      - عمليات القراءة الطبيعية (`listTemplates`, `getTemplateById`, `listSpecifications`, `listStages`, `getStageById`, `listStageMaterials`, `listStageAttachments`, `getAttachmentForDownload`) تبقى خالية من أقفال الكتابة وتعتمد على `requireExistingTemplate` لمنع القراءة من القوالب المؤرشفة.
+      - أرشفة القالب الأب لا تقوم بعمل Cascade Soft Delete للأطفال للحفاظ على السجل التاريخي وجاهزية اللقطات (Snapshot Readiness).
   - **توحيد أسماء الفهارس وترقية المخطط (Schema Migration 0010 — Index Normalization)**:
     - عبر Migration `1710000000010-FinalizeProductionTemplateHardening.ts`، تم استبدال وتوحيد كافة الفهارس القديمة التي كانت تحمل بادئة `studies_*` على الجداول الخمسة بالأسماء النظامية `production_*` (`UQ_production_template_code`, `IDX_production_template_*`, `IDX_production_stage_*`, `UQ_production_stage_material_stage_unit`).
     - تم فحص المخطط للتأكد من عدم بقاء أي فهرس يحمل اسم `studies_*` بعد الترقية.

@@ -80,13 +80,7 @@ export class ProductionTemplateStageService {
 
     // 2. Transaction with explicit pessimistic_write lock on Template row
     return await this.dataSource.transaction(async (manager) => {
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-      }
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
       // Read current active stages under lock
       const activeStages = await manager.find(ProductionTemplateStageEntity, {
@@ -138,45 +132,43 @@ export class ProductionTemplateStageService {
     stageId: string,
     dto: UpdateTemplateStageDto
   ): Promise<ProductionTemplateStageDto> {
-    await this.guardService.requireMutableTemplate(templateId);
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Lock template row FOR UPDATE & verify not archived
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
-    const stage = await this.stageRepo.findOne({
-      where: { id: stageId, templateId, deletedAt: IsNull() },
+      // 2. Find stage belonging to template
+      const stage = await manager.findOne(ProductionTemplateStageEntity, {
+        where: { id: stageId, templateId, deletedAt: IsNull() },
+      });
+      if (!stage) {
+        throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
+      }
+
+      if (dto.departmentId !== undefined && dto.departmentId !== stage.departmentId) {
+        await this.departmentService.validateDepartmentForStage(dto.departmentId);
+        stage.departmentId = dto.departmentId;
+      }
+
+      if (dto.name !== undefined) stage.name = dto.name.trim();
+      if (dto.description !== undefined) stage.description = dto.description ? dto.description.trim() : null;
+      if (dto.estimatedDurationMinutes !== undefined) stage.estimatedDurationMinutes = dto.estimatedDurationMinutes;
+      if (dto.estimatedCost !== undefined) stage.estimatedCost = dto.estimatedCost;
+
+      await manager.save(stage);
+
+      const reloaded = await manager.findOneOrFail(ProductionTemplateStageEntity, {
+        where: { id: stageId },
+        relations: { department: true },
+      });
+
+      return toProductionTemplateStageDto(reloaded);
     });
-    if (!stage) {
-      throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
-    }
-
-    if (dto.departmentId !== undefined && dto.departmentId !== stage.departmentId) {
-      await this.departmentService.validateDepartmentForStage(dto.departmentId);
-      stage.departmentId = dto.departmentId;
-    }
-
-    if (dto.name !== undefined) stage.name = dto.name.trim();
-    if (dto.description !== undefined) stage.description = dto.description ? dto.description.trim() : null;
-    if (dto.estimatedDurationMinutes !== undefined) stage.estimatedDurationMinutes = dto.estimatedDurationMinutes;
-    if (dto.estimatedCost !== undefined) stage.estimatedCost = dto.estimatedCost;
-
-    await this.stageRepo.save(stage);
-
-    const reloaded = await this.stageRepo.findOneOrFail({
-      where: { id: stageId },
-      relations: { department: true },
-    });
-
-    return toProductionTemplateStageDto(reloaded);
   }
 
   async softDeleteStage(templateId: string, stageId: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       // 1. Lock template row & verify not archived
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-      }
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
       const stage = await manager.findOne(ProductionTemplateStageEntity, {
         where: { id: stageId, templateId, deletedAt: IsNull() },
@@ -210,13 +202,7 @@ export class ProductionTemplateStageService {
   ): Promise<ProductionTemplateStageDto[]> {
     return await this.dataSource.transaction(async (manager) => {
       // 1. Lock template row & verify not archived
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-      }
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
       // 2. Lock active stages for this template
       const existingStages = await manager.find(ProductionTemplateStageEntity, {

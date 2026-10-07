@@ -93,13 +93,7 @@ export class ProductionTemplateStageAttachmentService {
     try {
       return await this.dataSource.transaction(async (manager) => {
         // 1. Lock template to serialize concurrent attachment modifications & check active
-        const template = await manager.findOne(ProductionTemplateEntity, {
-          where: { id: templateId, deletedAt: IsNull() },
-          lock: { mode: 'pessimistic_write' },
-        });
-        if (!template) {
-          throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-        }
+        await this.guardService.lockMutableTemplate(templateId, manager);
 
         const stage = await manager.findOne(ProductionTemplateStageEntity, {
           where: { id: stageId, templateId, deletedAt: IsNull() },
@@ -148,28 +142,31 @@ export class ProductionTemplateStageAttachmentService {
     attachmentId: string,
     dto: UpdateStageAttachmentDto
   ): Promise<ProductionTemplateStageAttachmentDto> {
-    await this.guardService.requireMutableTemplate(templateId);
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Lock template & verify not archived
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
-    const stage = await this.stageRepo.findOne({
-      where: { id: stageId, templateId, deletedAt: IsNull() },
+      const stage = await manager.findOne(ProductionTemplateStageEntity, {
+        where: { id: stageId, templateId, deletedAt: IsNull() },
+      });
+      if (!stage) {
+        throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
+      }
+
+      const attachment = await manager.findOne(ProductionTemplateStageAttachmentEntity, {
+        where: { id: attachmentId, stageId, deletedAt: IsNull() },
+      });
+      if (!attachment) {
+        throw new NotFoundError('الوثيقة المرفقة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_ATTACHMENT_NOT_FOUND');
+      }
+
+      if (dto.description !== undefined) {
+        attachment.description = dto.description ? dto.description.trim() : null;
+      }
+
+      const saved = await manager.save(attachment);
+      return toStageAttachmentDto(saved, templateId);
     });
-    if (!stage) {
-      throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
-    }
-
-    const attachment = await this.attachmentRepo.findOne({
-      where: { id: attachmentId, stageId, deletedAt: IsNull() },
-    });
-    if (!attachment) {
-      throw new NotFoundError('الوثيقة المرفقة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_ATTACHMENT_NOT_FOUND');
-    }
-
-    if (dto.description !== undefined) {
-      attachment.description = dto.description ? dto.description.trim() : null;
-    }
-
-    const saved = await this.attachmentRepo.save(attachment);
-    return toStageAttachmentDto(saved, templateId);
   }
 
   async softDeleteStageAttachment(
@@ -179,13 +176,7 @@ export class ProductionTemplateStageAttachmentService {
   ): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       // 1. Lock template & verify not archived
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-      }
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
       const stage = await manager.findOne(ProductionTemplateStageEntity, {
         where: { id: stageId, templateId, deletedAt: IsNull() },
@@ -227,13 +218,7 @@ export class ProductionTemplateStageAttachmentService {
   ): Promise<ProductionTemplateStageAttachmentDto[]> {
     return await this.dataSource.transaction(async (manager) => {
       // 1. Lock template & verify not archived
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-      }
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
       const stage = await manager.findOne(ProductionTemplateStageEntity, {
         where: { id: stageId, templateId, deletedAt: IsNull() },

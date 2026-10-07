@@ -64,15 +64,6 @@ export class ProductionTemplateStageMaterialService {
     stageId: string,
     dto: AddTemplateStageMaterialDto
   ): Promise<ProductionTemplateStageMaterialDto> {
-    await this.guardService.requireMutableTemplate(templateId);
-
-    const stage = await this.stageRepo.findOne({
-      where: { id: stageId, templateId, deletedAt: IsNull() },
-    });
-    if (!stage) {
-      throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
-    }
-
     // 1. Cross-module validation delegated to Inventory Reference Boundary
     await this.inventoryReferenceService.validatePlannedMaterialUnit(dto.productId, dto.productUnitId);
 
@@ -85,43 +76,56 @@ export class ProductionTemplateStageMaterialService {
       );
     }
 
-    // 3. Pre-check for duplicate material unit on same stage
-    const duplicate = await this.materialRepo.findOne({
-      where: { stageId, productUnitId: dto.productUnitId },
-    });
-    if (duplicate) {
-      throw new ConflictError(
-        'تمت إضافة وحدة القياس هذه مسبقاً لهذه المرحلة',
-        'PRODUCTION_TEMPLATE_STAGE_MATERIAL_ALREADY_EXISTS'
-      );
-    }
+    return await this.dataSource.transaction(async (manager) => {
+      // 3. Lock template row FOR UPDATE & verify not archived
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
-    const material = this.materialRepo.create({
-      stageId,
-      productId: dto.productId,
-      productUnitId: dto.productUnitId,
-      plannedQuantity: dto.plannedQuantity,
-    });
-
-    try {
-      const saved = await this.materialRepo.save(material);
-      const reloaded = await this.materialRepo.findOneOrFail({
-        where: { id: saved.id },
-        relations: {
-          product: true,
-          productUnit: true,
-        },
+      // 4. Verify stage belongs to active template
+      const stage = await manager.findOne(ProductionTemplateStageEntity, {
+        where: { id: stageId, templateId, deletedAt: IsNull() },
       });
-      return toStageMaterialDto(reloaded);
-    } catch (err) {
-      if (err instanceof QueryFailedError && (err as any).driverError?.errno === 1062) {
+      if (!stage) {
+        throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
+      }
+
+      // 5. Duplicate check under lock
+      const duplicate = await manager.findOne(ProductionTemplateStageMaterialEntity, {
+        where: { stageId, productUnitId: dto.productUnitId },
+      });
+      if (duplicate) {
         throw new ConflictError(
           'تمت إضافة وحدة القياس هذه مسبقاً لهذه المرحلة',
           'PRODUCTION_TEMPLATE_STAGE_MATERIAL_ALREADY_EXISTS'
         );
       }
-      throw err;
-    }
+
+      const material = manager.create(ProductionTemplateStageMaterialEntity, {
+        stageId,
+        productId: dto.productId,
+        productUnitId: dto.productUnitId,
+        plannedQuantity: dto.plannedQuantity,
+      });
+
+      try {
+        const saved = await manager.save(material);
+        const reloaded = await manager.findOneOrFail(ProductionTemplateStageMaterialEntity, {
+          where: { id: saved.id },
+          relations: {
+            product: true,
+            productUnit: true,
+          },
+        });
+        return toStageMaterialDto(reloaded);
+      } catch (err) {
+        if (err instanceof QueryFailedError && (err as any).driverError?.errno === 1062) {
+          throw new ConflictError(
+            'تمت إضافة وحدة القياس هذه مسبقاً لهذه المرحلة',
+            'PRODUCTION_TEMPLATE_STAGE_MATERIAL_ALREADY_EXISTS'
+          );
+        }
+        throw err;
+      }
+    });
   }
 
   async updatePlannedMaterial(
@@ -130,38 +134,6 @@ export class ProductionTemplateStageMaterialService {
     materialId: string,
     dto: UpdateTemplateStageMaterialDto
   ): Promise<ProductionTemplateStageMaterialDto> {
-    await this.guardService.requireMutableTemplate(templateId);
-
-    const stage = await this.stageRepo.findOne({
-      where: { id: stageId, templateId, deletedAt: IsNull() },
-    });
-    if (!stage) {
-      throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
-    }
-
-    const material = await this.materialRepo.findOne({
-      where: { id: materialId, stageId },
-    });
-    if (!material) {
-      throw new NotFoundError('المادة المخططة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_MATERIAL_NOT_FOUND');
-    }
-
-    // If unit changed, validate via Inventory Reference Service
-    if (dto.productUnitId !== undefined && dto.productUnitId !== material.productUnitId) {
-      await this.inventoryReferenceService.validatePlannedMaterialUnit(material.productId, dto.productUnitId);
-
-      const duplicate = await this.materialRepo.findOne({
-        where: { stageId, productUnitId: dto.productUnitId },
-      });
-      if (duplicate && duplicate.id !== materialId) {
-        throw new ConflictError(
-          'تمت إضافة وحدة القياس هذه مسبقاً لهذه المرحلة',
-          'PRODUCTION_TEMPLATE_STAGE_MATERIAL_ALREADY_EXISTS'
-        );
-      }
-      material.productUnitId = dto.productUnitId;
-    }
-
     const qtyNum = parseFloat(dto.plannedQuantity);
     if (isNaN(qtyNum) || qtyNum <= 0) {
       throw new BusinessRuleError(
@@ -169,47 +141,90 @@ export class ProductionTemplateStageMaterialService {
         'PRODUCTION_TEMPLATE_STAGE_MATERIAL_INVALID_QUANTITY'
       );
     }
-    material.plannedQuantity = dto.plannedQuantity;
 
-    try {
-      await this.materialRepo.save(material);
-      const reloaded = await this.materialRepo.findOneOrFail({
-        where: { id: materialId },
-        relations: {
-          product: true,
-          productUnit: true,
-        },
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Lock template row FOR UPDATE & verify not archived
+      await this.guardService.lockMutableTemplate(templateId, manager);
+
+      // 2. Verify stage belongs to active template
+      const stage = await manager.findOne(ProductionTemplateStageEntity, {
+        where: { id: stageId, templateId, deletedAt: IsNull() },
       });
-      return toStageMaterialDto(reloaded);
-    } catch (err) {
-      if (err instanceof QueryFailedError && (err as any).driverError?.errno === 1062) {
-        throw new ConflictError(
-          'تمت إضافة وحدة القياس هذه مسبقاً لهذه المرحلة',
-          'PRODUCTION_TEMPLATE_STAGE_MATERIAL_ALREADY_EXISTS'
-        );
+      if (!stage) {
+        throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
       }
-      throw err;
-    }
+
+      // 3. Find material belonging to stage
+      const material = await manager.findOne(ProductionTemplateStageMaterialEntity, {
+        where: { id: materialId, stageId },
+      });
+      if (!material) {
+        throw new NotFoundError('المادة المخططة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_MATERIAL_NOT_FOUND');
+      }
+
+      // 4. If unit changed, validate via Inventory Reference Service
+      if (dto.productUnitId !== undefined && dto.productUnitId !== material.productUnitId) {
+        await this.inventoryReferenceService.validatePlannedMaterialUnit(material.productId, dto.productUnitId);
+
+        const duplicate = await manager.findOne(ProductionTemplateStageMaterialEntity, {
+          where: { stageId, productUnitId: dto.productUnitId },
+        });
+        if (duplicate && duplicate.id !== materialId) {
+          throw new ConflictError(
+            'تمت إضافة وحدة القياس هذه مسبقاً لهذه المرحلة',
+            'PRODUCTION_TEMPLATE_STAGE_MATERIAL_ALREADY_EXISTS'
+          );
+        }
+        material.productUnitId = dto.productUnitId;
+      }
+
+      material.plannedQuantity = dto.plannedQuantity;
+
+      try {
+        await manager.save(material);
+        const reloaded = await manager.findOneOrFail(ProductionTemplateStageMaterialEntity, {
+          where: { id: materialId },
+          relations: {
+            product: true,
+            productUnit: true,
+          },
+        });
+        return toStageMaterialDto(reloaded);
+      } catch (err) {
+        if (err instanceof QueryFailedError && (err as any).driverError?.errno === 1062) {
+          throw new ConflictError(
+            'تمت إضافة وحدة القياس هذه مسبقاً لهذه المرحلة',
+            'PRODUCTION_TEMPLATE_STAGE_MATERIAL_ALREADY_EXISTS'
+          );
+        }
+        throw err;
+      }
+    });
   }
 
   async removePlannedMaterial(templateId: string, stageId: string, materialId: string): Promise<void> {
-    await this.guardService.requireMutableTemplate(templateId);
+    await this.dataSource.transaction(async (manager) => {
+      // 1. Lock template row FOR UPDATE & verify not archived
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
-    const stage = await this.stageRepo.findOne({
-      where: { id: stageId, templateId, deletedAt: IsNull() },
+      // 2. Verify stage belongs to active template
+      const stage = await manager.findOne(ProductionTemplateStageEntity, {
+        where: { id: stageId, templateId, deletedAt: IsNull() },
+      });
+      if (!stage) {
+        throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
+      }
+
+      // 3. Find material belonging to stage
+      const material = await manager.findOne(ProductionTemplateStageMaterialEntity, {
+        where: { id: materialId, stageId },
+      });
+      if (!material) {
+        throw new NotFoundError('المادة المخططة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_MATERIAL_NOT_FOUND');
+      }
+
+      await manager.delete(ProductionTemplateStageMaterialEntity, materialId);
     });
-    if (!stage) {
-      throw new NotFoundError('المرحلة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_NOT_FOUND');
-    }
-
-    const material = await this.materialRepo.findOne({
-      where: { id: materialId, stageId },
-    });
-    if (!material) {
-      throw new NotFoundError('المادة المخططة غير موجودة', 'PRODUCTION_TEMPLATE_STAGE_MATERIAL_NOT_FOUND');
-    }
-
-    await this.materialRepo.delete(materialId);
   }
 }
 

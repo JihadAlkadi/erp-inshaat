@@ -15,12 +15,21 @@ import {
 } from './production-template.types.js';
 import { NotFoundError } from '../../../common/errors/not-found.error.js';
 import { ConflictError } from '../../../common/errors/conflict.error.js';
+import {
+  ProductionTemplateGuardService,
+  productionTemplateGuardService,
+} from './production-template-guard.service.js';
 
 export class ProductionTemplateService {
   private templateRepo: Repository<ProductionTemplateEntity>;
+  private guardService: ProductionTemplateGuardService;
 
-  constructor(private dataSource: DataSource = AppDataSource) {
+  constructor(
+    private dataSource: DataSource = AppDataSource,
+    guardService: ProductionTemplateGuardService = productionTemplateGuardService
+  ) {
     this.templateRepo = this.dataSource.getRepository(ProductionTemplateEntity);
+    this.guardService = guardService;
   }
 
   async listTemplates(query: ListProductionTemplatesQueryDto): Promise<PaginatedProductionTemplatesResult> {
@@ -184,41 +193,35 @@ export class ProductionTemplateService {
   }
 
   async updateTemplate(id: string, dto: UpdateProductionTemplateDto): Promise<ProductionTemplateDto> {
-    const template = await this.templateRepo.findOne({
-      where: { id, deletedAt: IsNull() },
+    return await this.dataSource.transaction(async (manager) => {
+      const template = await this.guardService.lockMutableTemplate(id, manager);
+
+      if (dto.name !== undefined) {
+        template.name = dto.name.trim();
+      }
+      if (dto.referenceNumber !== undefined) {
+        template.referenceNumber = dto.referenceNumber ? dto.referenceNumber.trim() : null;
+      }
+      if (dto.description !== undefined) {
+        template.description = dto.description ? dto.description.trim() : null;
+      }
+      if (dto.isActive !== undefined) {
+        template.isActive = dto.isActive;
+      }
+
+      const saved = await manager.save(template);
+      return toProductionTemplateDto(saved);
     });
-    if (!template) {
-      throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-    }
-
-    if (dto.name !== undefined) {
-      template.name = dto.name.trim();
-    }
-    if (dto.referenceNumber !== undefined) {
-      template.referenceNumber = dto.referenceNumber ? dto.referenceNumber.trim() : null;
-    }
-    if (dto.description !== undefined) {
-      template.description = dto.description ? dto.description.trim() : null;
-    }
-    if (dto.isActive !== undefined) {
-      template.isActive = dto.isActive;
-    }
-
-    const saved = await this.templateRepo.save(template);
-    return toProductionTemplateDto(saved);
   }
 
   async softDeleteTemplate(id: string): Promise<void> {
-    const template = await this.templateRepo.findOne({
-      where: { id, deletedAt: IsNull() },
-    });
-    if (!template) {
-      throw new NotFoundError('القالب غير موجود', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-    }
+    await this.dataSource.transaction(async (manager) => {
+      const template = await this.guardService.lockMutableTemplate(id, manager);
 
-    template.isActive = false;
-    await this.templateRepo.save(template);
-    await this.templateRepo.softDelete(id);
+      template.isActive = false;
+      await manager.save(template);
+      await manager.softDelete(ProductionTemplateEntity, id);
+    });
   }
 }
 

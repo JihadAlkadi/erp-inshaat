@@ -1564,12 +1564,22 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
         findOne: async () => null,
         find: async () => [],
       }),
+      transaction: async (cb: any) => cb({
+        findOne: async () => null,
+        find: async () => [],
+        save: async () => null,
+        update: async () => null,
+        delete: async () => null,
+        softDelete: async () => null,
+        create: () => ({}),
+      }),
     } as any;
 
     it('Stage Service blocks updating a stage if parent template is archived', async () => {
       const mockGuard = {
         requireExistingTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
         requireMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+        lockMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
       } as any;
 
       const stageService = new ProductionTemplateStageService(
@@ -1593,11 +1603,17 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       const mockGuard = {
         requireExistingTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
         requireMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+        lockMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
       } as any;
 
       const matService = new ProductionTemplateStageMaterialService(
         mockDs,
-        {} as any,
+        {
+          validatePlannedMaterialUnit: async () => ({
+            product: { id: 'p-1', code: 'PRD-1', name: 'Cement', isActive: true, baseUnitId: 'u-1' },
+            productUnit: { id: 'u-1', unitName: 'Bag', conversionFactor: 1, equivalentToUnitId: null },
+          }),
+        } as any,
         mockGuard
       );
 
@@ -1630,6 +1646,7 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       const mockGuard = {
         requireExistingTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
         requireMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+        lockMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
       } as any;
 
       const specService = new ProductionTemplateSpecificationService(
@@ -1662,6 +1679,7 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
       const mockGuard = {
         requireExistingTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
         requireMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
+        lockMutableTemplate: async () => { throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND'); },
       } as any;
 
       const attService = new ProductionTemplateStageAttachmentService(
@@ -1735,6 +1753,324 @@ describe('Production Template Core Hardening & Architectural Invariants', () => 
 
       assert.strictEqual(fs.existsSync(tempFile), false, 'Temp file must be deleted on description validation failure');
       if (fs.existsSync(tempUploads)) fs.rmSync(tempUploads, { recursive: true, force: true });
+    });
+  });
+
+  // =========================================================================
+  // 14. Production Template Aggregate Concurrency & Pessimistic Lock Protocol Invariants
+  // =========================================================================
+  describe('14. Production Template Aggregate Concurrency & Pessimistic Lock Protocol Invariants', () => {
+    it('softDeleteTemplate executes in a transaction and rolls back on failure (Atomic Archive)', async () => {
+      let transactionExecuted = false;
+      let lockAcquired = false;
+      let savedIsActive = true;
+
+      const mockTemplate: any = {
+        id: 'tmpl-1',
+        name: 'Template 1',
+        isActive: true,
+        deletedAt: null,
+      };
+
+      const mockManager = {
+        findOne: async (_entity: any, options: any) => {
+          if (options?.lock?.mode === 'pessimistic_write') {
+            lockAcquired = true;
+          }
+          return mockTemplate;
+        },
+        save: async (entity: any) => {
+          savedIsActive = entity.isActive;
+          return entity;
+        },
+        softDelete: async () => {
+          throw new Error('Database connection dropped during soft delete');
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({
+          findOne: async () => mockTemplate,
+        }),
+        transaction: async (cb: any) => {
+          transactionExecuted = true;
+          return await cb(mockManager);
+        },
+      } as any;
+
+      const service = new ProductionTemplateService(mockDs, new ProductionTemplateGuardService(mockDs));
+
+      await assert.rejects(
+        async () => {
+          await service.softDeleteTemplate('tmpl-1');
+        },
+        /Database connection dropped during soft delete/
+      );
+
+      assert.strictEqual(transactionExecuted, true);
+      assert.strictEqual(lockAcquired, true);
+      assert.strictEqual(savedIsActive, false, 'isActive was set to false inside transaction prior to rollback');
+    });
+
+    it('updateTemplate acquires pessimistic_write lock on parent template within transaction', async () => {
+      let lockMode: string | null = null;
+      let inTransaction = false;
+
+      const mockTemplate: any = {
+        id: 'tmpl-1',
+        name: 'Old Name',
+        code: 'TMPL-01',
+        isActive: true,
+        deletedAt: null,
+      };
+
+      const mockManager = {
+        findOne: async (_entity: any, options: any) => {
+          lockMode = options?.lock?.mode || null;
+          return mockTemplate;
+        },
+        save: async (entity: any) => entity,
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({ findOne: async () => mockTemplate }),
+        transaction: async (cb: any) => {
+          inTransaction = true;
+          return await cb(mockManager);
+        },
+      } as any;
+
+      const service = new ProductionTemplateService(mockDs, new ProductionTemplateGuardService(mockDs));
+      const res = await service.updateTemplate('tmpl-1', { name: 'New Name' });
+
+      assert.strictEqual(inTransaction, true);
+      assert.strictEqual(lockMode, 'pessimistic_write');
+      assert.strictEqual(res.name, 'New Name');
+    });
+
+    it('updateStage locks parent template row with pessimistic_write before stage mutation', async () => {
+      const callSequence: string[] = [];
+
+      const mockTemplate: any = { id: 'tmpl-1', deletedAt: null };
+      const mockStage: any = { id: 'stg-1', templateId: 'tmpl-1', name: 'Old Stage', departmentId: 'dept-1', deletedAt: null };
+
+      const mockManager = {
+        findOne: async (_entity: any, options: any) => {
+          if (options?.lock?.mode === 'pessimistic_write') {
+            callSequence.push('LOCK_TEMPLATE');
+            return mockTemplate;
+          }
+          if (options?.where?.id === 'stg-1') {
+            callSequence.push('FIND_STAGE');
+            return mockStage;
+          }
+          return null;
+        },
+        save: async (entity: any) => {
+          callSequence.push('SAVE_STAGE');
+          return entity;
+        },
+        findOneOrFail: async () => ({ ...mockStage, department: { id: 'dept-1', name: 'Dept 1', code: 'D1' } }),
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({ findOne: async () => null, find: async () => [] }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const stageService = new ProductionTemplateStageService(
+        mockDs,
+        { validateDepartmentForStage: async () => {} } as any,
+        new ProductionTemplateGuardService(mockDs)
+      );
+
+      await stageService.updateStage('tmpl-1', 'stg-1', { name: 'Updated Stage' });
+
+      assert.deepStrictEqual(callSequence, ['LOCK_TEMPLATE', 'FIND_STAGE', 'SAVE_STAGE']);
+    });
+
+    it('updateSpecification locks parent template row with pessimistic_write before spec mutation', async () => {
+      const callSequence: string[] = [];
+
+      const mockTemplate: any = { id: 'tmpl-1', deletedAt: null };
+      const mockSpec: any = { id: 'spec-1', templateId: 'tmpl-1', name: 'Length', value: '100', unit: 'cm' };
+
+      const mockManager = {
+        findOne: async (_entity: any, options: any) => {
+          if (options?.lock?.mode === 'pessimistic_write') {
+            callSequence.push('LOCK_TEMPLATE');
+            return mockTemplate;
+          }
+          if (options?.where?.id === 'spec-1') {
+            callSequence.push('FIND_SPEC');
+            return mockSpec;
+          }
+          return null;
+        },
+        save: async (entity: any) => {
+          callSequence.push('SAVE_SPEC');
+          return entity;
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({ findOne: async () => null, find: async () => [] }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const specService = new ProductionTemplateSpecificationService(
+        mockDs,
+        new ProductionTemplateGuardService(mockDs)
+      );
+
+      await specService.updateSpecification('tmpl-1', 'spec-1', { value: '120' });
+
+      assert.deepStrictEqual(callSequence, ['LOCK_TEMPLATE', 'FIND_SPEC', 'SAVE_SPEC']);
+    });
+
+    it('planned material mutations serialize through parent template pessimistic_write lock', async () => {
+      const ops: string[] = [];
+
+      const mockTemplate: any = { id: 'tmpl-1', deletedAt: null };
+      const mockStage: any = { id: 'stg-1', templateId: 'tmpl-1', deletedAt: null };
+      const mockMaterial: any = { id: 'mat-1', stageId: 'stg-1', productId: 'p-1', productUnitId: 'u-1', plannedQuantity: '5' };
+
+      const mockManager = {
+        findOne: async (_entity: any, options: any) => {
+          if (options?.lock?.mode === 'pessimistic_write') {
+            ops.push('LOCK_TEMPLATE');
+            return mockTemplate;
+          }
+          if (options?.where?.id === 'stg-1') {
+            ops.push('FIND_STAGE');
+            return mockStage;
+          }
+          if (options?.where?.id === 'mat-1') {
+            ops.push('FIND_MATERIAL');
+            return mockMaterial;
+          }
+          return null;
+        },
+        create: (_entity: any, data: any) => ({ id: 'mat-new', ...data }),
+        save: async (entity: any) => {
+          ops.push('SAVE_MATERIAL');
+          return entity;
+        },
+        delete: async () => {
+          ops.push('DELETE_MATERIAL');
+        },
+        findOneOrFail: async () => ({ ...mockMaterial, product: { id: 'p-1', name: 'Iron' }, productUnit: { id: 'u-1', unitName: 'Kg' } }),
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({ findOne: async () => null, find: async () => [] }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const matService = new ProductionTemplateStageMaterialService(
+        mockDs,
+        { validatePlannedMaterialUnit: async () => ({}) } as any,
+        new ProductionTemplateGuardService(mockDs)
+      );
+
+      // Add
+      ops.length = 0;
+      await matService.addPlannedMaterial('tmpl-1', 'stg-1', { productId: 'p-1', productUnitId: 'u-1', plannedQuantity: '10' });
+      assert.deepStrictEqual(ops, ['LOCK_TEMPLATE', 'FIND_STAGE', 'SAVE_MATERIAL']);
+
+      // Update
+      ops.length = 0;
+      await matService.updatePlannedMaterial('tmpl-1', 'stg-1', 'mat-1', { plannedQuantity: '20' });
+      assert.deepStrictEqual(ops, ['LOCK_TEMPLATE', 'FIND_STAGE', 'FIND_MATERIAL', 'SAVE_MATERIAL']);
+
+      // Remove
+      ops.length = 0;
+      await matService.removePlannedMaterial('tmpl-1', 'stg-1', 'mat-1');
+      assert.deepStrictEqual(ops, ['LOCK_TEMPLATE', 'FIND_STAGE', 'FIND_MATERIAL', 'DELETE_MATERIAL']);
+    });
+
+    it('updateStageAttachment locks parent template row before updating description', async () => {
+      const ops: string[] = [];
+
+      const mockTemplate: any = { id: 'tmpl-1', deletedAt: null };
+      const mockStage: any = { id: 'stg-1', templateId: 'tmpl-1', deletedAt: null };
+      const mockAttachment: any = { id: 'att-1', stageId: 'stg-1', description: 'Old' };
+
+      const mockManager = {
+        findOne: async (_entity: any, options: any) => {
+          if (options?.lock?.mode === 'pessimistic_write') {
+            ops.push('LOCK_TEMPLATE');
+            return mockTemplate;
+          }
+          if (options?.where?.id === 'stg-1') {
+            ops.push('FIND_STAGE');
+            return mockStage;
+          }
+          if (options?.where?.id === 'att-1') {
+            ops.push('FIND_ATTACHMENT');
+            return mockAttachment;
+          }
+          return null;
+        },
+        save: async (entity: any) => {
+          ops.push('SAVE_ATTACHMENT');
+          return entity;
+        },
+      } as any;
+
+      const mockDs = {
+        getRepository: () => ({ findOne: async () => null, find: async () => [] }),
+        transaction: async (cb: any) => cb(mockManager),
+      } as any;
+
+      const attService = new ProductionTemplateStageAttachmentService(
+        mockDs,
+        {} as any,
+        new ProductionTemplateGuardService(mockDs)
+      );
+
+      await attService.updateStageAttachment('tmpl-1', 'stg-1', 'att-1', { description: 'Updated' });
+
+      assert.deepStrictEqual(ops, ['LOCK_TEMPLATE', 'FIND_STAGE', 'FIND_ATTACHMENT', 'SAVE_ATTACHMENT']);
+    });
+
+    it('rejects nested child mutation if parent template is archived first (lockMutableTemplate fails closed)', async () => {
+      const mockManager = {
+        findOne: async (_entity: any, options: any) => {
+          if (options?.where?.deletedAt) {
+            return null; // Not found because it is deleted
+          }
+          return { id: 'tmpl-1', deletedAt: new Date(), isActive: false };
+        },
+      } as any;
+
+      const mockDs = { getRepository: () => ({ findOne: async () => null, find: async () => [] }) } as any;
+      const guard = new ProductionTemplateGuardService(mockDs);
+
+      await assert.rejects(
+        async () => {
+          await guard.lockMutableTemplate('tmpl-1', mockManager);
+        },
+        (err: any) => {
+          assert.strictEqual(err.code, 'PRODUCTION_TEMPLATE_NOT_FOUND');
+          return true;
+        }
+      );
+    });
+
+    it('allows lockMutableTemplate when template is inactive (isActive = false) but not archived (deletedAt = null)', async () => {
+      const mockInactiveTemplate: any = { id: 'tmpl-1', isActive: false, deletedAt: null };
+
+      const mockManager = {
+        findOne: async () => mockInactiveTemplate,
+      } as any;
+
+      const mockDs = { getRepository: () => ({ findOne: async () => null, find: async () => [] }) } as any;
+      const guard = new ProductionTemplateGuardService(mockDs);
+      const result = await guard.lockMutableTemplate('tmpl-1', mockManager);
+
+      assert.strictEqual(result.id, 'tmpl-1');
+      assert.strictEqual(result.isActive, false);
     });
   });
 });

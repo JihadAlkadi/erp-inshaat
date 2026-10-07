@@ -45,13 +45,7 @@ export class ProductionTemplateSpecificationService {
   ): Promise<ProductionTemplateSpecificationDto> {
     return await this.dataSource.transaction(async (manager) => {
       // 1. Lock template row explicitly & check not archived
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-      }
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
       // 2. Read current active specifications with lock
       const existingSpecs = await manager.find(ProductionTemplateSpecificationEntity, {
@@ -95,33 +89,30 @@ export class ProductionTemplateSpecificationService {
     specId: string,
     dto: UpdateTemplateSpecificationDto
   ): Promise<ProductionTemplateSpecificationDto> {
-    await this.guardService.requireMutableTemplate(templateId);
+    return await this.dataSource.transaction(async (manager) => {
+      // 1. Lock template row explicitly & check not archived
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
-    const spec = await this.specRepo.findOne({
-      where: { id: specId, templateId },
+      const spec = await manager.findOne(ProductionTemplateSpecificationEntity, {
+        where: { id: specId, templateId },
+      });
+      if (!spec) {
+        throw new NotFoundError('الخاصية غير موجودة', 'PRODUCTION_TEMPLATE_SPECIFICATION_NOT_FOUND');
+      }
+
+      if (dto.name !== undefined) spec.name = dto.name.trim();
+      if (dto.value !== undefined) spec.value = dto.value.trim();
+      if (dto.unit !== undefined) spec.unit = dto.unit ? dto.unit.trim() : null;
+
+      const saved = await manager.save(spec);
+      return toProductionTemplateSpecificationDto(saved);
     });
-    if (!spec) {
-      throw new NotFoundError('الخاصية غير موجودة', 'PRODUCTION_TEMPLATE_SPECIFICATION_NOT_FOUND');
-    }
-
-    if (dto.name !== undefined) spec.name = dto.name.trim();
-    if (dto.value !== undefined) spec.value = dto.value.trim();
-    if (dto.unit !== undefined) spec.unit = dto.unit ? dto.unit.trim() : null;
-
-    const saved = await this.specRepo.save(spec);
-    return toProductionTemplateSpecificationDto(saved);
   }
 
   async deleteSpecification(templateId: string, specId: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       // 1. Lock template row & verify not archived
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-      }
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
       const spec = await manager.findOne(ProductionTemplateSpecificationEntity, {
         where: { id: specId, templateId },
@@ -155,13 +146,7 @@ export class ProductionTemplateSpecificationService {
   ): Promise<ProductionTemplateSpecificationDto[]> {
     return await this.dataSource.transaction(async (manager) => {
       // 1. Lock template row & verify not archived
-      const template = await manager.findOne(ProductionTemplateEntity, {
-        where: { id: templateId, deletedAt: IsNull() },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!template) {
-        throw new NotFoundError('القالب غير موجود أو تم أرشفته', 'PRODUCTION_TEMPLATE_NOT_FOUND');
-      }
+      await this.guardService.lockMutableTemplate(templateId, manager);
 
       // 2. Lock active specifications
       const existingSpecs = await manager.find(ProductionTemplateSpecificationEntity, {
