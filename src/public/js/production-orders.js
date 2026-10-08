@@ -141,7 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderOrdersTable(data) {
-    const { items, total, summary } = data;
+    const { items, total, page, totalPages, summary } = data;
 
     updateKPIs(summary, total);
 
