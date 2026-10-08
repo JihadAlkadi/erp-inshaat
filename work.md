@@ -53,8 +53,9 @@
       - لا يقوم المسار بأي كتابة أو تعديل في قاعدة البيانات إطلاقاً (Zero DB mutations).
     - عقد الخيارات التاريخية في الواجهة ومحرك الحفظ:
       - حقل `availableOptions` يحتوي حصراً على الخيارات الفعالة الحالية (`active options only`) ولا يحتوي إطلاقاً على خيارات مؤرشفة.
+      - كائن الاختيار `ProductionOrderLinePatternSelectionDto` يعيد حقول دورة الحياة صراحة: `isPatternActive`, `isSelectedOptionActive`, `isHistorical`.
       - تُعرض الخيارات التاريخية غير الفعالة بوضوح كـ شارة تاريخية ("الخيار السابق: X (غير فعال)")، ولا يدرج الخيار المؤرشف كخيار فعال وهمي داخل قائمة `<select>`.
-      - يمنع حفظ البند طالما يحتوي على خيار تاريخي أو غير فعال؛ يجب على المستخدم الضغط على "مزامنة مع القالب" لتوليد تركيبة فعالة صالحة للحفظ.
+      - يمنع حفظ البند طالما يحتوي على خيار تاريخي أو غير فعال أو لا ينتمي الخيار إلى الخيارات الفعالة المتاحة؛ يجب على المستخدم الضغط على "مزامنة مع القالب" لتوليد تركيبة فعالة صالحة للحفظ.
     - إعادة ترتيب البنود في المحرر (In-Memory Line Reorder):
       - تتيح الواجهة أزرار تحريك للأعلى والأسفل `[↑] / [↓]` على كل بطاقة بند لتبديل الترتيب محلياً في الذاكرة.
       - يعتبر تغيير الترتيب تغييراً غير محفوظ (`dirty = true`) ويخضع لحارس المغادرة.
@@ -76,9 +77,30 @@
     - **عرض تفاصيل الطلب على الهاتف المحمول (Mobile Show Stacked Cards)**:
       - في الشاشات العريضة (Desktop): جدول تفصيلي منظم ومرن.
       - في شاشات الجوال (`max-width: 767.98px`): تحويل صفوف الجدول إلى بطاقات مكدسة (Stacked Cards) معتمدة على `data-label` وعرض مرن يمنع التمرير الأفقي تماماً (No horizontal scrolling).
-    - **مؤشرات الأداء الشاملة لقائمة الأوامر (List KPI Aggregates)**:
+    - **مؤشرات الأداء الشاملة وعقد قائمة الأوامر والترقيم (List KPI Aggregates & Safe Pagination)**:
       - 4 بطاقات KPI في ترويسة قائمة الأوامر (`إجمالي الأوامر`, `المسودات`, `المعتمدة`, `إجمالي الكميات`).
       - القيم مستمدة مباشرة من التجميع العام في قاعدة البيانات (`summary` من الـ SQL Aggregate) والمطابقة لكلمة البحث الحالية، وليست مقصورة على الصفحة المعروضة فقط.
+      - عقد استجابة قائمة أوامر الإنتاج الموحد:
+        ```text
+        {
+          items: ProductionOrderListItemDto[],
+          total: number,
+          page: number,
+          limit: number,
+          totalPages: number,
+          summary: {
+            totalOrders: number,
+            draftOrders: number,
+            approvedOrders: number,
+            totalQuantity: number
+          }
+        }
+        ```
+      - استخراج بيانات التصفح في العميل يتم صراحة من كائن الاستجابة (`const { items, total, page, totalPages, summary } = data`) مع التحقق المسبق من سلامة العقد (`items` مصفوفة، `total` غير سالب، `page >= 1`، `totalPages >= 1`) لمنع أخطاء `ReferenceError` وتفادي الانهيار الصامت.
+    - **نصوص ومصطلحات الجاهزية والاعتماد في الواجهة (Readiness & Approval UI Wording)**:
+      - تستخدم الواجهات حصراً النصوص الدقيقة: "جاهز للاعتماد" و "يحتاج مراجعة قبل الاعتماد".
+      - حظر تام لظهور مصطلح "جاهز للإطلاق" في شاشات تأسيس أوامر الإنتاج (`index.ejs`, `show.ejs`, `edit.ejs`).
+      - المسميات البرمجية الداخلية الموروثة (مثل `validateDraftForRelease` و `/release-readiness`) تبقى كدين تقني داخلي مؤقت لتوافق الـ API دون أن تعني وجود وظيفة إطلاق في هذه المرحلة.
   - **هيكل وتجميعة أمر الإنتاج (Order Aggregate Structure)**:
     ```text
     ProductionOrder
@@ -126,46 +148,73 @@
     - **فحص التكرار الاستباقي في الواجهة (Client-Side Pre-check)**:
       - يحسب الـ JS في مساحة العمل كود التركيبة المختار ويقارنه فورياً مع البنود الحالية للطلب.
       - عند تطابق التركيبة، يُعرض تنبيه مباشر: "هذه التركيبة موجودة مسبقًا في البند #X. عدّل كمية البند الموجود بدل إضافة بند مكرر"، ويُعطل زر الإضافة تلقائياً.
-  - **فصل مساحات العمل في واجهات الويب وتدفق إضافة البنود (Web UI Architecture & Search-First Line Composer)**:
-    > Production Order Show = read-only details
-    > Production Order Edit = draft workspace
-    - **صفحة العرض العامة (`/production/orders/:id` — `show.ejs`)**:
-      - صفحة قراءة فقط ومستقرة تماماً ومصيرة خادمياً بالكامل (Server-rendered EJS).
-      - لا تحتوي على أي أزرار أو حقول أو نوافذ منبثقة لتعديل أو إضافة أو أرشفة البنود أو الطلب (No mutation controls).
+  - **فصل مساحات العمل في واجهات الويب وتدفق التحرير الموحد (Web UI Architecture & Unified Draft Editor)**:
+    > Production Order Show = content-read-only details + lifecycle actions
+    > Production Order Edit = unified draft workspace with atomic target-state commit
+    - **صفحة العرض العامة (`/production/orders/:id` — `show.ejs` + `production-order-show.js`)**:
+      > Production Order Show is content-read-only.
+      > Server-rendered with EJS for order details, KPI cards, and line items.
+      > Client script (production-order-show.js) is used exclusively for lifecycle workflow actions.
+      - صفحة قراءة فقط ومستقرة تماماً ومصيرة خادمياً بالكامل عبر EJS لمحتويات وتفاصيل الطلب وبنوده.
+      - لا تحتوي على أي أزرار أو حقول لتحرير محتويات الطلب (لا تعديل للترويسة، لا تعديل للكميات، لا تغيير للأنماط، لا إضافة أو حذف أو إعادة ترتيب للبنود).
+      - تستخدم الصفحة ملف عميل خفيف (`production-order-show.js`) مخصص حصرياً لإجراءات سير العمل ودورة الحياة (Lifecycle Workflow Actions):
+        - اعتماد أمر الإنتاج (`POST /api/production/orders/:orderId/approve` بصلاحية `production.order.approve`).
+        - إعادة فتح أمر الإنتاج المعتمد لمسودة (`POST /api/production/orders/:orderId/reopen` بصلاحية `production.order.approve`).
+        - إدارة حوارات التأكيد عبر SweetAlert2، واستخراج الأخطاء الموحد، وعرض الإشعارات المعلقة (`pendingToast`)، وإعادة تحميل الصفحة بعد نجاح الإجراء.
       - عدم تكرار رقم الطلب بصرياً؛ يعرض كرقم رئيسي في ترويسة الصفحة القياسية وفق `ui-design-rules.md`.
       - بطاقات KPI القياسية تقتصر على مؤشرين أساسيين: عدد البنود وإجمالي الكمية.
-      - بنود الإنتاج تعرض في جدول منظم بدقة يبرز القالب والكود والكمية والأنماط المختارة كـ Chips مرتبة.
-      - لا تتطلب صفحة العرض أي ملف JavaScript عميل (`production-order-show.js` أزيل منها لمنع التعقيد وتقليص مساحة الهجوم).
-      - تحتوي على زر تنقل مباشر للمحرر: `تعديل الطلب` يوجه إلى `/production/orders/:id/edit`.
+      - بنود الإنتاج تعرض في جدول منظم بدقة يبرز القالب والكود والكمية وشارات الأنماط المختارة وشارات الجاهزية ("جاهز للاعتماد" / "يحتاج مراجعة قبل الاعتماد").
+      - تحتوي على زر تنقل مباشر للمحرر: `تعديل الطلب` يوجه إلى `/production/orders/:id/edit` (متاح لأوامر المسودة `DRAFT` فقط).
     - **صفحة محرر المسودة الشامل (`/production/orders/:id/edit` — `edit.ejs` + `production-order-edit.js`)**:
+      > The Unified Draft Editor manages the complete target state of order lines in-memory.
+      > Primary persistence path: PUT /api/production/orders/:orderId/draft-lines (Atomic Draft Commit).
+      > ONE request, ONE database transaction, ONE ProductionOrder pessimistic_write lock.
       - **منتقي القوالب المعتمد على البحث أولاً (Search-First Composer)**:
         > No template data is loaded before the user provides a search keyword.
         - تبدأ واجهة إضافة البنود بمربع بحث مركزي فقط دون تحميل أي قوالب مسبقاً (No fetch on initial boot, no spinner, no empty panels).
         - البحث يبدأ حصراً عند إدخال نص غير فارغ (`searchTerm.trim().length > 0`) بعد Debounce مدته 300ms عبر `GET /api/production/templates/reference-options`.
         - حماية السباق عبر عداد تسلسلي متزايد حتماً `templatePickerRequestSeq`.
         - نتائج البحث تظهر مباشرة أسفل مربع البحث كأزرار متوافقة مع لوحة المفاتيح (`<button type="button">`) وتقتصر على اسم القالب وكوده ورقمه المرجعي.
-      - **إعداد البنود غير المحفوظة في الواجهة (Client-Side Pending Lines Staging)**:
-        > Template selections remain client-side pending configurations until submitted.
-        - اختيار القالب من نتائج البحث لا يحفظه في قاعدة البيانات، بل ينشئ بنداً مجهزاً غير محفوظ (`Pending Line`) أسفل البحث.
-        - يتيح إعداد أكثر من بند والبحث عن قوالب أخرى وإضافتها للقائمة المجهزة.
-        - كل بند مجهز يحتوي على الكمية مع تحقق فوري (1..10000)، وخيارات الأنماط، وزر إزالة مباشر `[X]` يحذفه فورياً دون أي تأكيد أو طلب شبكي.
-      - **قواعد منع التكرار للبنود المجهزة (Pending Duplicate Detection)**:
+      - **نموذج الحالة المستهدفة الموحدة في الذاكرة (Unified In-Memory Target State Model)**:
+        > Unified Editor maintains the complete order lines target state in-memory until atomic commit.
+        - لم يعد المحرر يعتمد على مسار منفصل لحفظ البنود الجديدة ومسارات أخرى للبنود القائمة.
+        - المصدر الحقيقي للحقيقة أثناء التحرير هو الحالة المستهدفة الشاملة في الذاكرة (`target lines[]`):
+          - البنود القائمة (`existing lines`): معرفاتها، كمياتها، خيارات أنماطها، وحالتها الحية.
+          - البنود الجديدة: تضاف من نتائج البحث وتبقى محلياً في الذاكرة بدون معرف (`id: null`) حتى الحفظ.
+          - البنود المحذوفة: تُزال محلياً من القائمة وتعتبر محذوفة ليتم أرشفة سجلاتها ذرياً عند الحفظ.
+          - إعادة الترتيب: يتم محلياً في الذاكرة عبر أزرار `[↑] / [↓]`.
+          - نتائج المزامنة: تطبق على البند محلياً في الذاكرة عبر `GET sync-preview`.
+      - **قواعد منع التكرار في الحالة المستهدفة (Target State Duplicate Detection)**:
         > Template + exact Pattern Options = unique within active lines. Quantity is not identity.
         - حساب المفتاح المعياري للتركيبة: `templateId|sorted(patternId:optionId)`.
-        - فحص التكرار مقابل البنود الحالية في الطلب (`currentOrder.lines`): عند التطابق، يعرض تنبيه داخل البند المجهز ويوجه لتعديل كمية البند القائم.
-        - فحص التكرار البيني بين البنود المجهزة (`pendingLines`): عند تطابق بندين غير محفوظين، يعرض تحذير تكرار ويُعطل الحفظ.
+        - فحص التكرار مقابل كافة بنود الحالة المستهدفة (القائمة والجديدة معاً): عند تطابق التركيبة، يعرض تنبيه تكرار فوري داخل البند ويوجه لتعديل كمية البند القائم ويُعطل زر الحفظ.
         - يسمح لنفس القالب بالوجود أكثر من مرة إذا كانت خيارات الأنماط مختلفة؛ ويمنع تكرار القالب بدون أنماط.
-      - **الإضافة الذرية للبنود دفعة واحدة (Atomic Batch Addition API)**:
-        > Batch addition of pending order lines is atomic under the ProductionOrder lock.
-        - زر الحفظ العام `إضافة البنود إلى الطلب (N)` يرسل كافة البنود المجهزة في طلب واحد: `POST /api/production/orders/:orderId/lines/batch`.
-        - العملية تنفذ داخل معاملة واحدة وتحت قفل أمر الإنتاج التشاؤمي (`ProductionOrder lock root`): إما تنجح بالكامل أو تتراجع بالكامل (All-or-Nothing)، دون أي إدخال جزئي.
-        - إعادة استخدام منطق التحقق الداخلي وحساب الترتيب المتسلسل المكثف (Dense Sort Order: N+1 .. N+K).
+      - **مسار الحفظ الذري الموحد الأساسي (Primary Persistence: PUT /draft-lines)**:
+        > Primary save path: PUT /api/production/orders/:orderId/draft-lines
+        > Older single-line endpoints and POST /lines/batch remain available for compatibility/explicit API use, but are NOT the editor's primary save flow.
+        - زر الحفظ العام `حفظ مسودة أمر الإنتاج` يرسل كافة بنود الحالة المستهدفة في طلب HTTP واحد:
+          `PUT /api/production/orders/:orderId/draft-lines`.
+        - تنفذ العملية داخل معاملة قاعدة بيانات واحدة وتحت قفل أمر الإنتاج التشاؤمي (`ProductionOrder lock root`):
+          إما تنجح بالكامل أو تتراجع بالكامل (All-or-Nothing).
+        - يطبق الحفظ ذرياً:
+          - أرشفة البنود المستبعدة من المسودة وتصفير الهاش الخاص بها.
+          - تحديث كميات وخيارات الأنماط للبنود القائمة.
+          - إدخال البنود الجديدة دفعة واحدة.
+          - حفظ الترتيب الجديد وتعيين `sortOrder: 1..N` حتمياً ومكثفاً.
+          - إعادة حساب وتثبيت الهاشات النشطة (`active_configuration_hash`).
+        - حفظ المسودة يترك حالة أمر الإنتاج `DRAFT` كما هي دون أي اعتماد تلقائي.
+      - **إعادة ترتيب البنود في الذاكرة (In-Memory Client-Side Reordering)**:
+        - تتيح الواجهة أزرار تحريك للأعلى والأسفل `[↑] / [↓]` على كل بطاقة بند.
+        - الترتيب يتم حصراً في الذاكرة دون أي استدعاء شبكي فوري (Client-side in-memory swap).
+        - الزر `[↑]` معطل للبند الأول، والزر `[↓]` معطل للبند الأخير.
+        - يعتبر تغيير الترتيب تغييراً غير محفوظ (`dirty = true`) ويخضع لحارس المغادرة.
+        - يتم إرسال الترتيب النهائي للبنود ضمن مصفوفة `lines[]` في طلب الحفظ الذري وحفظه بتسلسل كثيف `1..N`.
       - **التوافق التام مع SweetAlert2 وإلغاء النوافذ البدائية (SweetAlert2 Invariants)**:
         - حظر تام لـ `confirm()` و `alert()` البدائية للمتصفح.
         - أرشفة البند، ومزامنة البند، وأرشفة الطلب تستخدم حصراً `Swal.fire` بألوان النظام المعتمدة (`#EE5253` للحذف/الأرشفة، `#0984E3` للمزامنة).
         - إلغاء الـ Modals القديمة للأرشفة (`archiveOrderModal`) في كافة شاشات الأوامر (`edit.ejs` و `index.ejs`).
         - استخراج موحد للأخطاء عبر `extractApiErrorMessage`، والتوجيه بعد أرشفة الطلب يعتمد نمط `pendingToast`.
-        - حماية المغادرة: تحذير المستخدم عبر SweetAlert2 عند وجود بنود مجهزة غير محفوظة عند الضغط على أزرار التنقل.
+        - حماية المغادرة: تحذير المستخدم عبر SweetAlert2 عند وجود تعديلات غير محفوظة عند محاولة التنقل.
   - **صحة وسلامة الكمية (Line Quantity Invariant)**:
     - الكمية عدد صحيح موجب حصراً `1 <= quantity <= 10000`، ويتم التحقق منها على 3 مستويات: DTO Validation و Service Invariant (`validateLineQuantity` تطلق `PRODUCTION_ORDER_LINE_QUANTITY_INVALID` للأعداد العشرية أو السالبة أو الصفر أو التي تتجاوز 10,000) وقيد Check في قاعدة البيانات `CHK_production_order_line_quantity`.
     - الترتيب مكثف `sortOrder: 1..N` ومدعوم بإعادة ترتيب كامل `PATCH /api/production/orders/:orderId/lines/reorder` بتبديل كامل دقيق (Exact Permutation).
@@ -185,21 +234,25 @@
     - **الحالات القديمة المقبولة (Stale State)**:
       - نمط مؤرشف: يتم الاحتفاظ بالاسم التاريخي للنمط والاسم التاريخي للخيار المختار، وتعيين `availableOptions = []` وخفض الجاهزية (`ready: false`).
       - نمط فعال لكن الخيار المختار أصبح مؤرشفاً: يتم الاحتفاظ بالاسم التاريخي للخيار المختار مع بقاء الخيارات الفعالة البديلة متاحة للاختيار، وخفض الجاهزية (`ready: false`) حتى يتم تصحيح أو مزامنة الاختيار.
+      - البند القديم/غير المتزامن (Stale Line) يمنع حفظ المسودة في المحرر حتى تتم مزامنته عبر معاينة المزامنة.
     - **التلف الهيكلي غير المقبول (Structural Corruption — Fail Closed)**:
-      - إذا كان سجل النمط أو الخيار مفقوداً تماماً من قاعدة البيانات، أو كان النمط أجنبياً لا ينتمي لقالب البند (`pattern.templateId !== line.templateId`)، أو كان الخيار أجنبياً لا ينتمي لنمطه المحدد (`option.patternId !== sel.templatePatternId`): تفشل القراءة وعمليات الجاهزية والمزامنة فوراً ومنغلقة أمنياً بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
+      - إذا كان سجل النمط أو الخيار مفقوداً تماماً من قاعدة البيانات، أو كان النمط أجنبياً لا ينتمي لقالب البند (`pattern.templateId !== line.templateId`)، أو كان الخيار أجنبياً لا ينتمي لنمطه المحدد (`option.patternId !== sel.templatePatternId`): تفشل القراءة وعمليات الجاهزية ومعاينة المزامنة والمزامنة فوراً ومنغلقة أمنياً بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
       - يُمنع إخفاء التلف أو معالجته صامتاً (No Silent Repair).
-  - **قواعد المزامنة مع القالب (Explicit Sync Semantics)**:
+  - **قواعد المزامنة مع القالب ومعاينة المزامنة (Template Sync & Sync Preview Contract)**:
     > Template changes do not modify Draft Orders silently.
     > GET requests strictly never perform automatic or silent repairs.
-    - التعديلات اللاحقة على القالب أثناء وجود الطلب في حالة المسودة يتم فحصها والتعامل معها حصراً عبر إجرائين:
+    > Unified Editor sync flow is read-only GET sync-preview; persistent commit occurs only through atomic draft save.
+    - التعديلات اللاحقة على القالب أثناء وجود الطلب في حالة المسودة يتم فحصها والتعامل معها حصراً عبر مسار المعاينة والتحقق:
       1. خدمة التحقق من الجاهزية `validateDraftForRelease`: قراءة فقط وتكشف أي نقص أو عدم توافق كـ issues دون تعديل قاعدة البيانات.
-      2. مسار المزامنة الصريح `POST /api/production/orders/:orderId/lines/:lineId/sync-template`:
-         - يتحقق أولاً من سلامة البنية الهيكلية للاختيارات ويرفض أي تلف هيكلي أجنبي بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
-         - يحتفظ بالاختيارات الصالحة القائمة.
-         - يضيف اختيارات الأنماط الجديدة بالخيار الافتراضي.
-         - يستبدل الخيار المؤرشف بأول خيار فعال بديل.
-         - يحذف الاختيارات القديمة للأنماط التي أصبحت غير نشطة أو محذوفة.
-         - يفشل ويتراجع ذرياً إذا كان أي نمط فعال يفتقر للخيارات الفعالة.
+      2. مسار معاينة المزامنة للمحرر الموحد `GET /api/production/orders/:orderId/lines/:lineId/sync-preview`:
+         - مسار قراءة فقط تماماً (READ ONLY) وينفذ صفر تعديلات في قاعدة البيانات (ZERO DB writes).
+         - يتحقق مسبقاً وبشكل صارم من السلامة الهيكلية للاختيارات ويرفض أي تلف هيكلي أجنبي أو مفقود فيزيائياً منغلقاً أمنياً (Fail Closed) بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
+         - إذا كانت الأنماط أو الخيارات المؤرشفة تنتمي للقالب والنمط الصحيحين، تُعامل كـ STALE (وليس تلفاً)، ويحسب الخادم الاختيارات الفعالة البديلة المقترحة.
+         - يستقبل المتصفح نتيجة المعاينة ويطبقها على البند في الذاكرة فقط (In-memory update)، مما يزيل حالة عدم التزامن ويجعل البند صالحاً للحفظ.
+         - التثبيت الدائم للتعديلات في قاعدة البيانات يحدث حصراً عند حفظ المسودة الذري عبر `PUT /draft-lines`.
+      3. مسار المزامنة الصريح المباشر `POST /api/production/orders/:orderId/lines/:lineId/sync-template`:
+         - مسار قديم / صريح لإجراء المزامنة الفورية وتعديل قاعدة البيانات مباشرة، ويبقى متاحاً للتوافق أو الاستخدام المباشر للـ API، لكنه ليس المسار المعتمد للمحرر الموحد.
+         - يطبق نفس قواعد فحص التلف الهيكلي `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT` واستبدال الخيارات المؤرشفة.
   - **الاستعلام الخفيف لإعدادات القالب (Lightweight Order Configuration)**:
     - استعلام `getOrderConfiguration(templateId)` يستعلم حصراً عن الأنماط وخياراتها دون استدعاء `listPatterns()` التي كانت تجلب المهام والمواد والمرفقات، مما يمنع فرط جلب البيانات (No Over-fetching) تماماً.
   - **ترقيم وتصفح منتقي القوالب في الواجهة (Template Picker Server-Side Pagination & Race Protection)**:
