@@ -139,6 +139,28 @@ export class ProductionTemplateController {
     }
   };
 
+  getReferenceOptions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const result = await this.templateService.getReferenceOptions({ page, limit, search });
+      res.status(200).json(ApiResponse.success(result));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getOrderConfiguration = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const config = await this.templateService.getOrderConfiguration(id as string);
+      res.status(200).json(ApiResponse.success(config));
+    } catch (error) {
+      next(error);
+    }
+  };
+
   // ==========================================
   // 2. SPECIFICATIONS
   // ==========================================

@@ -8,6 +8,7 @@ import { productionTeamApiRouter } from '../modules/production/team/production-t
 import { inventoryCategoryApiRouter } from '../modules/inventory/category/inventory-category.route.js';
 import { inventoryProductApiRouter } from '../modules/inventory/product/inventory-product.route.js';
 import { productionTemplateApiRouter } from '../modules/production/template/production-template.route.js';
+import { productionOrderApiRouter } from '../modules/production/order/production-order.route.js';
 
 const apiRouter: Router = Router();
 
@@ -43,6 +44,9 @@ apiRouter.use('/inventory/products', inventoryProductApiRouter);
 
 // Production Templates Routes (/api/production/templates)
 apiRouter.use('/production/templates', productionTemplateApiRouter);
+
+// Production Orders Routes (/api/production/orders)
+apiRouter.use('/production/orders', productionOrderApiRouter);
 
 export { apiRouter };
 

@@ -1,0 +1,105 @@
+<link rel="stylesheet" href="/css/production-orders.css">
+
+<!-- Header with Back Button -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="fw-bold mb-1" style="color: #1F2937;">
+      إنشاء أمر إنتاج جديد <i class="fa-solid fa-clipboard-list text-muted fs-5 ms-2"></i>
+    </h3>
+    <p class="text-muted mb-0 small">الخطوة الأولى: تحديد ترويسة الطلب ووصفه، ثم الانتقال لمساحة العمل لبناء البنود وضبط الأنماط</p>
+  </div>
+  <a href="/production/orders" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2" style="border-radius: 8px;">
+    <i class="fa-solid fa-arrow-right"></i>
+    <span>العودة للقائمة</span>
+  </a>
+</div>
+
+<!-- Alert Container -->
+<div id="createOrderAlert" class="alert alert-danger d-none mb-4" role="alert"></div>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+    <div class="card border-0 shadow-sm" style="border-radius: 12px;">
+      <div class="card-header bg-white border-bottom py-3">
+        <h6 class="fw-bold mb-0 text-dark">
+          <i class="fa-solid fa-file-invoice me-2 text-primary"></i> بيانات أمر الإنتاج الأساسية
+        </h6>
+      </div>
+      <div class="card-body p-4">
+        <form id="createOrderForm" novalidate>
+          <!-- Auto-generated order number notice -->
+          <div class="alert alert-info border-0 mb-4 d-flex align-items-center gap-3" style="background-color: rgba(9, 132, 227, 0.08); border-radius: 10px;">
+            <div class="fs-4 text-primary">
+              <i class="fa-solid fa-circle-info"></i>
+            </div>
+            <div class="small text-dark">
+              <strong>توليد تلقائي للرقم:</strong> سيقوم النظام بتوليد رقم أمر إنتاج تسلسلي آمن وفريد (مثل <code class="fw-bold">PO-000001</code>) عند الحفظ.
+            </div>
+          </div>
+
+          <!-- Description -->
+          <div class="mb-4">
+            <label for="orderDescription" class="form-label fw-bold text-dark">وصف أمر الإنتاج <span class="text-muted fw-normal">(اختياري)</span></label>
+            <input type="text" class="form-control" id="orderDescription" name="description" maxlength="500" placeholder="مثال: تصنيع غرف المجمع السكني - المرحلة الأولى">
+            <div class="form-text text-muted">وصف مختصر للغرض التشغيلي من هذا الطلب.</div>
+          </div>
+
+          <!-- Notes -->
+          <div class="mb-4">
+            <label for="orderNotes" class="form-label fw-bold text-dark">ملاحظات إضافية <span class="text-muted fw-normal">(اختياري)</span></label>
+            <textarea class="form-control" id="orderNotes" name="notes" rows="4" maxlength="2000" placeholder="أي تعليمات تشغيلية أو ملاحظات للمكتب الهندسي..."></textarea>
+          </div>
+
+          <div class="d-flex justify-content-end gap-2 border-top pt-3">
+            <a href="/production/orders" class="btn btn-outline-secondary px-4" style="border-radius: 8px;">إلغاء</a>
+            <button type="submit" id="submitOrderBtn" class="btn production-theme-btn px-4 d-inline-flex align-items-center gap-2">
+              <i class="fa-solid fa-arrow-left"></i>
+              <span>إنشاء ومتابعة إعداد الطلب</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('createOrderForm');
+  const alertBox = document.getElementById('createOrderAlert');
+  const submitBtn = document.getElementById('submitOrderBtn');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    alertBox.classList.add('d-none');
+    alertBox.textContent = '';
+
+    const description = document.getElementById('orderDescription').value.trim() || null;
+    const notes = document.getElementById('orderNotes').value.trim() || null;
+
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> جاري الإنشاء...';
+
+    try {
+      const response = await window.erpFetch('/api/production/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, notes }),
+      });
+
+      const resJson = await response.json();
+      if (!response.ok || !resJson.success) {
+        throw new Error(resJson.message || 'فشل إنشاء أمر الإنتاج');
+      }
+
+      const orderId = resJson.data.id;
+      window.location.href = `/production/orders/${orderId}/edit`;
+    } catch (err) {
+      alertBox.textContent = err.message || 'حدث خطأ غير متوقع';
+      alertBox.classList.remove('d-none');
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<i class="fa-solid fa-arrow-left"></i> <span>إنشاء ومتابعة إعداد الطلب</span>';
+    }
+  });
+});
+</script>

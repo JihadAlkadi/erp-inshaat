@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { productionTemplateController } from './production-template.controller.js';
 import { requireApiAuth } from '../../system/auth/auth.middleware.js';
-import { requirePermission } from '../../system/authorization/authorization.middleware.js';
+import { requirePermission, requireAnyPermission } from '../../system/authorization/authorization.middleware.js';
 import { SystemPermission } from '../../system/permission/constants/system-permission.enum.js';
 import { validateDto } from '../../../common/middleware/validate-dto.middleware.js';
 import { validateQueryDto } from '../../../common/middleware/validate-query-dto.middleware.js';
@@ -48,6 +48,31 @@ productionTemplateApiRouter.get(
   requirePermission(SystemPermission.PRODUCTION_TEMPLATE_VIEW),
   validateQueryDto(ListProductionTemplatesQueryDto),
   productionTemplateController.listTemplates
+);
+
+// GET /api/production/templates/reference-options - List active templates for reference picker
+productionTemplateApiRouter.get(
+  '/reference-options',
+  requireAnyPermission([
+    SystemPermission.PRODUCTION_ORDER_VIEW,
+    SystemPermission.PRODUCTION_ORDER_CREATE,
+    SystemPermission.PRODUCTION_ORDER_UPDATE,
+    SystemPermission.PRODUCTION_TEMPLATE_VIEW,
+  ]),
+  productionTemplateController.getReferenceOptions
+);
+
+// GET /api/production/templates/:id/order-configuration - Get template pattern & options configuration for order line preview
+productionTemplateApiRouter.get(
+  '/:id/order-configuration',
+  requireAnyPermission([
+    SystemPermission.PRODUCTION_ORDER_VIEW,
+    SystemPermission.PRODUCTION_ORDER_CREATE,
+    SystemPermission.PRODUCTION_ORDER_UPDATE,
+    SystemPermission.PRODUCTION_TEMPLATE_VIEW,
+  ]),
+  validateUuidParam('id'),
+  productionTemplateController.getOrderConfiguration
 );
 
 // GET /api/production/templates/:id - Get template details with stages & specifications

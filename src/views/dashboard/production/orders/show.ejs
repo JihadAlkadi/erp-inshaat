@@ -1,0 +1,265 @@
+<link rel="stylesheet" href="/css/production-orders.css">
+<style>
+  .show-order-header {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 1.5rem;
+  }
+  .info-badge-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: #475569;
+  }
+</style>
+
+<div id="productionOrderShowContainer" data-order-id="<%= order.id %>">
+  <!-- Page Header Card -->
+  <div class="show-order-header mb-4 shadow-sm">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+      <div>
+        <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+          <h3 class="fw-bold mb-0 text-dark">
+            أمر الإنتاج <span class="font-monospace text-primary" style="font-weight: 700;"><%= order.orderNumber %></span>
+          </h3>
+          <% if (order.status === 'APPROVED') { %>
+            <span class="badge bg-success-subtle text-success-emphasis px-3 py-1 rounded-pill">
+              <i class="fa-solid fa-circle-check me-1"></i> معتمد
+            </span>
+          <% } else { %>
+            <span class="badge bg-warning-subtle text-warning-emphasis px-3 py-1 rounded-pill">
+              <i class="fa-solid fa-file-pen me-1"></i> مسودة
+            </span>
+          <% } %>
+          <% if (typeof readiness !== 'undefined' && readiness) { %>
+            <% if (readiness.ready) { %>
+              <span class="badge bg-success-subtle text-success px-3 py-1 rounded-pill">
+                <i class="fa-solid fa-circle-check me-1"></i> جاهز للاعتماد
+              </span>
+            <% } else { %>
+              <span class="badge bg-danger-subtle text-danger px-3 py-1 rounded-pill">
+                <i class="fa-solid fa-triangle-exclamation me-1"></i> يحتاج مراجعة قبل الاعتماد
+              </span>
+            <% } %>
+          <% } %>
+        </div>
+        <p class="text-muted mb-0 small">عرض تفاصيل أمر الإنتاج والقوالب المعتمدة والخيارات المحددة (عرض للقراءة فقط)</p>
+      </div>
+
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <a href="/production/orders" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2 px-3 py-2" style="border-radius: 8px;">
+          <i class="fa-solid fa-arrow-right"></i>
+          <span>قائمة الأوامر</span>
+        </a>
+
+        <% if (order.status === 'DRAFT' && typeof canApproveOrder !== 'undefined' && canApproveOrder) { %>
+          <button type="button" id="approveOrderBtn" class="btn btn-success d-inline-flex align-items-center gap-2 px-3 py-2 shadow-sm" style="border-radius: 8px;">
+            <i class="fa-solid fa-circle-check"></i>
+            <span>اعتماد أمر الإنتاج</span>
+          </button>
+        <% } %>
+
+        <% if (order.status === 'APPROVED' && typeof canApproveOrder !== 'undefined' && canApproveOrder) { %>
+          <button type="button" id="reopenOrderBtn" class="btn btn-outline-warning d-inline-flex align-items-center gap-2 px-3 py-2 shadow-sm" style="border-radius: 8px;">
+            <i class="fa-solid fa-rotate-left"></i>
+            <span>إعادة إلى مسودة</span>
+          </button>
+        <% } %>
+
+        <% if (typeof canUpdateOrder !== 'undefined' && canUpdateOrder && order.status === 'DRAFT') { %>
+          <a href="/production/orders/<%= order.id %>/edit" id="editOrderNavBtn" class="btn production-theme-btn d-inline-flex align-items-center gap-2 px-4 py-2 shadow-sm" style="border-radius: 8px;">
+            <i class="fa-solid fa-pen-to-square"></i>
+            <span>تعديل الطلب</span>
+          </a>
+        <% } %>
+      </div>
+    </div>
+  </div>
+
+  <!-- Order Summary & KPIs -->
+  <div class="row g-3 mb-4">
+    <!-- Summary Card -->
+    <div class="col-12 col-lg-7">
+      <div class="card border-0 shadow-sm h-100" style="border-radius: 14px; border: 1px solid #e2e8f0;">
+        <div class="card-body p-4 d-flex flex-column justify-content-between">
+          <div>
+            <div class="d-flex align-items-center gap-2 text-muted small fw-semibold mb-2">
+              <i class="fa-solid fa-circle-info text-primary"></i>
+              <span>بيانات الطلب:</span>
+            </div>
+            <p class="text-dark mb-3 fs-6" style="line-height: 1.6;">
+              <%= order.description || 'لا يوجد وصف محدد لهذا الطلب.' %>
+            </p>
+
+            <% if (order.notes) { %>
+              <div class="p-3 rounded-3 bg-light border border-light-subtle text-muted small mb-3">
+                <strong class="text-dark d-block mb-1"><i class="fa-solid fa-note-sticky text-warning me-1"></i> ملاحظات إضافية:</strong>
+                <%= order.notes %>
+              </div>
+            <% } %>
+          </div>
+
+          <div class="d-flex align-items-center gap-4 text-muted small pt-3 border-top flex-wrap">
+            <div class="info-badge-item">
+              <i class="fa-solid fa-user-circle text-secondary"></i>
+              <span>المنشئ:</span>
+              <strong class="text-dark"><%= order.createdByUser ? order.createdByUser.fullName : 'غير محدد' %></strong>
+            </div>
+            <div class="info-badge-item">
+              <i class="fa-solid fa-calendar-day text-secondary"></i>
+              <span>تاريخ الإنشاء:</span>
+              <span class="text-dark"><%= new Date(order.createdAt).toLocaleDateString('ar-EG') %></span>
+            </div>
+            <% if (order.status === 'APPROVED') { %>
+              <div class="info-badge-item">
+                <i class="fa-solid fa-user-check text-success"></i>
+                <span>تم الاعتماد بواسطة:</span>
+                <strong class="text-dark"><%= order.approvedByUser ? order.approvedByUser.fullName : 'غير محدد' %></strong>
+              </div>
+              <div class="info-badge-item">
+                <i class="fa-solid fa-calendar-check text-success"></i>
+                <span>تاريخ الاعتماد:</span>
+                <span class="text-dark"><%= order.approvedAt ? new Date(order.approvedAt).toLocaleDateString('ar-EG') : '—' %></span>
+              </div>
+            <% } %>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="col-12 col-lg-5">
+      <div class="d-flex flex-column gap-3 h-100 justify-content-center">
+        <div class="production-kpi-card" style="border: 1px solid #e2e8f0;">
+          <div class="production-kpi-icon">
+            <i class="fa-solid fa-cubes"></i>
+          </div>
+          <div>
+            <div class="text-muted small fw-semibold">إجمالي بنود الإنتاج</div>
+            <div class="fs-4 fw-bold text-dark font-monospace"><%= order.summary.lineCount %> <span class="fs-6 text-muted fw-normal">بند</span></div>
+          </div>
+        </div>
+
+        <div class="production-kpi-card" style="border: 1px solid #e2e8f0;">
+          <div class="production-kpi-icon">
+            <i class="fa-solid fa-hashtag"></i>
+          </div>
+          <div>
+            <div class="text-muted small fw-semibold">إجمالي الكمية المخططة</div>
+            <div class="fs-4 fw-bold text-primary font-monospace"><%= order.summary.totalQuantity %> <span class="fs-6 text-muted fw-normal">وحدة</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Readiness Issues (if any) -->
+  <% if (typeof readiness !== 'undefined' && readiness && !readiness.ready && readiness.issues && readiness.issues.length > 0) { %>
+    <div class="card border-0 shadow-sm mb-4" style="border-radius: 14px; border-right: 5px solid #FF9F43 !important; background-color: #FFFDF8; border: 1px solid #fed7aa;">
+      <div class="card-body p-4">
+        <div class="fw-bold text-warning-emphasis d-flex align-items-center gap-2 mb-2">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>تنبيهات حالة الجاهزية:</span>
+        </div>
+        <p class="text-muted small mb-2">هناك بيانات ومحددات تحتاج المراجعة قبل اعتماد الطلب للإنتاج:</p>
+        <ul class="mb-0 pe-3">
+          <% readiness.issues.forEach(function(issue) { %>
+            <li class="small text-danger mb-1"><%= issue.message %></li>
+          <% }); %>
+        </ul>
+      </div>
+    </div>
+  <% } %>
+
+  <!-- Lines Section Header -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="fw-bold mb-0 text-dark d-flex align-items-center gap-2">
+        <i class="fa-solid fa-list-check text-primary"></i>
+        <span>بنود أمر الإنتاج</span>
+      </h5>
+      <div class="text-muted small">تفاصيل القوالب والكميات والخيارات المحددة لكل بند في الطلب</div>
+    </div>
+    <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-2 rounded-pill font-monospace">
+      <%= (order.lines ? order.lines.length : 0) %> بند
+    </span>
+  </div>
+
+  <!-- Production Lines Table -->
+  <% if (!order.lines || order.lines.length === 0) { %>
+    <div class="card border-0 shadow-sm text-center py-5" style="border-radius: 14px; border: 1px solid #e2e8f0;">
+      <div class="card-body py-4">
+        <div class="mb-3 text-secondary opacity-50" style="font-size: 3rem;">
+          <i class="fa-solid fa-cubes-stacked"></i>
+        </div>
+        <h5 class="fw-bold text-dark mb-1">لا توجد بنود إنتاج في هذا الطلب بعد</h5>
+        <p class="text-muted small mb-3">لم تتم إضافة أي بنود إنتاج إلى هذه المسودة حتى الآن.</p>
+        <% if (typeof canUpdateOrder !== 'undefined' && canUpdateOrder && order.status === 'DRAFT') { %>
+          <a href="/production/orders/<%= order.id %>/edit" class="btn production-theme-btn btn-sm px-4 py-2">
+            <i class="fa-solid fa-pen-to-square me-1"></i> إعداد وإضافة البنود
+          </a>
+        <% } %>
+      </div>
+    </div>
+  <% } else { %>
+    <div class="card border-0 shadow-sm show-lines-card mb-4">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="orderLinesTable">
+          <thead class="table-light">
+            <tr class="text-muted small">
+              <th class="py-3 px-3 text-center" style="width: 70px;">#</th>
+              <th class="py-3 px-3">القالب</th>
+              <th class="py-3 px-3" style="width: 140px;">الكود</th>
+              <th class="py-3 px-3 text-center" style="width: 120px;">الكمية</th>
+              <th class="py-3 px-3">الأنماط وخيارات التخصيص</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% order.lines.forEach(function(line) { %>
+              <tr>
+                <td data-label="#" class="text-center font-monospace text-muted fw-bold">#<%= line.sortOrder %></td>
+                <td data-label="القالب">
+                  <div class="fw-bold text-dark"><%= line.template ? line.template.name : 'قالب غير معروف' %></div>
+                  <% if (line.template && line.template.referenceNumber) { %>
+                    <div class="text-muted small font-monospace">المرجع: <%= line.template.referenceNumber %></div>
+                  <% } %>
+                </td>
+                <td data-label="الكود">
+                  <span class="badge bg-light text-secondary font-monospace border"><%= line.template ? line.template.code : '—' %></span>
+                </td>
+                <td data-label="الكمية" class="text-center">
+                  <span class="fw-bold text-primary font-monospace fs-6"><%= line.quantity %></span>
+                </td>
+                <td data-label="الأنماط">
+                  <% if (!line.patternSelections || line.patternSelections.length === 0) { %>
+                    <span class="badge bg-secondary-subtle text-secondary px-2 py-1 rounded-pill">بدون أنماط اختيارية</span>
+                  <% } else { %>
+                    <div class="d-flex flex-wrap gap-1">
+                      <% line.patternSelections.forEach(function(sel) { %>
+                        <span class="pattern-chip">
+                          <span class="text-muted"><%= sel.patternName %>:</span>
+                          <strong class="text-dark"><%= sel.selectedOptionName %></strong>
+                        </span>
+                      <% }); %>
+                    </div>
+                  <% } %>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3" class="py-3 px-3 fw-bold text-dark">الإجمالي الكلي</td>
+              <td class="py-3 px-3 text-center font-monospace fw-bold text-primary fs-6"><%= order.summary.totalQuantity %></td>
+              <td class="py-3 px-3 text-muted small"><%= order.summary.lineCount %> بنود مسجلة</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  <% } %>
+</div>
+
+<script src="/js/production-order-show.js"></script>
