@@ -10,6 +10,7 @@ import { UpdateProductionOrderLineDto } from '../order-line/dto/update-productio
 import { ReorderProductionOrderLinesDto } from '../order-line/dto/reorder-production-order-lines.dto.js';
 import { CommitProductionOrderDraftLinesDto } from '../order-line/dto/commit-production-order-draft-lines.dto.js';
 import { UpdatePatternSelectionDto } from '../order-line-pattern-selection/dto/update-pattern-selection.dto.js';
+import { BusinessRuleError } from '../../../common/errors/business-rule.error.js';
 
 export class ProductionOrderController {
   constructor(private orderService: ProductionOrderService = productionOrderService) {}
@@ -239,6 +240,12 @@ export class ProductionOrderController {
     try {
       const { orderId } = req.params;
       const currentUser = (req as any).user;
+      if (!currentUser?.id) {
+        throw new BusinessRuleError(
+          'تعذر تحديد المستخدم الذي يقوم باعتماد أمر الإنتاج',
+          'PRODUCTION_ORDER_APPROVER_REQUIRED'
+        );
+      }
       const order = await this.orderService.approveOrder(orderId as string, currentUser);
       res.status(200).json(ApiResponse.success(order, 'تم اعتماد أمر الإنتاج بنجاح'));
     } catch (error) {

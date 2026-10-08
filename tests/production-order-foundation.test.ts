@@ -2723,6 +2723,380 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       assert.ok(css.includes('.show-lines-card tbody tr td'), 'production-orders.css must style mobile table cells as stacked flex cards');
     });
   });
+
+  describe('16. Final Closure & Lifecycle Hardening Regression Invariants', () => {
+    // ----------------------------------------------------
+    // 1. PAGINATION CONTRACT & PAYLOAD VALIDATION TESTS
+    // ----------------------------------------------------
+    it('production-orders.js: validates pagination payload contract strictly', () => {
+      const js = readFileSync(resolve(process.cwd(), 'src/public/js/production-orders.js'), 'utf-8');
+      assert.ok(js.includes('const { items, total, page, limit, totalPages, summary } = data'), 'Must destructure complete contract');
+      assert.ok(js.includes('!Array.isArray(items)'), 'Must validate items array');
+      assert.ok(js.includes('!Number.isInteger(total)'), 'Must validate total integer');
+      assert.ok(js.includes('!Number.isInteger(page) || page < 1'), 'Must validate page >= 1');
+      assert.ok(js.includes('!Number.isInteger(totalPages) || totalPages < 1'), 'Must validate totalPages >= 1');
+    });
+
+    // ----------------------------------------------------
+    // 2. HISTORICAL / STALE SELECTION LIFECYCLE DTO TESTS
+    // ----------------------------------------------------
+    it('getOrderById(): returns explicit lifecycle metadata and availableOptions contains only active options', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add a line with pattern selections
+      const line = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // 1. Initially both patterns and options are active
+      let orderDto = await service.getOrderById('ord-1');
+      let lineDto = orderDto.lines?.find((l) => l.id === line.id);
+      assert.ok(lineDto);
+      for (const sel of lineDto.patternSelections || []) {
+        assert.equal(sel.isPatternActive, true, 'Pattern must be active');
+        assert.equal(sel.isSelectedOptionActive, true, 'Option must be active');
+        assert.equal(sel.isHistorical, false, 'Selection must not be historical');
+        assert.ok(sel.availableOptions.length > 0, 'availableOptions must contain active options');
+      }
+
+      // 2. Archive option opt-1a while pattern p-1 remains active
+      const opt1a = store.options.find((o) => o.id === 'opt-1a');
+      if (opt1a) opt1a.deletedAt = new Date();
+
+      orderDto = await service.getOrderById('ord-1');
+      lineDto = orderDto.lines?.find((l) => l.id === line.id);
+      const selP1 = lineDto?.patternSelections?.find((s) => s.templatePatternId === 'p-1');
+      assert.ok(selP1);
+      assert.equal(selP1.isPatternActive, true, 'Pattern p-1 remains active');
+      assert.equal(selP1.isSelectedOptionActive, false, 'Archived option must not be active');
+      assert.equal(selP1.isHistorical, true, 'Archived selected option makes selection historical');
+      assert.equal(selP1.selectedOptionName, 'خيار 1-أ', 'Historical name preserved');
+      // availableOptions must NOT contain opt-1a!
+      assert.ok(!selP1.availableOptions.some((o) => o.id === 'opt-1a'), 'Archived option must NOT be in availableOptions');
+      assert.ok(selP1.availableOptions.some((o) => o.id === 'opt-1b'), 'Active alternative option must be in availableOptions');
+
+      // 3. Archive pattern p-2
+      const pat2 = store.patterns.find((p) => p.id === 'p-2');
+      if (pat2) pat2.deletedAt = new Date();
+
+      orderDto = await service.getOrderById('ord-1');
+      lineDto = orderDto.lines?.find((l) => l.id === line.id);
+      const selP2 = lineDto?.patternSelections?.find((s) => s.templatePatternId === 'p-2');
+      assert.ok(selP2);
+      assert.equal(selP2.isPatternActive, false, 'Archived pattern must be marked inactive');
+      assert.equal(selP2.isSelectedOptionActive, false, 'Option under archived pattern is inactive');
+      assert.equal(selP2.isHistorical, true, 'Selection is historical');
+      assert.equal(selP2.availableOptions.length, 0, 'Archived pattern must have empty availableOptions');
+    });
+
+    it('production-order-edit.js: strictly does NOT inject historical option fallback into availableOptions', () => {
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+      assert.ok(!editJs.includes('[{ id: sel.selectedOptionId'), 'Must not create fake availableOptions array with historical option');
+    });
+
+    it('production-order-edit.js: evaluateLines enforces that selected option belongs to active availableOptions', () => {
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+      assert.ok(editJs.includes('pat.availableOptions.some'), 'Must check active membership of selected option in availableOptions');
+      assert.ok(editJs.includes('pat.isHistorical || !selectedExistsInActiveOptions'), 'Must invalidate line if option is historical or not active');
+    });
+
+    // ----------------------------------------------------
+    // 3. SYNC PREVIEW STRUCTURAL CORRUPTION (FAIL-CLOSED)
+    // ----------------------------------------------------
+    it('previewSyncDraftLine(): foreign pattern belonging to another template throws PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add a foreign pattern belonging to a different template
+      store.patterns.push({
+        id: 'p-foreign-template',
+        templateId: 'different-template-uuid',
+        name: 'نمط لقالب آخر',
+        deletedAt: null,
+        createdAt: new Date(),
+      });
+      store.options.push({
+        id: 'opt-foreign-tmpl',
+        patternId: 'p-foreign-template',
+        name: 'خيار لقالب آخر',
+        sortOrder: 1,
+        deletedAt: null,
+      });
+
+      const line = await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 1,
+      });
+
+      // Inject corrupt selection
+      store.selections.push({
+        id: 'sel-foreign-pat',
+        orderLineId: line.id,
+        templatePatternId: 'p-foreign-template',
+        selectedOptionId: 'opt-foreign-tmpl',
+      });
+
+      await assert.rejects(
+        async () => {
+          await service.previewSyncDraftLine('ord-1', line.id);
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT');
+          return true;
+        }
+      );
+    });
+
+    it('previewSyncDraftLine(): foreign option belonging to another pattern throws PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      const line = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Mismatch: set selection for p-1 with option belonging to p-2!
+      const selP1 = store.selections.find((s) => s.orderLineId === line.id && s.templatePatternId === 'p-1');
+      assert.ok(selP1);
+      selP1.selectedOptionId = 'opt-2a'; // Belongs to p-2, not p-1!
+
+      await assert.rejects(
+        async () => {
+          await service.previewSyncDraftLine('ord-1', line.id);
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT');
+          return true;
+        }
+      );
+    });
+
+    it('previewSyncDraftLine(): physically missing pattern throws PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      const line = await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 1,
+      });
+
+      // Inject selection with non-existent pattern
+      store.selections.push({
+        id: 'sel-missing-pat',
+        orderLineId: line.id,
+        templatePatternId: 'non-existent-pattern-uuid',
+        selectedOptionId: 'opt-1a',
+      });
+
+      await assert.rejects(
+        async () => {
+          await service.previewSyncDraftLine('ord-1', line.id);
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT');
+          return true;
+        }
+      );
+    });
+
+    it('previewSyncDraftLine(): physically missing option throws PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      const line = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Set non-existent option
+      const selP1 = store.selections.find((s) => s.orderLineId === line.id && s.templatePatternId === 'p-1');
+      assert.ok(selP1);
+      selP1.selectedOptionId = 'non-existent-option-uuid';
+
+      await assert.rejects(
+        async () => {
+          await service.previewSyncDraftLine('ord-1', line.id);
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT');
+          return true;
+        }
+      );
+    });
+
+    it('previewSyncDraftLine(): archived valid option is treated as STALE and suggests replacement without mutating DB', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      const line = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 1,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Archive opt-1a
+      const opt1a = store.options.find((o) => o.id === 'opt-1a');
+      if (opt1a) opt1a.deletedAt = new Date();
+
+      const preview = await service.previewSyncDraftLine('ord-1', line.id);
+
+      assert.ok(preview);
+      assert.equal(preview.hasChanges, true);
+      // Selected option in DB MUST remain opt-1a (ZERO database mutations!)
+      const dbSel = store.selections.find((s) => s.orderLineId === line.id && s.templatePatternId === 'p-1');
+      assert.equal(dbSel?.selectedOptionId, 'opt-1a', 'Sync preview must NOT mutate selection in DB');
+
+      // But preview recommends replacement with first active option (opt-1b)
+      const resultingP1 = preview.resultingSelections.find((s) => s.patternId === 'p-1');
+      assert.equal(resultingP1?.optionId, 'opt-1b', 'Preview must suggest active alternative opt-1b');
+    });
+
+    // ----------------------------------------------------
+    // 4. REORDER CONTROLS & PERSISTENCE TESTS
+    // ----------------------------------------------------
+    it('production-order-edit.js: defines Up and Down reorder controls with boundary disabled states', () => {
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+      assert.ok(editJs.includes('moveUpBtn.disabled = index === 0'), 'First line must have moveUpBtn disabled');
+      assert.ok(editJs.includes('moveDownBtn.disabled = index === lines.length - 1'), 'Last line must have moveDownBtn disabled');
+      assert.ok(editJs.includes('fa-arrow-up'), 'Must use up icon');
+      assert.ok(editJs.includes('fa-arrow-down'), 'Must use down icon');
+    });
+
+    it('commitDraftLines(): persists reordered target lines with dense sortOrder 1..N', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Create lines A, B, C
+      const lineA = await service.addLine('ord-1', { templateId: 't-no-patterns', quantity: 1 });
+      const lineB = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 2,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1a' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+      const lineC = await service.addLine('ord-1', {
+        templateId: 't-with-patterns',
+        quantity: 3,
+        patternSelections: [
+          { patternId: 'p-1', optionId: 'opt-1b' },
+          { patternId: 'p-2', optionId: 'opt-2a' },
+        ],
+      });
+
+      // Submit reordered payload: C, A, B
+      const result = await service.commitDraftLines('ord-1', {
+        lines: [
+          {
+            id: lineC.id,
+            templateId: 't-with-patterns',
+            quantity: 3,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1b' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+          {
+            id: lineA.id,
+            templateId: 't-no-patterns',
+            quantity: 1,
+          },
+          {
+            id: lineB.id,
+            templateId: 't-with-patterns',
+            quantity: 2,
+            patternSelections: [
+              { patternId: 'p-1', optionId: 'opt-1a' },
+              { patternId: 'p-2', optionId: 'opt-2a' },
+            ],
+          },
+        ],
+      });
+
+      const resLines = result.lines || [];
+      assert.equal(resLines[0].id, lineC.id);
+      assert.equal(resLines[0].sortOrder, 1);
+      assert.equal(resLines[1].id, lineA.id);
+      assert.equal(resLines[1].sortOrder, 2);
+      assert.equal(resLines[2].id, lineB.id);
+      assert.equal(resLines[2].sortOrder, 3);
+    });
+
+    // ----------------------------------------------------
+    // 5. READINESS TEXT IN UI
+    // ----------------------------------------------------
+    it('Order UI screens strictly do NOT contain visible phrase "جاهز للإطلاق" and use "جاهز للاعتماد"', () => {
+      const showEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/show.ejs'), 'utf-8');
+      const editJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-edit.js'), 'utf-8');
+      const indexEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/index.ejs'), 'utf-8');
+
+      assert.ok(!showEjs.includes('جاهز للإطلاق'), 'show.ejs must not contain "جاهز للإطلاق"');
+      assert.ok(showEjs.includes('جاهز للاعتماد'), 'show.ejs must contain "جاهز للاعتماد"');
+
+      assert.ok(!editJs.includes('جاهز للإطلاق'), 'production-order-edit.js must not contain "جاهز للإطلاق"');
+      assert.ok(editJs.includes('جاهز للاعتماد'), 'production-order-edit.js must contain "جاهز للاعتماد"');
+
+      assert.ok(!indexEjs.includes('قبل الإطلاق'), 'index.ejs must not contain "قبل الإطلاق"');
+      assert.ok(indexEjs.includes('قبل الاعتماد'), 'index.ejs must contain "قبل الاعتماد"');
+    });
+
+    // ----------------------------------------------------
+    // 6. APPROVAL AUTHENTICATED USER IDENTITY
+    // ----------------------------------------------------
+    it('approveOrder(): throws PRODUCTION_ORDER_APPROVER_REQUIRED when user ID is missing and has no system-user fallback', async () => {
+      const { service } = createDuplicateTestContext();
+
+      // Add a valid line to make order ready
+      await service.addLine('ord-1', {
+        templateId: 't-no-patterns',
+        quantity: 2,
+      });
+
+      // Attempt approve with empty string
+      await assert.rejects(
+        async () => {
+          await service.approveOrder('ord-1', '');
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_APPROVER_REQUIRED');
+          return true;
+        }
+      );
+
+      // Attempt approve with null user object
+      await assert.rejects(
+        async () => {
+          await service.approveOrder('ord-1', null as any);
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_APPROVER_REQUIRED');
+          return true;
+        }
+      );
+
+      // Verify production-order.service.ts strictly does NOT contain 'system-user'
+      const svcCode = readFileSync(resolve(process.cwd(), 'src/modules/production/order/production-order.service.ts'), 'utf-8');
+      assert.ok(!svcCode.includes("'system-user'"), 'production-order.service.ts must not contain "system-user" fallback');
+    });
+  });
 });
 
 

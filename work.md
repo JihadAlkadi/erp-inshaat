@@ -40,14 +40,27 @@
         - المرحلة C: كتابة رموز الـ Hashes النهائية المعتمدة والتحقق الصارم من عدم خروج أي بند نشط بدون Hash.
     - التحقق المسبق الشامل لكامل الحالة المستهدفة (Pre-Validation Before Mutation):
       - يتم فحص صحة جميع الكميات، ووجود القوالب وفعاليتها، وصحة اختيارات الأنماط، وعدم تكرار الـ Hashes داخل الـ Target State (`PRODUCTION_ORDER_LINE_DUPLICATE_CONFIGURATION`)، وصلاحية المعرفات القائمة قبل إجراء أي تعديل في قاعدة البيانات.
-  - **معاينة المزامنة مع القالب في الذاكرة (In-Memory Sync Preview Endpoint)**:
-    > Sync Preview changes only in-memory editor state.
-    > Persistence occurs through atomic Draft Save.
-    > Sync preview mutates ZERO rows in database.
+  - **معاينة المزامنة وعقد الخيارات التاريخية والتلف الهيكلي (Sync Preview & Historical Option Contract)**:
+    > availableOptions contains active options only.
+    > Historical selected option is preserved separately and is never treated as active.
+    > Stale line must be synchronized before atomic save.
+    > Sync Preview is read-only, mutates ZERO database rows, and fails closed on structural corruption.
+    > Line reorder is performed in-memory and persisted only through atomic draft commit.
+    > Approver identity must be authenticated; strictly NO fake "system-user" fallback.
     - مسار المعاينة `GET /api/production/orders/:orderId/lines/:lineId/sync-preview`:
-      - يستخدم خوارزمية التوفيق الخادمية المتطابقة مع سياسة المزامنة لتحديد الخيارات البديلة والتنبيهات دون أي تعديل في قاعدة البيانات.
-      - في الواجهة: الضغط على "مزامنة مع القالب" يطلب المعاينة ويحدث حالة البند محلياً في الذاكرة، ويظهر التغييرات للمستخدم كحالة غير محفوظة تخضع للحفظ الذري العام.
-      - الخيارات المؤرشفة تظهر صراحة كخيارات تاريخية غير فعالة ولا تُعرض كخيارات فعالة وهمية.
+      - يتحقق أولاً من عدم وجود أي تلف هيكلي (Fail Closed): إذا كان النمط أو الخيار مفقوداً فيزيائياً، أو كان النمط أجنبياً لا ينتمي لقالب البند، أو كان الخيار أجنبياً لا ينتمي للنمط، تفشل العملية فوراً بالرمز `PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT`.
+      - الأنماط والخيارات المؤرشفة التي تنتمي للقالب الصحيح تُعامل كـ STALE فقط وليست تلفاً هيكلياً؛ يقترح النظام الخيار الفعال الافتراضي أو يضع تحذيراً بحذف النمط القديم.
+      - لا يقوم المسار بأي كتابة أو تعديل في قاعدة البيانات إطلاقاً (Zero DB mutations).
+    - عقد الخيارات التاريخية في الواجهة ومحرك الحفظ:
+      - حقل `availableOptions` يحتوي حصراً على الخيارات الفعالة الحالية (`active options only`) ولا يحتوي إطلاقاً على خيارات مؤرشفة.
+      - تُعرض الخيارات التاريخية غير الفعالة بوضوح كـ شارة تاريخية ("الخيار السابق: X (غير فعال)")، ولا يدرج الخيار المؤرشف كخيار فعال وهمي داخل قائمة `<select>`.
+      - يمنع حفظ البند طالما يحتوي على خيار تاريخي أو غير فعال؛ يجب على المستخدم الضغط على "مزامنة مع القالب" لتوليد تركيبة فعالة صالحة للحفظ.
+    - إعادة ترتيب البنود في المحرر (In-Memory Line Reorder):
+      - تتيح الواجهة أزرار تحريك للأعلى والأسفل `[↑] / [↓]` على كل بطاقة بند لتبديل الترتيب محلياً في الذاكرة.
+      - يعتبر تغيير الترتيب تغييراً غير محفوظ (`dirty = true`) ويخضع لحارس المغادرة.
+      - يتم إرسال الترتيب الجديد النهائي ضمن مصفوفة `lines[]` في طلب الحفظ الذري الموحد وتعيين `sortOrder: 1..N` حتمياً ومكثفاً.
+    - هوية المعتمد في مسار الاعتماد (`approveOrder`):
+      - يشترط وجود معرف مستخدم موثق وصالح (`currentUser.id`)؛ وفي حال غيابه تفشل العملية فوراً بالرمز `PRODUCTION_ORDER_APPROVER_REQUIRED` دون أي استخدام لبدائل وهمية مثل `system-user`.
   - **تحسينات تجربة المستخدم والأمان لواجهات أوامر الإنتاج**:
     - **سلامة إدخال الكميات (Quantity Typing UX & No-parseInt Invariant)**:
       - حظر تام لـ `parseInt` في معالجة كميات الأوامر؛ الاعتماد حصراً على `Number(value)` وفحص `Number.isInteger(value) && value >= 1 && value <= 10000`.

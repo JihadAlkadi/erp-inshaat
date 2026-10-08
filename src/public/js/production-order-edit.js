@@ -73,12 +73,11 @@ document.addEventListener('DOMContentLoaded', () => {
       patternId: sel.templatePatternId,
       patternName: sel.patternName,
       selectedOptionId: sel.selectedOptionId,
-      availableOptions:
-        sel.availableOptions && sel.availableOptions.length > 0
-          ? sel.availableOptions
-          : [{ id: sel.selectedOptionId, name: sel.selectedOptionName }],
-      isHistorical: sel.isHistorical || false,
-      historicalOptionName: sel.selectedOptionName || null,
+      availableOptions: sel.availableOptions || [],
+      isPatternActive: sel.isPatternActive !== false,
+      isSelectedOptionActive: sel.isSelectedOptionActive !== false,
+      isHistorical: sel.isHistorical === true,
+      historicalOptionName: sel.isHistorical ? sel.selectedOptionName : null,
     })),
     originalSelections: new Map(
       (line.patternSelections || []).map((sel) => [sel.templatePatternId, sel.selectedOptionId])
@@ -249,11 +248,25 @@ document.addEventListener('DOMContentLoaded', () => {
       // 2. Validate Pattern Selections
       for (const pat of line.patterns) {
         if (!pat.availableOptions || pat.availableOptions.length === 0) {
-          line.validationErrors.push(`النمط "${pat.patternName}" لا يحتوي على خيارات فعالة.`);
+          if (pat.isPatternActive === false) {
+            line.validationErrors.push(`النمط "${pat.patternName}" لم يعد جزءاً من القالب الحالي. قم بمزامنة البند مع القالب.`);
+          } else {
+            line.validationErrors.push(`النمط "${pat.patternName}" لا يحتوي على خيارات فعالة. قم بمزامنة البند مع القالب.`);
+          }
           allValid = false;
         } else if (!pat.selectedOptionId) {
           line.validationErrors.push(`يرجى تحديد خيار للنمط "${pat.patternName}".`);
           allValid = false;
+        } else {
+          const selectedExistsInActiveOptions = pat.availableOptions.some(
+            (opt) => opt.id === pat.selectedOptionId
+          );
+          if (pat.isHistorical || !selectedExistsInActiveOptions) {
+            line.validationErrors.push(
+              `الخيار المحدد للنمط "${pat.patternName}" لم يعد فعالاً. قم بمزامنة البند مع القالب قبل الحفظ.`
+            );
+            allValid = false;
+          }
         }
       }
 
@@ -420,6 +433,53 @@ document.addEventListener('DOMContentLoaded', () => {
       const actionsDiv = document.createElement('div');
       actionsDiv.className = 'd-flex align-items-center gap-2';
 
+      // Reorder Buttons (Move Up / Move Down)
+      if (lines.length > 1) {
+        const reorderGroup = document.createElement('div');
+        reorderGroup.className = 'btn-group btn-group-sm me-1';
+
+        const moveUpBtn = document.createElement('button');
+        moveUpBtn.type = 'button';
+        moveUpBtn.className = 'btn btn-outline-secondary btn-sm py-1 px-2';
+        moveUpBtn.style.fontSize = '0.75rem';
+        moveUpBtn.title = 'تحريك للأعلى';
+        moveUpBtn.setAttribute('aria-label', 'تحريك للأعلى');
+        moveUpBtn.disabled = index === 0;
+        const upIcon = document.createElement('i');
+        upIcon.className = 'fa-solid fa-arrow-up';
+        moveUpBtn.appendChild(upIcon);
+        moveUpBtn.addEventListener('click', () => {
+          if (index > 0) {
+            const temp = lines[index];
+            lines[index] = lines[index - 1];
+            lines[index - 1] = temp;
+            renderLines();
+          }
+        });
+
+        const moveDownBtn = document.createElement('button');
+        moveDownBtn.type = 'button';
+        moveDownBtn.className = 'btn btn-outline-secondary btn-sm py-1 px-2';
+        moveDownBtn.style.fontSize = '0.75rem';
+        moveDownBtn.title = 'تحريك للأسفل';
+        moveDownBtn.setAttribute('aria-label', 'تحريك للأسفل');
+        moveDownBtn.disabled = index === lines.length - 1;
+        const downIcon = document.createElement('i');
+        downIcon.className = 'fa-solid fa-arrow-down';
+        moveDownBtn.appendChild(downIcon);
+        moveDownBtn.addEventListener('click', () => {
+          if (index < lines.length - 1) {
+            const temp = lines[index];
+            lines[index] = lines[index + 1];
+            lines[index + 1] = temp;
+            renderLines();
+          }
+        });
+
+        reorderGroup.append(moveUpBtn, moveDownBtn);
+        actionsDiv.appendChild(reorderGroup);
+      }
+
       // "مزامنة مع القالب" Button for Existing Lines
       if (!line.isNew) {
         const syncBtn = document.createElement('button');
@@ -545,14 +605,29 @@ document.addEventListener('DOMContentLoaded', () => {
           // If option is historical/inactive, show historical note
           if (pat.isHistorical) {
             const histBadge = document.createElement('span');
-            histBadge.className = 'badge bg-danger-subtle text-danger px-2 py-1 mb-1 small';
-            histBadge.textContent = `الخيار السابق: ${pat.historicalOptionName || 'غير فعال'}`;
+            histBadge.className = 'badge bg-danger-subtle text-danger px-2 py-1 mb-1 small text-wrap';
+            histBadge.textContent = pat.isPatternActive === false
+              ? `النمط "${pat.patternName}" لم يعد في القالب (غير فعال)`
+              : `الخيار السابق: ${pat.historicalOptionName || 'غير فعال'}`;
             patField.appendChild(histBadge);
           }
 
           const select = document.createElement('select');
           select.className = 'form-select form-select-sm';
           select.style.minWidth = '160px';
+
+          const isSelectedInActive = (pat.availableOptions || []).some(
+            (opt) => opt.id === pat.selectedOptionId
+          );
+
+          if (!isSelectedInActive) {
+            const placeholderOpt = document.createElement('option');
+            placeholderOpt.value = '';
+            placeholderOpt.textContent = pat.isHistorical ? '— يحتاج مزامنة —' : '— اختر الخيار —';
+            placeholderOpt.selected = true;
+            placeholderOpt.disabled = true;
+            select.appendChild(placeholderOpt);
+          }
 
           (pat.availableOptions || []).forEach((opt) => {
             const optEl = document.createElement('option');
@@ -561,6 +636,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (opt.id === pat.selectedOptionId) optEl.selected = true;
             select.appendChild(optEl);
           });
+
+          if (pat.isHistorical || pat.availableOptions.length === 0) {
+            select.disabled = true;
+          }
 
           select.addEventListener('change', (e) => {
             pat.selectedOptionId = e.target.value;
@@ -973,8 +1052,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (readinessStatusBadge) {
         readinessStatusBadge.innerHTML = ready
-          ? '<span class="badge bg-success-subtle text-success px-3 py-1 rounded-pill"><i class="fa-solid fa-circle-check me-1"></i> جاهز للإطلاق</span>'
-          : '<span class="badge bg-danger-subtle text-danger px-3 py-1 rounded-pill"><i class="fa-solid fa-triangle-exclamation me-1"></i> يحتاج مراجعة</span>';
+          ? '<span class="badge bg-success-subtle text-success px-3 py-1 rounded-pill"><i class="fa-solid fa-circle-check me-1"></i> جاهز للاعتماد</span>'
+          : '<span class="badge bg-danger-subtle text-danger px-3 py-1 rounded-pill"><i class="fa-solid fa-triangle-exclamation me-1"></i> يحتاج مراجعة قبل الاعتماد</span>';
       }
 
       if (!ready && issues && issues.length > 0) {

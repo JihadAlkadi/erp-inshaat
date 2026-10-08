@@ -141,7 +141,24 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderOrdersTable(data) {
-    const { items, total, page, totalPages, summary } = data;
+    if (!data || typeof data !== 'object') {
+      throw new Error('بيانات الاستجابة غير صالحة');
+    }
+
+    const { items, total, page, limit, totalPages, summary } = data;
+
+    if (!Array.isArray(items)) {
+      throw new Error('هيكل قائمة أوامر الإنتاج غير صالح');
+    }
+    if (!Number.isInteger(total) || total < 0) {
+      throw new Error('إجمالي عدد أوامر الإنتاج غير صالح');
+    }
+    if (!Number.isInteger(page) || page < 1) {
+      throw new Error('رقم الصفحة في الاستجابة غير صالح');
+    }
+    if (!Number.isInteger(totalPages) || totalPages < 1) {
+      throw new Error('إجمالي عدد الصفحات غير صالح');
+    }
 
     updateKPIs(summary, total);
 

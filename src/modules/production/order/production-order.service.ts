@@ -1307,7 +1307,17 @@ export class ProductionOrderService {
       where: { orderLineId: lineId },
     });
 
+    const existingPatternIds = existingSelections.map((s) => s.templatePatternId);
     const existingOptionIds = existingSelections.map((s) => s.selectedOptionId);
+
+    const refPatterns = existingPatternIds.length > 0
+      ? await this.patternRepo.find({
+          where: { id: In(existingPatternIds) },
+          withDeleted: true,
+        })
+      : [];
+    const refPatternMap = new Map(refPatterns.map((p) => [p.id, p]));
+
     const refOptions = existingOptionIds.length > 0
       ? await this.optionRepo.find({
           where: { id: In(existingOptionIds) },
@@ -1315,6 +1325,37 @@ export class ProductionOrderService {
         })
       : [];
     const refOptionMap = new Map(refOptions.map((o) => [o.id, o]));
+
+    // Fail closed on any structural corruption
+    for (const sel of existingSelections) {
+      const pat = refPatternMap.get(sel.templatePatternId);
+      if (!pat) {
+        throw new BusinessRuleError(
+          'بنية اختيارات البند تالفة: النمط المرجعي غير موجود في النظام',
+          'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+        );
+      }
+      if (pat.templateId !== line.templateId) {
+        throw new BusinessRuleError(
+          'بنية اختيارات البند تالفة: النمط المرجعي لا ينتمي إلى قالب هذا البند',
+          'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+        );
+      }
+
+      const opt = refOptionMap.get(sel.selectedOptionId);
+      if (!opt) {
+        throw new BusinessRuleError(
+          'بنية اختيارات البند تالفة: الخيار المرجعي غير موجود في النظام',
+          'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+        );
+      }
+      if (opt.patternId !== sel.templatePatternId) {
+        throw new BusinessRuleError(
+          'بنية اختيارات البند تالفة: الخيار المرجعي لا ينتمي إلى النمط المحدد',
+          'PRODUCTION_ORDER_DRAFT_CONFIGURATION_CORRUPT'
+        );
+      }
+    }
 
     const existingMap = new Map(existingSelections.map((s) => [s.templatePatternId, s]));
     const resultingSelections: Array<{ patternId: string; optionId: string }> = [];
@@ -1335,11 +1376,11 @@ export class ProductionOrderService {
       let currentSelectionDto: SyncPreviewPatternDto['currentSelection'] | undefined = undefined;
 
       if (existingSel) {
-        const refOpt = refOptionMap.get(existingSel.selectedOptionId);
+        const refOpt = refOptionMap.get(existingSel.selectedOptionId)!;
         const isArchived = !item.options.some((o) => o.id === existingSel.selectedOptionId);
         currentSelectionDto = {
           optionId: existingSel.selectedOptionId,
-          optionName: refOpt?.name || 'خيار غير معروف',
+          optionName: refOpt.name,
           isArchived,
         };
 
@@ -1419,7 +1460,14 @@ export class ProductionOrderService {
     orderId: string,
     currentUser: { id: string } | string
   ): Promise<ProductionOrderDto> {
-    const userId = typeof currentUser === 'string' ? currentUser : currentUser?.id || 'system-user';
+    const rawId = typeof currentUser === 'string' ? currentUser : currentUser?.id;
+    const userId = rawId ? rawId.trim() : '';
+    if (!userId) {
+      throw new BusinessRuleError(
+        'تعذر تحديد المستخدم الذي يقوم باعتماد أمر الإنتاج',
+        'PRODUCTION_ORDER_APPROVER_REQUIRED'
+      );
+    }
     return this.dataSource.transaction(async (manager) => {
       // 1. Lock Order (checks status = DRAFT)
       const order = await this.guardService.lockMutableOrder(orderId, manager);
@@ -1871,8 +1919,12 @@ export class ProductionOrderService {
         const pat = refPatternMap.get(sel.templatePatternId)!;
         const opt = refOptionMap.get(sel.selectedOptionId)!;
 
+        const isPatternActive = pat.deletedAt === null;
+        const isSelectedOptionActive = isPatternActive && opt.deletedAt === null;
+        const isHistorical = !isPatternActive || !isSelectedOptionActive;
+
         // If pattern is still active, fetch active available options; if archived, availableOptions = []
-        const activePat = !pat.deletedAt ? allPatternsMap.get(pat.id) : null;
+        const activePat = isPatternActive ? allPatternsMap.get(pat.id) : null;
         const activeOptions = activePat
           ? (activePat.options || [])
               .filter((o) => !o.deletedAt)
@@ -1885,6 +1937,9 @@ export class ProductionOrderService {
           patternName: pat.name,
           selectedOptionId: sel.selectedOptionId,
           selectedOptionName: opt.name,
+          isPatternActive,
+          isSelectedOptionActive,
+          isHistorical,
           availableOptions: activeOptions.map((o) => ({
             id: o.id,
             name: o.name,

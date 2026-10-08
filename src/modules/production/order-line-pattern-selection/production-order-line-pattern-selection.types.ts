@@ -10,5 +10,8 @@ export interface ProductionOrderLinePatternSelectionDto {
   patternName: string;
   selectedOptionId: string;
   selectedOptionName: string;
+  isPatternActive: boolean;
+  isSelectedOptionActive: boolean;
+  isHistorical: boolean;
   availableOptions: ProductionOrderLinePatternOptionSummaryDto[];
 }
