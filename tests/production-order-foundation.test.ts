@@ -16,7 +16,7 @@ import { SYSTEM_PERMISSION_DEFINITIONS } from '../src/modules/system/permission/
 import { AccessScopeCapabilityRegistry } from '../src/modules/system/authorization/access-administration/access-scope-capability.registry.js';
 import { AccessScopePreset } from '../src/modules/system/authorization/access-administration/access-scope-preset.constants.js';
 
-import { ProductionOrderEntity, ProductionOrderStatus } from '../src/modules/production/order/production-order.entity.js';
+import { ProductionOrderEntity, ProductionOrderStatus, ProductionOrderPriority } from '../src/modules/production/order/production-order.entity.js';
 import { ProductionOrderSequenceEntity } from '../src/modules/production/order/production-order-sequence.entity.js';
 import { ProductionOrderLineEntity } from '../src/modules/production/order-line/production-order-line.entity.js';
 import { ProductionOrderLinePatternSelectionEntity } from '../src/modules/production/order-line-pattern-selection/production-order-line-pattern-selection.entity.js';
@@ -31,6 +31,8 @@ import { BusinessRuleError } from '../src/common/errors/business-rule.error.js';
 import { NotFoundError } from '../src/common/errors/not-found.error.js';
 import { CreateProductionOrderDto } from '../src/modules/production/order/dto/create-production-order.dto.js';
 import { UpdateProductionOrderDto } from '../src/modules/production/order/dto/update-production-order.dto.js';
+import { UpdateProductionOrderPriorityDto } from '../src/modules/production/order/dto/update-production-order-priority.dto.js';
+import { ListProductionOrdersQueryDto } from '../src/modules/production/order/dto/list-production-orders-query.dto.js';
 import { AddProductionOrderLineDto } from '../src/modules/production/order-line/dto/add-production-order-line.dto.js';
 import { UpdateProductionOrderLineDto } from '../src/modules/production/order-line/dto/update-production-order-line.dto.js';
 import { ReorderProductionOrderLinesDto } from '../src/modules/production/order-line/dto/reorder-production-order-lines.dto.js';
@@ -40,11 +42,18 @@ import {
   CommitProductionOrderDraftLineDto,
 } from '../src/modules/production/order-line/dto/commit-production-order-draft-lines.dto.js';
 import { safeJsonStringify } from '../src/modules/production/order/production-order.types.js';
+import { AddProductionOrderPriority1710000000016 } from '../src/database/migrations/1710000000016-AddProductionOrderPriority.js';
 
 describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation', () => {
   function createDuplicateTestContext() {
     const store = {
-      order: { id: 'ord-1', orderNumber: 'PO-000001', status: ProductionOrderStatus.DRAFT, deletedAt: null } as any,
+      order: {
+        id: 'ord-1',
+        orderNumber: 'PO-000001',
+        status: ProductionOrderStatus.DRAFT,
+        priority: ProductionOrderPriority.NORMAL,
+        deletedAt: null,
+      } as any,
       lines: [] as any[],
       selections: [] as any[],
       templates: [
@@ -70,7 +79,12 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
     const createRepo = (entityClass: any) => {
       return {
         findOne: async (opts: any) => {
-          if (entityClass === ProductionOrderEntity) return store.order;
+          if (entityClass === ProductionOrderEntity) {
+            if (!store.order) return null;
+            if (opts?.where?.id && opts.where.id !== store.order.id) return null;
+            if (opts?.where?.deletedAt !== undefined && store.order.deletedAt !== null) return null;
+            return store.order;
+          }
           if (entityClass === ProductionOrderSequenceEntity) return store.sequence;
           if (entityClass === ProductionTemplateEntity) {
             return store.templates.find((t) => t.id === opts.where.id && !t.deletedAt) || null;
@@ -251,6 +265,12 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       assert.ok(m15, 'Migration 0015 must be registered in databaseConfig');
     });
 
+    it('verifies Migration 0016 is registered in databaseConfig.migrations', () => {
+      const migrations = databaseConfig.migrations as Function[];
+      const m16 = migrations.find((m) => m.name === 'AddProductionOrderPriority1710000000016');
+      assert.ok(m16, 'Migration 0016 must be registered in databaseConfig');
+    });
+
     it('verifies all 4 Order aggregate entities are registered in databaseConfig.entities', () => {
       const entities = databaseConfig.entities as Function[];
       assert.ok(entities.includes(ProductionOrderEntity), 'ProductionOrderEntity must be registered');
@@ -262,26 +282,30 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       );
     });
 
-    it('defines all 5 production order permissions with correct identifiers', () => {
+    it('defines all 6 production order permissions with correct identifiers', () => {
       assert.equal(SystemPermission.PRODUCTION_ORDER_VIEW, 'production.order.view');
       assert.equal(SystemPermission.PRODUCTION_ORDER_CREATE, 'production.order.create');
       assert.equal(SystemPermission.PRODUCTION_ORDER_UPDATE, 'production.order.update');
       assert.equal(SystemPermission.PRODUCTION_ORDER_DELETE, 'production.order.delete');
       assert.equal(SystemPermission.PRODUCTION_ORDER_APPROVE, 'production.order.approve');
+      assert.equal(SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY, 'production.order.update_priority');
     });
 
-    it('registers all 5 production order permissions in SYSTEM_PERMISSION_DEFINITIONS', () => {
+    it('registers all 6 production order permissions in SYSTEM_PERMISSION_DEFINITIONS', () => {
       const viewDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_VIEW];
       const createDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_CREATE];
       const updateDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_UPDATE];
       const deleteDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_DELETE];
       const approveDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_APPROVE];
+      const priorityDef = SYSTEM_PERMISSION_DEFINITIONS[SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY];
 
       assert.ok(viewDef && viewDef.module === 'production');
       assert.ok(createDef && createDef.module === 'production');
       assert.ok(updateDef && updateDef.module === 'production');
       assert.ok(deleteDef && deleteDef.module === 'production');
       assert.ok(approveDef && approveDef.module === 'production');
+      assert.ok(priorityDef && priorityDef.module === 'production');
+      assert.equal(priorityDef.description, 'تغيير أولوية أمر الإنتاج');
     });
 
     it('verifies AccessScopeCapabilityRegistry maps production order permissions to [ALL]', () => {
@@ -303,6 +327,10 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       );
       assert.deepEqual(
         AccessScopeCapabilityRegistry.getAllowedPresetsForPermission(SystemPermission.PRODUCTION_ORDER_APPROVE),
+        [AccessScopePreset.ALL]
+      );
+      assert.deepEqual(
+        AccessScopeCapabilityRegistry.getAllowedPresetsForPermission(SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY),
         [AccessScopePreset.ALL]
       );
     });
@@ -1708,12 +1736,12 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       assert.ok(!indexEjs.includes('confirmArchiveOrderBtn'), 'index.ejs must NOT contain confirmArchiveOrderBtn');
     });
 
-    it('production-order-show.js: does not execute line mutating calls (only workflow approval and reopen)', () => {
+    it('production-order-show.js: does not execute line mutating calls (only workflow approval, reopen, and priority update)', () => {
       const showJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-show.js'), 'utf-8');
 
       assert.ok(!showJs.includes('lines/'), 'show.js must not perform line mutations');
-      assert.ok(!showJs.includes("method: 'PATCH'"), 'show.js must not perform PATCH requests');
       assert.ok(!showJs.includes("method: 'DELETE'"), 'show.js must not perform DELETE requests');
+      assert.ok(showJs.includes('/priority'), 'show.js may PATCH priority');
     });
 
     it('production-order-edit.js: uses search-first approach without boot fetch and tracks monotonic sequence counters', () => {
@@ -3095,6 +3123,403 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
       // Verify production-order.service.ts strictly does NOT contain 'system-user'
       const svcCode = readFileSync(resolve(process.cwd(), 'src/modules/production/order/production-order.service.ts'), 'utf-8');
       assert.ok(!svcCode.includes("'system-user'"), 'production-order.service.ts must not contain "system-user" fallback');
+    });
+  });
+
+  describe('Phase 4 — Production Order Priority Feature & Administrative Mutability', () => {
+    // ----------------------------------------------------
+    // A. ENUM / DOMAIN CONTRACT
+    // ----------------------------------------------------
+    it('ProductionOrderPriority: contains exactly CRITICAL, HIGH, NORMAL, LOW with identical string values', () => {
+      assert.equal(ProductionOrderPriority.CRITICAL, 'CRITICAL');
+      assert.equal(ProductionOrderPriority.HIGH, 'HIGH');
+      assert.equal(ProductionOrderPriority.NORMAL, 'NORMAL');
+      assert.equal(ProductionOrderPriority.LOW, 'LOW');
+      assert.equal(Object.keys(ProductionOrderPriority).length, 4);
+    });
+
+    it('ProductionOrderEntity: default priority is NORMAL and property is exposed', () => {
+      const order = new ProductionOrderEntity();
+      assert.equal(ProductionOrderPriority.NORMAL, 'NORMAL');
+      order.priority = ProductionOrderPriority.NORMAL;
+      assert.equal(order.priority, ProductionOrderPriority.NORMAL);
+    });
+
+    // ----------------------------------------------------
+    // B. DTO VALIDATION
+    // ----------------------------------------------------
+    it('CreateProductionOrderDto: optional priority accepts all 4 values, omitted is valid, invalid rejected', async () => {
+      // 1. Omitted is valid
+      const omitted = plainToInstance(CreateProductionOrderDto, { description: 'test' });
+      assert.equal((await validate(omitted)).length, 0);
+
+      // 2. All 4 values valid
+      for (const p of [ProductionOrderPriority.CRITICAL, ProductionOrderPriority.HIGH, ProductionOrderPriority.NORMAL, ProductionOrderPriority.LOW]) {
+        const valid = plainToInstance(CreateProductionOrderDto, { priority: p });
+        assert.equal((await validate(valid)).length, 0, `Priority ${p} must be valid`);
+      }
+
+      // 3. Invalid rejected
+      const invalid = plainToInstance(CreateProductionOrderDto, { priority: 'URGENT' as any });
+      const errors = await validate(invalid);
+      assert.ok(errors.length > 0, 'Invalid priority value must be rejected');
+      assert.ok(errors[0].constraints?.isEnum, 'Must contain isEnum constraint error');
+    });
+
+    it('UpdateProductionOrderPriorityDto: requires priority, accepts 4 values, rejects invalid', async () => {
+      // 1. Omitted rejected
+      const omitted = plainToInstance(UpdateProductionOrderPriorityDto, {});
+      assert.ok((await validate(omitted)).length > 0, 'Missing priority must fail');
+
+      // 2. All 4 valid
+      for (const p of [ProductionOrderPriority.CRITICAL, ProductionOrderPriority.HIGH, ProductionOrderPriority.NORMAL, ProductionOrderPriority.LOW]) {
+        const valid = plainToInstance(UpdateProductionOrderPriorityDto, { priority: p });
+        assert.equal((await validate(valid)).length, 0);
+      }
+
+      // 3. Invalid rejected
+      const invalid = plainToInstance(UpdateProductionOrderPriorityDto, { priority: 'HIGH_PRIORITY' as any });
+      const errors = await validate(invalid);
+      assert.ok(errors.length > 0);
+      assert.ok(errors[0].constraints?.isEnum);
+    });
+
+    it('ListProductionOrdersQueryDto: accepts optional priority, rejects invalid', async () => {
+      const omitted = plainToInstance(ListProductionOrdersQueryDto, { page: 1 });
+      assert.equal((await validate(omitted)).length, 0);
+
+      const valid = plainToInstance(ListProductionOrdersQueryDto, { priority: ProductionOrderPriority.CRITICAL });
+      assert.equal((await validate(valid)).length, 0);
+
+      const invalid = plainToInstance(ListProductionOrdersQueryDto, { priority: 'UNKNOWN' as any });
+      const errors = await validate(invalid);
+      assert.ok(errors.length > 0);
+    });
+
+    it('UpdateProductionOrderDto: does NOT contain priority field (architectural invariant)', () => {
+      const updateDto = new UpdateProductionOrderDto();
+      assert.ok(!('priority' in updateDto), 'UpdateProductionOrderDto must NOT declare priority field');
+      const dtoFile = readFileSync(resolve(process.cwd(), 'src/modules/production/order/dto/update-production-order.dto.ts'), 'utf-8');
+      assert.ok(!dtoFile.includes('priority'), 'update-production-order.dto.ts must not contain priority');
+    });
+
+    // ----------------------------------------------------
+    // C. ORDER CREATION WITH PRIORITY
+    // ----------------------------------------------------
+    it('createOrder(): defaults to NORMAL when priority is omitted', async () => {
+      const { service, store } = createDuplicateTestContext();
+      const created = await service.createOrder({ description: 'طلب عادي' }, 'user-creator-1');
+
+      assert.equal(created.priority, ProductionOrderPriority.NORMAL);
+      assert.equal(store.order.priority, ProductionOrderPriority.NORMAL);
+      assert.equal(created.status, ProductionOrderStatus.DRAFT);
+      assert.equal(created.orderNumber, 'PO-000002');
+    });
+
+    it('createOrder(): explicitly set priority is persisted and returned in DTO', async () => {
+      const { service, store } = createDuplicateTestContext();
+      const created = await service.createOrder(
+        { description: 'طلب حرج', priority: ProductionOrderPriority.CRITICAL },
+        'user-creator-1'
+      );
+
+      assert.equal(created.priority, ProductionOrderPriority.CRITICAL);
+      assert.equal(store.order.priority, ProductionOrderPriority.CRITICAL);
+      assert.equal(created.status, ProductionOrderStatus.DRAFT);
+    });
+
+    // ----------------------------------------------------
+    // D. PRIORITY MUTATION & APPROVED IMMUTABILITY EXCEPTION
+    // ----------------------------------------------------
+    it('updatePriority(): updates priority on DRAFT order without mutating lines or notes', async () => {
+      const { service, store } = createDuplicateTestContext();
+      store.order.description = 'وصف أصلي';
+      store.order.notes = 'ملاحظات أصلية';
+
+      const updated = await service.updatePriority('ord-1', { priority: ProductionOrderPriority.HIGH });
+
+      assert.equal(updated.priority, ProductionOrderPriority.HIGH);
+      assert.equal(store.order.priority, ProductionOrderPriority.HIGH);
+      assert.equal(updated.status, ProductionOrderStatus.DRAFT);
+      assert.equal(updated.description, 'وصف أصلي');
+      assert.equal(updated.notes, 'ملاحظات أصلية');
+    });
+
+    it('updatePriority(): updates priority on APPROVED order without reopening and preserves approval metadata', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Add line and approve order
+      await service.addLine('ord-1', { templateId: 't-no-patterns', quantity: 2 });
+      await service.approveOrder('ord-1', 'approver-user-456');
+
+      assert.equal(store.order.status, ProductionOrderStatus.APPROVED);
+      const originalApprovedAt = store.order.approvedAt;
+      const originalApprovedBy = store.order.approvedByUserId;
+      assert.ok(originalApprovedAt);
+      assert.equal(originalApprovedBy, 'approver-user-456');
+
+      // Update priority to CRITICAL while order is APPROVED
+      const updated = await service.updatePriority('ord-1', { priority: ProductionOrderPriority.CRITICAL });
+
+      assert.equal(updated.priority, ProductionOrderPriority.CRITICAL);
+      assert.equal(store.order.priority, ProductionOrderPriority.CRITICAL);
+      assert.equal(updated.status, ProductionOrderStatus.APPROVED, 'Status MUST remain APPROVED');
+      assert.equal(store.order.status, ProductionOrderStatus.APPROVED, 'Status in store MUST remain APPROVED');
+      assert.equal(store.order.approvedByUserId, originalApprovedBy, 'approvedByUserId must not be cleared');
+      assert.equal(store.order.approvedAt, originalApprovedAt, 'approvedAt must not be cleared');
+    });
+
+    it('updatePriority(): fails with PRODUCTION_ORDER_NOT_FOUND on missing or archived order', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      // Missing
+      await assert.rejects(
+        async () => {
+          await service.updatePriority('non-existent-id', { priority: ProductionOrderPriority.CRITICAL });
+        },
+        (err: any) => {
+          assert.ok(err instanceof NotFoundError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_NOT_FOUND');
+          return true;
+        }
+      );
+
+      // Soft-deleted
+      store.order.deletedAt = new Date();
+      await assert.rejects(
+        async () => {
+          await service.updatePriority('ord-1', { priority: ProductionOrderPriority.CRITICAL });
+        },
+        (err: any) => {
+          assert.ok(err instanceof NotFoundError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_NOT_FOUND');
+          return true;
+        }
+      );
+    });
+
+    // ----------------------------------------------------
+    // E. APPROVED IMMUTABILITY REGRESSION INVARIANTS
+    // ----------------------------------------------------
+    it('APPROVED order immutability regression: all business content mutations remain rejected on APPROVED', async () => {
+      const { service, store } = createDuplicateTestContext();
+
+      await service.addLine('ord-1', { templateId: 't-no-patterns', quantity: 1 });
+      await service.approveOrder('ord-1', 'approver-1');
+      assert.equal(store.order.status, ProductionOrderStatus.APPROVED);
+
+      // 1. updateOrder description/notes rejected
+      await assert.rejects(
+        async () => {
+          await service.updateOrder('ord-1', { description: 'محاولة تعديل وصف معتمد' });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_NOT_DRAFT');
+          return true;
+        }
+      );
+
+      // 2. commitDraftLines rejected
+      await assert.rejects(
+        async () => {
+          await service.commitDraftLines('ord-1', { lines: [] });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_NOT_DRAFT');
+          return true;
+        }
+      );
+
+      // 3. addLine rejected
+      await assert.rejects(
+        async () => {
+          await service.addLine('ord-1', { templateId: 't-no-patterns', quantity: 5 });
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_NOT_DRAFT');
+          return true;
+        }
+      );
+
+      // 4. archiveOrder rejected
+      await assert.rejects(
+        async () => {
+          await service.archiveOrder('ord-1');
+        },
+        (err: any) => {
+          assert.ok(err instanceof BusinessRuleError);
+          assert.equal(err.code, 'PRODUCTION_ORDER_NOT_DRAFT');
+          return true;
+        }
+      );
+    });
+
+    // ----------------------------------------------------
+    // F. AUTHORIZATION & ROUTE SPECIFICATION
+    // ----------------------------------------------------
+    it('Route /api/production/orders/:orderId/priority: protected by PRODUCTION_ORDER_UPDATE_PRIORITY and not general update', () => {
+      const routeFile = readFileSync(resolve(process.cwd(), 'src/modules/production/order/production-order.route.ts'), 'utf-8');
+
+      assert.ok(routeFile.includes('/:orderId/priority'), 'Must declare route /:orderId/priority');
+      assert.ok(routeFile.includes('patch('), 'Must declare PATCH method');
+      assert.ok(routeFile.includes('SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY'), 'Must require PRODUCTION_ORDER_UPDATE_PRIORITY');
+      assert.ok(routeFile.includes('UpdateProductionOrderPriorityDto'), 'Must validate UpdateProductionOrderPriorityDto');
+      assert.ok(routeFile.includes('productionOrderController.updatePriority'), 'Must dispatch to updatePriority controller');
+    });
+
+    // ----------------------------------------------------
+    // G. MIGRATION 0016 STRUCTURE & REVERSIBILITY
+    // ----------------------------------------------------
+    it('Migration 0016: AddProductionOrderPriority1710000000016 schema invariants and reversibility', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+      assert.equal(migration.name, 'AddProductionOrderPriority1710000000016');
+
+      const executedQueries: string[] = [];
+      const addedColumns: any[] = [];
+      const createdIndices: any[] = [];
+      const droppedColumns: string[] = [];
+      const droppedIndices: string[] = [];
+
+      const mockQueryRunner: any = {
+        getTable: async () => ({
+          findColumnByName: (name: string) => null,
+          indices: [{ name: 'IDX_production_order_priority' }],
+        }),
+        addColumn: async (table: string, col: any) => {
+          addedColumns.push({ table, col });
+        },
+        createIndex: async (table: string, idx: any) => {
+          createdIndices.push({ table, idx });
+        },
+        dropIndex: async (table: string, idx: any) => {
+          droppedIndices.push(idx.name || idx);
+        },
+        dropColumn: async (table: string, colName: string) => {
+          droppedColumns.push(colName);
+        },
+        query: async (q: string) => {
+          executedQueries.push(q);
+        },
+      };
+
+      // Execute up
+      await migration.up(mockQueryRunner);
+      assert.equal(addedColumns.length, 1);
+      assert.equal(addedColumns[0].col.name, 'priority');
+      assert.equal(addedColumns[0].col.default, "'NORMAL'");
+      assert.equal(addedColumns[0].col.isNullable, false);
+
+      const hasUpdate = executedQueries.some((q) => q.includes("UPDATE `production_order` SET `priority` = 'NORMAL'"));
+      assert.ok(hasUpdate, 'Must set existing rows to NORMAL');
+
+      const hasCheck = executedQueries.some((q) => q.includes("CHK_production_order_priority") && q.includes("'CRITICAL', 'HIGH', 'NORMAL', 'LOW'"));
+      assert.ok(hasCheck, 'Must add CHECK constraint allowing exactly the 4 priorities');
+
+      assert.equal(createdIndices.length, 1);
+      assert.equal(createdIndices[0].idx.name, 'IDX_production_order_priority');
+
+      // Execute down
+      const mockDownRunner: any = {
+        getTable: async () => ({
+          findColumnByName: (name: string) => ({ name: 'priority' }),
+          indices: [{ name: 'IDX_production_order_priority' }],
+        }),
+        dropIndex: async (table: string, idx: any) => {
+          droppedIndices.push(idx.name || idx);
+        },
+        dropColumn: async (table: string, colName: string) => {
+          droppedColumns.push(colName);
+        },
+        query: async (q: string) => {
+          executedQueries.push(q);
+        },
+      };
+
+      await migration.down(mockDownRunner);
+      assert.ok(droppedIndices.includes('IDX_production_order_priority'), 'Must drop index in down');
+      assert.ok(droppedColumns.includes('priority'), 'Must drop priority column in down');
+    });
+
+    // ----------------------------------------------------
+    // H & I. LIST FILTERING & BUSINESS RANK SORTING
+    // ----------------------------------------------------
+    it('production-order.service.ts: listOrders applies priority filter to both item and summary queries', () => {
+      const svcCode = readFileSync(resolve(process.cwd(), 'src/modules/production/order/production-order.service.ts'), 'utf-8');
+
+      assert.ok(svcCode.includes("qb.andWhere('o.priority = :priority', { priority: query.priority })"), 'Must filter items by priority');
+      assert.ok(svcCode.includes("summaryQb.andWhere('o.priority = :priority', { priority: query.priority })"), 'Must filter KPI summary by priority');
+    });
+
+    it('production-order.service.ts: listOrders sorts by business priority rank (CRITICAL > HIGH > NORMAL > LOW), then created_at ASC, id ASC', () => {
+      const svcCode = readFileSync(resolve(process.cwd(), 'src/modules/production/order/production-order.service.ts'), 'utf-8');
+
+      assert.ok(svcCode.includes("WHEN 'CRITICAL' THEN 4"), 'CRITICAL must rank 4');
+      assert.ok(svcCode.includes("WHEN 'HIGH' THEN 3"), 'HIGH must rank 3');
+      assert.ok(svcCode.includes("WHEN 'NORMAL' THEN 2"), 'NORMAL must rank 2');
+      assert.ok(svcCode.includes("WHEN 'LOW' THEN 1"), 'LOW must rank 1');
+      assert.ok(svcCode.includes(".orderBy('priority_rank', 'DESC')"), 'Must sort by priority_rank DESC');
+      assert.ok(svcCode.includes(".addOrderBy('o.created_at', 'ASC')"), 'Must sort by created_at ASC within equal priority');
+      assert.ok(svcCode.includes(".addOrderBy('o.id', 'ASC')"), 'Must sort by id ASC tie breaker');
+    });
+
+    // ----------------------------------------------------
+    // J. RESPONSE CONTRACT
+    // ----------------------------------------------------
+    it('getOrderById() and listOrders(): returns priority in ProductionOrderDto and ProductionOrderListItemDto', async () => {
+      const { service, store } = createDuplicateTestContext();
+      store.order.priority = ProductionOrderPriority.HIGH;
+
+      const orderDto = await service.getOrderById('ord-1');
+      assert.equal(orderDto.priority, ProductionOrderPriority.HIGH, 'ProductionOrderDto must expose priority');
+
+      // Verify ProductionOrderEntity model also has priority
+      assert.equal(store.order.priority, ProductionOrderPriority.HIGH);
+    });
+
+    // ----------------------------------------------------
+    // K. UI ACCESSIBILITY & SECURITY INVARIANTS
+    // ----------------------------------------------------
+    it('UI templates: expose correct Arabic labels and accessibility semantics without dynamic innerHTML', () => {
+      const createEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/create.ejs'), 'utf-8');
+      const indexEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/index.ejs'), 'utf-8');
+      const showEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/show.ejs'), 'utf-8');
+      const editEjs = readFileSync(resolve(process.cwd(), 'src/views/dashboard/production/orders/edit.ejs'), 'utf-8');
+      const ordersJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-orders.js'), 'utf-8');
+      const showJs = readFileSync(resolve(process.cwd(), 'src/public/js/production-order-show.js'), 'utf-8');
+
+      // 1. Create page priority selector
+      assert.ok(createEjs.includes('id="orderPriority"'), 'create.ejs must have orderPriority selector');
+      assert.ok(createEjs.includes('value="CRITICAL">حرجة'), 'create.ejs must have CRITICAL');
+      assert.ok(createEjs.includes('value="HIGH">عالية'), 'create.ejs must have HIGH');
+      assert.ok(createEjs.includes('value="NORMAL" selected>عادية'), 'create.ejs must default to NORMAL');
+      assert.ok(createEjs.includes('value="LOW">منخفضة'), 'create.ejs must have LOW');
+
+      // 2. Index page priority filter and table header
+      assert.ok(indexEjs.includes('id="orderPriorityFilter"'), 'index.ejs must contain orderPriorityFilter');
+      assert.ok(indexEjs.includes('الأولوية</th>'), 'index.ejs must have priority table header');
+
+      // 3. Show page priority badges and updater
+      assert.ok(showEjs.includes('أولوية حرجة'), 'show.ejs must have Arabic critical badge');
+      assert.ok(showEjs.includes('أولوية عالية'), 'show.ejs must have Arabic high badge');
+      assert.ok(showEjs.includes('أولوية عادية'), 'show.ejs must have Arabic normal badge');
+      assert.ok(showEjs.includes('أولوية منخفضة'), 'show.ejs must have Arabic low badge');
+      assert.ok(showEjs.includes('id="changePrioritySelect"'), 'show.ejs must have priority dropdown');
+      assert.ok(showEjs.includes('id="updatePriorityBtn"'), 'show.ejs must have updatePriorityBtn');
+
+      // 4. Edit page priority display
+      assert.ok(editEjs.includes('أولوية حرجة'), 'edit.ejs must have priority badge');
+      assert.ok(editEjs.includes('أولوية عادية'), 'edit.ejs must have normal badge');
+
+      // 5. Zero dynamic XSS
+      assert.ok(ordersJs.includes("pBadge.textContent = 'حرجة'"), 'orders.js must set priority text via textContent');
+      assert.ok(ordersJs.includes("pBadge.textContent = 'عالية'"), 'orders.js must set priority text via textContent');
+      assert.ok(ordersJs.includes("pBadge.textContent = 'عادية'"), 'orders.js must set priority text via textContent');
+      assert.ok(ordersJs.includes("pBadge.textContent = 'منخفضة'"), 'orders.js must set priority text via textContent');
+      assert.ok(!ordersJs.includes('${order.priority}'), 'orders.js must not interpolate order.priority into HTML');
+      assert.ok(!showJs.includes('${selectedPriority}'), 'show.js must not interpolate priority into HTML');
     });
   });
 });

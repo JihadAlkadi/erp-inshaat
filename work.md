@@ -8,7 +8,7 @@
     > APPROVED is administrative approval only.
     > APPROVED does NOT create production runtime, does NOT create snapshots, and does NOT release units.
     > Transitions: DRAFT -> APPROVED, APPROVED -> DRAFT.
-    > Only DRAFT orders are mutable. APPROVED orders are strictly immutable.
+    > Only DRAFT orders are mutable. APPROVED content is immutable; priority is administrative scheduling metadata and remains mutable through its dedicated authorized endpoint.
     - حالة أمر الإنتاج تحكمها قاعدة البيانات بقيد Check محدث في الهجرة 0015: `CHK_production_order_status CHECK (status IN ('DRAFT', 'APPROVED'))`.
     - هجرة 0015 (`AddProductionOrderApprovalStatus`):
       - تضيف العمودين `approved_at DATETIME(6) NULL` و `approved_by_user_id VARCHAR(36) NULL` مع فهرس وعلاقة أجنبية إلى `system_user`.
@@ -22,8 +22,47 @@
       - يتطلب صلاحية `production.order.approve`.
       - ينفذ داخل معاملة وتحت قفل تشاؤمي `pessimistic_write` على صف الطلب.
       - يشترط أن يكون الطلب بحالة `APPROVED` ويعيده إلى `DRAFT` ويصفر `approvedAt = null` و `approvedByUserId = null`.
-    - حظر التعديل التام على الطلب المعتمد (APPROVED Immutability):
-      - ترفض كافة مسارات التعديل (تعديل الترويسة، الحفظ الذري للبنود، إضافة بند، تعديل كمية، تغيير نمط، مزامنة، إعادة ترتيب، أرشفة بند، وأرشفة الطلب) أي طلب غير موجود بحالة `DRAFT` بالرمز الثابت `PRODUCTION_ORDER_NOT_DRAFT`.
+    - حظر التعديل التام على محتوى الطلب المعتمد واستثناء الأولوية الإدارية (APPROVED Content Immutability & Priority Exception):
+      - ترفض كافة مسارات تعديل المحتوى التشغيلي (تعديل الترويسة، الحفظ الذري للبنود، إضافة بند، تعديل كمية، تغيير نمط، مزامنة، إعادة ترتيب، أرشفة بند، وأرشفة الطلب) أي طلب غير موجود بحالة `DRAFT` بالرمز الثابت `PRODUCTION_ORDER_NOT_DRAFT`.
+      - الاستثناء الصريح الوحيد: أولوية أمر الإنتاج هي بيانات جدولة إدارية وتبقى قابلة للتعديل حتى أثناء كون الطلب `APPROVED` عبر مسارها المخصص والمصرح `PATCH /api/production/orders/:orderId/priority` دون إعادة فتح الطلب أو المساس بمحتواه.
+  - **عقد أولوية أمر الإنتاج (Production Order Priority Contract)**:
+    > Production Order Priority values: CRITICAL, HIGH, NORMAL, LOW.
+    > Default priority: NORMAL.
+    > Priority belongs to ProductionOrder ONLY; no duplicated priority on lines or future units/tasks.
+    > Initial priority may be selected during creation.
+    > Post-creation mutation requires production.order.update_priority.
+    > Priority remains mutable while APPROVED; priority update is independent of content mutability.
+    > APPROVED content is immutable; priority is administrative scheduling metadata and remains mutable through its dedicated authorized endpoint.
+    > Dedicated endpoint: PATCH /api/production/orders/:orderId/priority.
+    > Default list order: priority descending by business rank (CRITICAL -> HIGH -> NORMAL -> LOW), then oldest created first (created_at ASC), then ID (id ASC).
+    > List supports server-side priority filtering; KPI summary respects active priority filter.
+    - قيم الأولوية المعتمدة والتسميات باللغة العربية:
+      - `CRITICAL` = حرجة (أعلى رتبة إدارية).
+      - `HIGH` = عالية.
+      - `NORMAL` = عادية (القيمة الافتراضية).
+      - `LOW` = منخفضة.
+    - الهجرة 0016 (`AddProductionOrderPriority`):
+      - تضيف العمود `priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL'` إلى جدول `production_order`.
+      - قيد فحص على مستوى قاعدة البيانات: `CHK_production_order_priority CHECK (priority IN ('CRITICAL', 'HIGH', 'NORMAL', 'LOW'))`.
+      - فهرس أداء للفلترة: `IDX_production_order_priority (priority)`.
+      - جميع السجلات القائمة في قاعدة البيانات تتحول تلقائياً وبأمان إلى `NORMAL`.
+      - التراجع عن الهجرة (Down migration) يعكس التعديل بأمان بإسقاط القيد والفهرس والعمود.
+    - الإنشاء والتحديث الإداري للأولوية:
+      - أثناء الإنشاء: يقبل `CreateProductionOrderDto` حقلاً اختيارياً `priority` ويتحقق منه عبر `@IsEnum(ProductionOrderPriority)`، وفي حال عدم إرساله يُضبط افتراضياً على `NORMAL` على مستوى الـ Service والـ Database.
+      - حظر إدراج الأولوية في `UpdateProductionOrderDto`: تعديل الترويسة العام مخصص للمسودات فقط (`DRAFT` only) ولا يقبل الأولوية إطلاقاً لمنع المساس بها أو تقييدها بحالة المسودة.
+      - التعديل الإداري المستقل: مسار مخصص `PATCH /api/production/orders/:orderId/priority` يستقبل `UpdateProductionOrderPriorityDto` الذي يشترط `priority` كحقل إلزامي مدقق.
+      - بروتوكول القفل للتحديث الإداري: استخدام `guardService.lockExistingOrder(orderId, manager)` للحصول على قفل تشاؤمي `pessimistic_write` على صف الطلب النشط دون اشتراط حالة `DRAFT`، وتعديل حقل `priority` فقط ذرياً دون أي مساس بالحالة أو بنود الطلب أو بيانات الاعتماد أو الترويسة، ولا يعيد فتح الطلب المعتمد نهائياً.
+    - محرك الصلاحيات (Authorization):
+      - الصلاحية المخصصة: `PRODUCTION_ORDER_UPDATE_PRIORITY` (`production.order.update_priority`) مسجلة في `SystemPermission` وتتبع لوحدة `production` ومسندة لقالب النطاق `[AccessScopePreset.ALL]`.
+    - الفلترة والترتيب التلقائي في القائمة:
+      - فلترة الخادم: يقبل مسار القائمة معامل `priority` اختياري يتم التحقق منه في `ListProductionOrdersQueryDto` ويطبق بصرامة على استعلام العناصر واستعلام ملخص مؤشرات الأداء `summary` معاً للحفاظ على اتساق الـ KPIs.
+      - الترتيب الافتراضي للأعمال: رتبة الأولوية الإدارية تنازلياً عبر تعبير SQL CASE (`CRITICAL`=4، `HIGH`=3، `NORMAL`=2، `LOW`=1)، ثم الأقدم إنشاءً `created_at ASC`، ثم المعرف تصاعدياً `id ASC` لضمان حتمية الترتيب وتفضيل الطلبات الأقدم ضمن نفس الأولوية دون أي اعتماد على الترتيب الأبجدي.
+    - الواجهات وتجربة المستخدم:
+      - شاشة الإنشاء: قائمة اختيار الأولويات باللغة العربية مع اختيار "عادية" افتراضياً وإرسال القيمة الإنجليزية للـ API.
+      - شاشة القائمة: شارة أولوية مرئية تعتمد على النص العربي صراحة (`[حرجة]`, `[عالية]`, `[عادية]`, `[منخفضة]`) مع فلتر خادم تفاعلي يعيد ضبط الترقيم للصفحة الأولى ويحتفظ بالبحث.
+      - شاشة التفاصيل: شارة الأولوية في الترويسة، وبطاقة تحكم إدارية لتغيير الأولوية للمستخدمين المصرح لهم مع تحديث فوري وآمن.
+      - شاشة التعديل: عرض الأولوية كقراءة فقط لضمان الفصل المعماري التام عن محرر بنود المسودة وعدم التأثير على حالة التغييرات غير المحفوظة.
+      - الحماية من XSS: بناء وعرض نصوص وشارات الأولوية حصراً عبر Native DOM APIs (`textContent`, `createElement`).
   - **الحفظ الذري الموحد لبنود المسودة (Atomic Draft Lines Commit Endpoint)**:
     > Unified editor commits the target active line set atomically in one transaction.
     > ONE HTTP Request: PUT /api/production/orders/:orderId/draft-lines
