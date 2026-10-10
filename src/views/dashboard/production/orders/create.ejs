@@ -37,6 +37,18 @@
             </div>
           </div>
 
+          <!-- Priority -->
+          <div class="mb-4">
+            <label for="orderPriority" class="form-label fw-bold text-dark">أولوية أمر الإنتاج</label>
+            <select class="form-select" id="orderPriority" name="priority">
+              <option value="CRITICAL">حرجة</option>
+              <option value="HIGH">عالية</option>
+              <option value="NORMAL" selected>عادية</option>
+              <option value="LOW">منخفضة</option>
+            </select>
+            <div class="form-text text-muted">تحدد الأولوية التشغيلية لجدولة وتنفيذ أمر الإنتاج (الافتراضي: عادية).</div>
+          </div>
+
           <!-- Description -->
           <div class="mb-4">
             <label for="orderDescription" class="form-label fw-bold text-dark">وصف أمر الإنتاج <span class="text-muted fw-normal">(اختياري)</span></label>
@@ -76,6 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const description = document.getElementById('orderDescription').value.trim() || null;
     const notes = document.getElementById('orderNotes').value.trim() || null;
+    const priority = document.getElementById('orderPriority').value;
 
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> جاري الإنشاء...';
@@ -84,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await window.erpFetch('/api/production/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description, notes }),
+        body: JSON.stringify({ description, notes, priority }),
       });
 
       const resJson = await response.json();

@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentPage = 1;
   const limit = 15;
   let currentSearch = '';
+  let currentPriority = '';
   let searchTimeout = null;
 
   const tableBody = document.getElementById('ordersTableBody');
@@ -12,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const paginationList = document.getElementById('ordersPaginationList');
   const paginationInfo = document.getElementById('ordersPaginationInfo');
   const searchInput = document.getElementById('orderSearchInput');
+  const priorityFilter = document.getElementById('orderPriorityFilter');
   const refreshBtn = document.getElementById('refreshOrdersBtn');
 
   const kpiTotalOrders = document.getElementById('kpiTotalOrders');
@@ -31,6 +33,15 @@ document.addEventListener('DOMContentLoaded', () => {
         currentPage = 1;
         loadOrders();
       }, 350);
+    });
+  }
+
+  // Priority filter dropdown
+  if (priorityFilter) {
+    priorityFilter.addEventListener('change', (e) => {
+      currentPriority = e.target.value.trim();
+      currentPage = 1;
+      loadOrders();
     });
   }
 
@@ -73,6 +84,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (currentSearch) {
         url.searchParams.set('search', currentSearch);
       }
+      if (currentPriority) {
+        url.searchParams.set('priority', currentPriority);
+      }
 
       const res = await window.erpFetch(url.toString());
       const data = await res.json();
@@ -90,7 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function setLoadingState() {
     tableBody.innerHTML = `
       <tr>
-        <td colspan="8" class="text-center py-5 text-muted">
+        <td colspan="9" class="text-center py-5 text-muted">
           <div class="spinner-border text-primary spinner-border-sm me-2" role="status"></div>
           جاري تحميل أوامر الإنتاج...
         </td>
@@ -104,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 8;
+    td.colSpan = 9;
     td.className = 'text-center py-5 text-danger';
 
     const icon = document.createElement('i');
@@ -186,7 +200,32 @@ document.addEventListener('DOMContentLoaded', () => {
       tdNumber.appendChild(orderLink);
       tr.appendChild(tdNumber);
 
-      // 2. Status Badge
+      // 2. Priority Badge
+      const tdPriority = document.createElement('td');
+      tdPriority.className = 'py-3 px-3';
+      const pBadge = document.createElement('span');
+      if (order.priority === 'CRITICAL') {
+        pBadge.className = 'badge bg-danger-subtle text-danger-emphasis px-2 py-1 rounded-pill';
+        pBadge.style.fontSize = '0.75rem';
+        pBadge.textContent = 'حرجة';
+      } else if (order.priority === 'HIGH') {
+        pBadge.className = 'badge bg-warning-subtle text-warning-emphasis px-2 py-1 rounded-pill';
+        pBadge.style.fontSize = '0.75rem';
+        pBadge.textContent = 'عالية';
+      } else if (order.priority === 'LOW') {
+        pBadge.className = 'badge bg-secondary-subtle text-secondary-emphasis px-2 py-1 rounded-pill';
+        pBadge.style.fontSize = '0.75rem';
+        pBadge.textContent = 'منخفضة';
+      } else {
+        // NORMAL
+        pBadge.className = 'badge bg-primary-subtle text-primary-emphasis px-2 py-1 rounded-pill';
+        pBadge.style.fontSize = '0.75rem';
+        pBadge.textContent = 'عادية';
+      }
+      tdPriority.appendChild(pBadge);
+      tr.appendChild(tdPriority);
+
+      // 3. Status Badge
       const tdStatus = document.createElement('td');
       tdStatus.className = 'py-3 px-3';
       const badge = document.createElement('span');
