@@ -136,14 +136,25 @@ document.addEventListener('DOMContentLoaded', function() {
       e.preventDefault();
       clearPageAlert();
 
-      var submitBtn = document.getElementById('createRoleSubmitBtn');
+      if (!createRoleForm.checkValidity()) {
+        e.stopPropagation();
+        createRoleForm.classList.add('was-validated');
+        return;
+      }
+
+      var submitBtn = document.getElementById('submitBtn') || document.getElementById('createRoleSubmitBtn');
       setBtnLoading(submitBtn, true, 'جاري الإنشاء...');
 
+      var nameEl = document.getElementById('name') || document.getElementById('roleNameInput');
+      var codeEl = document.getElementById('code') || document.getElementById('roleCodeInput');
+      var descEl = document.getElementById('description') || document.getElementById('roleDescInput');
+      var isActiveEl = document.getElementById('isActive') || document.getElementById('roleIsActiveInput');
+
       var payload = {
-        name: (document.getElementById('roleNameInput') || {}).value?.trim(),
-        code: (document.getElementById('roleCodeInput') || {}).value?.trim(),
-        description: (document.getElementById('roleDescInput') || {}).value?.trim() || null,
-        isActive: (document.getElementById('roleIsActiveInput') || {}).checked ?? true,
+        name: (nameEl && nameEl.value) ? nameEl.value.trim() : '',
+        code: (codeEl && codeEl.value) ? codeEl.value.trim() : '',
+        description: (descEl && descEl.value && descEl.value.trim()) ? descEl.value.trim() : null,
+        isActive: isActiveEl ? isActiveEl.checked : true,
       };
 
       window.erpFetch('/api/system/roles', {
@@ -174,14 +185,24 @@ document.addEventListener('DOMContentLoaded', function() {
       e.preventDefault();
       clearPageAlert();
 
+      if (!editRoleForm.checkValidity()) {
+        e.stopPropagation();
+        editRoleForm.classList.add('was-validated');
+        return;
+      }
+
       var roleId = editRoleForm.getAttribute('data-role-id');
-      var submitBtn = document.getElementById('editRoleSubmitBtn');
+      var submitBtn = document.getElementById('submitBtn') || document.getElementById('editRoleSubmitBtn');
       setBtnLoading(submitBtn, true, 'جاري الحفظ...');
 
+      var nameEl = document.getElementById('name') || document.getElementById('roleNameInput');
+      var descEl = document.getElementById('description') || document.getElementById('roleDescInput');
+      var isActiveEl = document.getElementById('isActive') || document.getElementById('roleIsActiveInput');
+
       var payload = {
-        name: (document.getElementById('roleNameInput') || {}).value?.trim(),
-        description: (document.getElementById('roleDescInput') || {}).value?.trim() || null,
-        isActive: (document.getElementById('roleIsActiveInput') || {}).checked ?? true,
+        name: (nameEl && nameEl.value) ? nameEl.value.trim() : '',
+        description: (descEl && descEl.value && descEl.value.trim()) ? descEl.value.trim() : null,
+        isActive: isActiveEl ? isActiveEl.checked : true,
       };
 
       window.erpFetch('/api/system/roles/' + encodeURIComponent(roleId), {
