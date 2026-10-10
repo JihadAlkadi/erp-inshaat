@@ -87,6 +87,9 @@ export const PERMISSION_SCOPE_CAPABILITIES: Record<string, AccessScopePresetType
   'production.order.approve': [
     AccessScopePreset.ALL,
   ],
+  'production.order.update_priority': [
+    AccessScopePreset.ALL,
+  ],
 };
 
 export class AccessScopeCapabilityRegistry {

@@ -1,5 +1,6 @@
-import { IsOptional, IsString, IsInt, Min, Max } from 'class-validator';
+import { IsOptional, IsString, IsInt, Min, Max, IsEnum } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { ProductionOrderPriority } from '../production-order.entity.js';
 
 export class ListProductionOrdersQueryDto {
   @IsOptional()
@@ -21,4 +22,8 @@ export class ListProductionOrdersQueryDto {
     typeof value === 'string' ? value.trim() : value
   )
   search?: string;
+
+  @IsOptional()
+  @IsEnum(ProductionOrderPriority, { message: 'يجب اختيار أولوية صالحة للفلترة' })
+  priority?: ProductionOrderPriority;
 }

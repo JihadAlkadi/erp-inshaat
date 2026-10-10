@@ -1,6 +1,6 @@
 import { DataSource, EntityManager, Repository, IsNull, In, Not } from 'typeorm';
 import { AppDataSource } from '../../../database/data-source.js';
-import { ProductionOrderEntity, ProductionOrderStatus } from './production-order.entity.js';
+import { ProductionOrderEntity, ProductionOrderStatus, ProductionOrderPriority } from './production-order.entity.js';
 import { ProductionOrderSequenceEntity } from './production-order-sequence.entity.js';
 import { ProductionOrderLineEntity } from '../order-line/production-order-line.entity.js';
 import { ProductionOrderLinePatternSelectionEntity } from '../order-line-pattern-selection/production-order-line-pattern-selection.entity.js';
@@ -23,6 +23,7 @@ import {
 import { ProductionOrderLineDto } from '../order-line/production-order-line.types.js';
 import { CreateProductionOrderDto } from './dto/create-production-order.dto.js';
 import { UpdateProductionOrderDto } from './dto/update-production-order.dto.js';
+import { UpdateProductionOrderPriorityDto } from './dto/update-production-order-priority.dto.js';
 import { ListProductionOrdersQueryDto } from './dto/list-production-orders-query.dto.js';
 import { AddProductionOrderLineDto } from '../order-line/dto/add-production-order-line.dto.js';
 import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
@@ -99,6 +100,7 @@ export class ProductionOrderService {
       const order = orderRepo.create({
         orderNumber,
         status: ProductionOrderStatus.DRAFT,
+        priority: dto.priority ?? ProductionOrderPriority.NORMAL,
         description: dto.description?.trim() || null,
         notes: dto.notes?.trim() || null,
         createdByUserId: userId,
@@ -132,7 +134,25 @@ export class ProductionOrderService {
       qb.andWhere('(o.order_number LIKE :s OR o.description LIKE :s)', { s });
     }
 
-    qb.orderBy('o.created_at', 'DESC').skip(skip).take(limit);
+    if (query.priority) {
+      qb.andWhere('o.priority = :priority', { priority: query.priority });
+    }
+
+    qb.addSelect(
+      `CASE o.priority
+        WHEN 'CRITICAL' THEN 4
+        WHEN 'HIGH' THEN 3
+        WHEN 'NORMAL' THEN 2
+        WHEN 'LOW' THEN 1
+        ELSE 0
+      END`,
+      'priority_rank'
+    )
+      .orderBy('priority_rank', 'DESC')
+      .addOrderBy('o.created_at', 'ASC')
+      .addOrderBy('o.id', 'ASC')
+      .skip(skip)
+      .take(limit);
 
     const [orders, total] = await qb.getManyAndCount();
     const totalPages = Math.ceil(total / limit) || 1;
@@ -166,6 +186,7 @@ export class ProductionOrderService {
         id: o.id,
         orderNumber: o.orderNumber,
         status: o.status,
+        priority: o.priority,
         description: o.description,
         notes: o.notes,
         approvedAt: o.approvedAt,
@@ -196,6 +217,10 @@ export class ProductionOrderService {
     if (query.search && query.search.trim()) {
       const s = `%${query.search.trim()}%`;
       summaryQb.andWhere('(o.order_number LIKE :s OR o.description LIKE :s)', { s });
+    }
+
+    if (query.priority) {
+      summaryQb.andWhere('o.priority = :priority', { priority: query.priority });
     }
 
     const summaryRaw = await summaryQb
@@ -250,6 +275,29 @@ export class ProductionOrderService {
 
       await manager.save(order);
 
+      return this.getOrderByIdInternal(orderId, manager);
+    });
+  }
+
+  /**
+   * Updates production order priority independently of status (works for DRAFT and APPROVED).
+   * Does NOT mutate lines, header descriptions, or approval status.
+   */
+  async updatePriority(
+    orderId: string,
+    dto: UpdateProductionOrderPriorityDto
+  ): Promise<ProductionOrderDto> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Lock existing active order pessimistically (not restricted to DRAFT)
+      const order = await this.guardService.lockExistingOrder(orderId, manager);
+
+      // 2. Assign priority
+      order.priority = dto.priority;
+
+      // 3. Save
+      await manager.save(order);
+
+      // 4. Return refreshed order DTO
       return this.getOrderByIdInternal(orderId, manager);
     });
   }
@@ -1789,6 +1837,7 @@ export class ProductionOrderService {
         id: order.id,
         orderNumber: order.orderNumber,
         status: order.status,
+        priority: order.priority,
         description: order.description,
         notes: order.notes,
         approvedAt: order.approvedAt,
@@ -1973,6 +2022,7 @@ export class ProductionOrderService {
       id: order.id,
       orderNumber: order.orderNumber,
       status: order.status,
+      priority: order.priority,
       description: order.description,
       notes: order.notes,
       approvedAt: order.approvedAt || null,

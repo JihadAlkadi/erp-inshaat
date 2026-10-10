@@ -3,6 +3,7 @@ import { ApiResponse } from '../../../common/responses/api-response.js';
 import { ProductionOrderService, productionOrderService } from './production-order.service.js';
 import { CreateProductionOrderDto } from './dto/create-production-order.dto.js';
 import { UpdateProductionOrderDto } from './dto/update-production-order.dto.js';
+import { UpdateProductionOrderPriorityDto } from './dto/update-production-order-priority.dto.js';
 import { ListProductionOrdersQueryDto } from './dto/list-production-orders-query.dto.js';
 import { AddProductionOrderLineDto } from '../order-line/dto/add-production-order-line.dto.js';
 import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
@@ -56,6 +57,17 @@ export class ProductionOrderController {
       const dto = req.body as UpdateProductionOrderDto;
       const order = await this.orderService.updateOrder(orderId as string, dto);
       res.status(200).json(ApiResponse.success(order, 'تم تحديث بيانات طلب الإنتاج بنجاح'));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updatePriority = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { orderId } = req.params;
+      const dto = req.body as UpdateProductionOrderPriorityDto;
+      const order = await this.orderService.updatePriority(orderId as string, dto);
+      res.status(200).json(ApiResponse.success(order, 'تم تحديث أولوية أمر الإنتاج بنجاح'));
     } catch (error) {
       next(error);
     }

@@ -8,6 +8,7 @@ import { validateQueryDto } from '../../../common/middleware/validate-query-dto.
 import { validateUuidParam } from '../../../common/middleware/validate-uuid-param.middleware.js';
 import { CreateProductionOrderDto } from './dto/create-production-order.dto.js';
 import { UpdateProductionOrderDto } from './dto/update-production-order.dto.js';
+import { UpdateProductionOrderPriorityDto } from './dto/update-production-order-priority.dto.js';
 import { ListProductionOrdersQueryDto } from './dto/list-production-orders-query.dto.js';
 import { AddProductionOrderLineDto } from '../order-line/dto/add-production-order-line.dto.js';
 import { BatchAddProductionOrderLinesDto } from '../order-line/dto/batch-add-production-order-lines.dto.js';
@@ -54,6 +55,15 @@ productionOrderApiRouter.get(
   requirePermission(SystemPermission.PRODUCTION_ORDER_VIEW),
   validateUuidParam('orderId'),
   productionOrderController.getOrderById
+);
+
+// PATCH /api/production/orders/:orderId/priority - Update production order priority
+productionOrderApiRouter.patch(
+  '/:orderId/priority',
+  requirePermission(SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY),
+  validateUuidParam('orderId'),
+  validateDto(UpdateProductionOrderPriorityDto),
+  productionOrderController.updatePriority
 );
 
 // PATCH /api/production/orders/:orderId - Update draft order header

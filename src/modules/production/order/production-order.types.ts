@@ -1,6 +1,7 @@
 import { ProductionOrderLineDto } from '../order-line/production-order-line.types.js';
+import { ProductionOrderPriority } from './production-order.entity.js';
 
-export { ProductionOrderStatus } from './production-order.entity.js';
+export { ProductionOrderStatus, ProductionOrderPriority } from './production-order.entity.js';
 
 export interface ProductionOrderUserSummaryDto {
   id: string;
@@ -16,6 +17,7 @@ export interface ProductionOrderDto {
   id: string;
   orderNumber: string;
   status: string;
+  priority: ProductionOrderPriority;
   description: string | null;
   notes: string | null;
   approvedAt?: Date | null;
@@ -39,6 +41,7 @@ export interface ProductionOrderListItemDto {
   id: string;
   orderNumber: string;
   status: string;
+  priority: ProductionOrderPriority;
   description: string | null;
   notes: string | null;
   approvedAt?: Date | null;

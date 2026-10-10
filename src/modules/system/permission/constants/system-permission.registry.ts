@@ -215,6 +215,11 @@ export const SYSTEM_PERMISSION_DEFINITIONS: Record<SystemPermission, PermissionD
     description: 'اعتماد أوامر الإنتاج الجاهزة وإعادتها للمسودة',
     module: 'production',
   },
+  [SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY]: {
+    name: SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY,
+    description: 'تغيير أولوية أمر الإنتاج',
+    module: 'production',
+  },
 };
 
 export const ALL_SYSTEM_PERMISSION_DEFINITIONS: PermissionDefinition[] = Object.values(

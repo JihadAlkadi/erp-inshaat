@@ -18,6 +18,13 @@ export enum ProductionOrderStatus {
   APPROVED = 'APPROVED',
 }
 
+export enum ProductionOrderPriority {
+  CRITICAL = 'CRITICAL',
+  HIGH = 'HIGH',
+  NORMAL = 'NORMAL',
+  LOW = 'LOW',
+}
+
 @Entity('production_order')
 export class ProductionOrderEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -33,6 +40,14 @@ export class ProductionOrderEntity {
     default: ProductionOrderStatus.DRAFT,
   })
   status!: ProductionOrderStatus;
+
+  @Index('IDX_production_order_priority')
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: ProductionOrderPriority.NORMAL,
+  })
+  priority!: ProductionOrderPriority;
 
   @Column({ type: 'text', nullable: true })
   description!: string | null;

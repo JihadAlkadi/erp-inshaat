@@ -70,6 +70,28 @@ export class ProductionOrderGuardService {
   }
 
   /**
+   * Locks active order row pessimistically (FOR UPDATE) within the current transaction
+   * without requiring DRAFT status (used for administrative updates such as priority).
+   * Works for both DRAFT and APPROVED orders.
+   */
+  async lockExistingOrder(
+    orderId: string,
+    manager: EntityManager
+  ): Promise<ProductionOrderEntity> {
+    const repo = manager.getRepository(ProductionOrderEntity);
+    const order = await repo.findOne({
+      where: { id: orderId, deletedAt: IsNull() },
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (!order) {
+      throw new NotFoundError('طلب الإنتاج غير موجود أو تم أرشفته', 'PRODUCTION_ORDER_NOT_FOUND');
+    }
+
+    return order;
+  }
+
+  /**
    * Guards line access: ensures line exists, belongs to order, and is NOT archived.
    */
   async requireExistingLine(
