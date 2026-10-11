@@ -85,6 +85,10 @@ export class ProductionOrderWebController {
         currentUser,
         SystemPermission.PRODUCTION_ORDER_APPROVE
       );
+      const canUpdatePriority = await authorizationService.hasPermission(
+        currentUser,
+        SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY
+      );
 
       res.render('dashboard/production/orders/show', {
         layout: 'dashboard/production/layout',
@@ -97,6 +101,7 @@ export class ProductionOrderWebController {
         user: currentUser,
         canUpdateOrder,
         canApproveOrder,
+        canUpdatePriority,
         order,
         readiness,
         initialOrderJson: safeJsonStringify(order),
@@ -128,6 +133,10 @@ export class ProductionOrderWebController {
         currentUser,
         SystemPermission.PRODUCTION_ORDER_DELETE
       );
+      const canUpdatePriority = await authorizationService.hasPermission(
+        currentUser,
+        SystemPermission.PRODUCTION_ORDER_UPDATE_PRIORITY
+      );
 
       res.render('dashboard/production/orders/edit', {
         layout: 'dashboard/production/layout',
@@ -140,6 +149,7 @@ export class ProductionOrderWebController {
         user: currentUser,
         canUpdateOrder,
         canDeleteOrder,
+        canUpdatePriority,
         order,
         initialOrderJson: safeJsonStringify(order),
       });

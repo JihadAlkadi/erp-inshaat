@@ -33,6 +33,23 @@
               <i class="fa-solid fa-file-pen me-1"></i> مسودة
             </span>
           <% } %>
+          <% if (order.priority === 'CRITICAL') { %>
+            <span class="badge bg-danger-subtle text-danger-emphasis px-3 py-1 rounded-pill">
+              <i class="fa-solid fa-flag text-danger me-1"></i> أولوية حرجة
+            </span>
+          <% } else if (order.priority === 'HIGH') { %>
+            <span class="badge bg-warning-subtle text-warning-emphasis px-3 py-1 rounded-pill">
+              <i class="fa-solid fa-flag text-warning me-1"></i> أولوية عالية
+            </span>
+          <% } else if (order.priority === 'LOW') { %>
+            <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-1 rounded-pill">
+              <i class="fa-solid fa-flag text-secondary me-1"></i> أولوية منخفضة
+            </span>
+          <% } else { %>
+            <span class="badge bg-primary-subtle text-primary-emphasis px-3 py-1 rounded-pill">
+              <i class="fa-solid fa-flag text-primary me-1"></i> أولوية عادية
+            </span>
+          <% } %>
           <% if (typeof readiness !== 'undefined' && readiness) { %>
             <% if (readiness.ready) { %>
               <span class="badge bg-success-subtle text-success px-3 py-1 rounded-pill">
@@ -92,6 +109,31 @@
             <p class="text-dark mb-3 fs-6" style="line-height: 1.6;">
               <%= order.description || 'لا يوجد وصف محدد لهذا الطلب.' %>
             </p>
+
+            <!-- Priority Administrative Panel -->
+            <div class="p-3 rounded-3 bg-light border border-light-subtle d-flex align-items-center justify-content-between gap-3 mb-3 flex-wrap">
+              <div class="d-flex align-items-center gap-2">
+                <i class="fa-solid fa-flag text-primary"></i>
+                <span class="small fw-bold text-dark">أولوية أمر الإنتاج:</span>
+                <span class="badge <%= order.priority === 'CRITICAL' ? 'bg-danger text-white' : order.priority === 'HIGH' ? 'bg-warning text-dark' : order.priority === 'LOW' ? 'bg-secondary text-white' : 'bg-primary text-white' %> px-2 py-1">
+                  <%= order.priority === 'CRITICAL' ? 'حرجة' : order.priority === 'HIGH' ? 'عالية' : order.priority === 'LOW' ? 'منخفضة' : 'عادية' %>
+                </span>
+              </div>
+              <% if (typeof canUpdatePriority !== 'undefined' && canUpdatePriority) { %>
+                <div class="d-flex align-items-center gap-2">
+                  <select class="form-select form-select-sm" id="changePrioritySelect" style="width: auto; min-width: 130px;" data-current-priority="<%= order.priority %>">
+                    <option value="CRITICAL" <%= order.priority === 'CRITICAL' ? 'selected' : '' %>>حرجة</option>
+                    <option value="HIGH" <%= order.priority === 'HIGH' ? 'selected' : '' %>>عالية</option>
+                    <option value="NORMAL" <%= order.priority === 'NORMAL' ? 'selected' : '' %>>عادية</option>
+                    <option value="LOW" <%= order.priority === 'LOW' ? 'selected' : '' %>>منخفضة</option>
+                  </select>
+                  <button type="button" id="updatePriorityBtn" class="btn btn-primary btn-sm px-3 d-inline-flex align-items-center gap-1" style="border-radius: 6px;">
+                    <i class="fa-solid fa-check"></i>
+                    <span>تغيير الأولوية</span>
+                  </button>
+                </div>
+              <% } %>
+            </div>
 
             <% if (order.notes) { %>
               <div class="p-3 rounded-3 bg-light border border-light-subtle text-muted small mb-3">

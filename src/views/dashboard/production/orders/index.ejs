@@ -99,6 +99,15 @@
           <input type="text" id="orderSearchInput" class="form-control border-start-0 bg-light" placeholder="البحث برقم الطلب أو الوصف..." autocomplete="off">
         </div>
       </div>
+      <div class="col-12 col-md-4 col-lg-3">
+        <select id="orderPriorityFilter" class="form-select bg-light" aria-label="تصفية حسب الأولوية">
+          <option value="">كل الأولويات</option>
+          <option value="CRITICAL">حرجة</option>
+          <option value="HIGH">عالية</option>
+          <option value="NORMAL">عادية</option>
+          <option value="LOW">منخفضة</option>
+        </select>
+      </div>
       <div class="col-auto ms-auto">
         <button id="refreshOrdersBtn" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2" style="border-radius: 8px;">
           <i class="fa-solid fa-arrows-rotate"></i>
@@ -116,6 +125,7 @@
       <thead class="bg-light border-bottom">
         <tr>
           <th class="py-3 px-3 text-secondary text-nowrap fw-bold" style="font-size: 0.85rem;">رقم الطلب</th>
+          <th class="py-3 px-3 text-secondary text-nowrap fw-bold" style="font-size: 0.85rem;">الأولوية</th>
           <th class="py-3 px-3 text-secondary text-nowrap fw-bold" style="font-size: 0.85rem;">الحالة</th>
           <th class="py-3 px-3 text-secondary text-nowrap fw-bold" style="font-size: 0.85rem;">الوصف</th>
           <th class="py-3 px-3 text-secondary text-nowrap fw-bold text-center" style="font-size: 0.85rem;">عدد البنود</th>
@@ -127,7 +137,7 @@
       </thead>
       <tbody id="ordersTableBody">
         <tr>
-          <td colspan="8" class="text-center py-5 text-muted">
+          <td colspan="9" class="text-center py-5 text-muted">
             <div class="spinner-border text-primary spinner-border-sm me-2" role="status"></div>
             جاري تحميل أوامر الإنتاج...
           </td>

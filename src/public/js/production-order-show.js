@@ -136,4 +136,46 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
+
+  // 3. Priority Update Handler (Admin mutation, independent of DRAFT/APPROVED lifecycle)
+  const updatePriorityBtn = document.getElementById('updatePriorityBtn');
+  const prioritySelect = document.getElementById('changePrioritySelect');
+  if (updatePriorityBtn && prioritySelect) {
+    updatePriorityBtn.addEventListener('click', async () => {
+      const selectedPriority = prioritySelect.value;
+      const currentPriority = prioritySelect.dataset.currentPriority;
+      if (selectedPriority === currentPriority) {
+        return;
+      }
+
+      updatePriorityBtn.disabled = true;
+      const originalHtml = updatePriorityBtn.innerHTML;
+      updatePriorityBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> جاري الحفظ...';
+
+      try {
+        const res = await window.erpFetch(`/api/production/orders/${orderId}/priority`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ priority: selectedPriority }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+          throw new Error(getErrorMessage(json, 'فشل تحديث أولوية أمر الإنتاج'));
+        }
+
+        sessionStorage.setItem('pendingToast', 'تم تحديث أولوية أمر الإنتاج بنجاح');
+        window.location.reload();
+      } catch (err) {
+        updatePriorityBtn.disabled = false;
+        updatePriorityBtn.innerHTML = originalHtml;
+        Swal.fire({
+          icon: 'error',
+          title: 'تعذر تحديث أولوية أمر الإنتاج',
+          text: err.message || 'حدث خطأ أثناء تحديث الأولوية',
+          confirmButtonText: 'حسناً',
+          confirmButtonColor: '#0984E3',
+        });
+      }
+    });
+  }
 });
