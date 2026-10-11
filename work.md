@@ -45,8 +45,9 @@
       - تضيف العمود `priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL'` إلى جدول `production_order`.
       - قيد فحص على مستوى قاعدة البيانات: `CHK_production_order_priority CHECK (priority IN ('CRITICAL', 'HIGH', 'NORMAL', 'LOW'))`.
       - فهرس أداء للفلترة: `IDX_production_order_priority (priority)`.
-      - جميع السجلات القائمة في قاعدة البيانات تتحول تلقائياً وبأمان إلى `NORMAL`.
-      - التراجع عن الهجرة (Down migration) يعكس التعديل بأمان بإسقاط القيد والفهرس والعمود.
+      - جميع السجلات القائمة في قاعدة البيانات تتحول تلقائياً وبأمان إلى `NORMAL` مع التحقق الصارم من عدم وجود قيم غير معروفة (Fail Loudly).
+      - تعافٍ مستقل للمكونات (Independent Invariant Recovery) للعمود وقيد الفحص والفهرس لتفادي الأعطال الجزئية في DDL.
+      - التراجع عن الهجرة (Down migration) يعكس التعديل بأمان وبشكل متسامح مع الحالات الجزئية.
     - الإنشاء والتحديث الإداري للأولوية:
       - أثناء الإنشاء: يقبل `CreateProductionOrderDto` حقلاً اختيارياً `priority` ويتحقق منه عبر `@IsEnum(ProductionOrderPriority)`، وفي حال عدم إرساله يُضبط افتراضياً على `NORMAL` على مستوى الـ Service والـ Database.
       - حظر إدراج الأولوية في `UpdateProductionOrderDto`: تعديل الترويسة العام مخصص للمسودات فقط (`DRAFT` only) ولا يقبل الأولوية إطلاقاً لمنع المساس بها أو تقييدها بحالة المسودة.

@@ -3371,76 +3371,300 @@ describe('Phase 1 — Production Order Drafting & Pattern Selection Foundation',
     });
 
     // ----------------------------------------------------
-    // G. MIGRATION 0016 STRUCTURE & REVERSIBILITY
+    // G. MIGRATION 0016 STRUCTURE, HARDENED RECOVERY & REVERSIBILITY
     // ----------------------------------------------------
-    it('Migration 0016: AddProductionOrderPriority1710000000016 schema invariants and reversibility', async () => {
-      const migration = new AddProductionOrderPriority1710000000016();
-      assert.equal(migration.name, 'AddProductionOrderPriority1710000000016');
+    function createMockMigrationRunner(initialState: {
+      tableExists?: boolean;
+      hasPriorityColumn?: boolean;
+      columnType?: string;
+      hasCheckConstraint?: boolean;
+      hasPriorityIndex?: boolean;
+      ordersWithInvalidPriority?: Array<{ id: string; order_number: string; priority: string }>;
+      failDropConstraint?: boolean;
+      failDropCheck?: boolean;
+    }) {
+      const state = {
+        tableExists: initialState.tableExists ?? true,
+        hasPriorityColumn: initialState.hasPriorityColumn ?? false,
+        columnType: initialState.columnType || 'varchar',
+        hasCheckConstraint: initialState.hasCheckConstraint ?? false,
+        hasPriorityIndex: initialState.hasPriorityIndex ?? false,
+        ordersWithInvalidPriority: initialState.ordersWithInvalidPriority || [],
+        failDropConstraint: initialState.failDropConstraint ?? false,
+        failDropCheck: initialState.failDropCheck ?? false,
+      };
 
-      const executedQueries: string[] = [];
       const addedColumns: any[] = [];
       const createdIndices: any[] = [];
       const droppedColumns: string[] = [];
       const droppedIndices: string[] = [];
+      const executedQueries: string[] = [];
 
-      const mockQueryRunner: any = {
-        getTable: async () => ({
-          findColumnByName: (name: string) => null,
-          indices: [{ name: 'IDX_production_order_priority' }],
-        }),
+      const runner: any = {
+        state,
+        addedColumns,
+        createdIndices,
+        droppedColumns,
+        droppedIndices,
+        executedQueries,
+        getTable: async (name: string) => {
+          if (!state.tableExists) return null;
+          return {
+            name,
+            findColumnByName: (colName: string) => {
+              if (colName === 'priority' && state.hasPriorityColumn) {
+                return { name: 'priority', type: state.columnType };
+              }
+              return null;
+            },
+            indices: state.hasPriorityIndex
+              ? [{ name: 'IDX_production_order_priority', columnNames: ['priority'] }]
+              : [],
+          };
+        },
         addColumn: async (table: string, col: any) => {
           addedColumns.push({ table, col });
+          state.hasPriorityColumn = true;
         },
         createIndex: async (table: string, idx: any) => {
           createdIndices.push({ table, idx });
+          state.hasPriorityIndex = true;
         },
         dropIndex: async (table: string, idx: any) => {
           droppedIndices.push(idx.name || idx);
+          state.hasPriorityIndex = false;
         },
         dropColumn: async (table: string, colName: string) => {
           droppedColumns.push(colName);
+          state.hasPriorityColumn = false;
         },
-        query: async (q: string) => {
+        query: async (q: string, params?: any[]) => {
           executedQueries.push(q);
+          if (q.includes('information_schema.TABLE_CONSTRAINTS')) {
+            return [{ cnt: state.hasCheckConstraint ? '1' : '0' }];
+          }
+          if (q.includes('ALTER TABLE `production_order` ADD CONSTRAINT `CHK_production_order_priority`')) {
+            state.hasCheckConstraint = true;
+            return [];
+          }
+          if (q.includes('ALTER TABLE `production_order` DROP CONSTRAINT `CHK_production_order_priority`')) {
+            if (state.failDropConstraint) {
+              throw new Error('MySQL version does not support DROP CONSTRAINT');
+            }
+            state.hasCheckConstraint = false;
+            return [];
+          }
+          if (q.includes('ALTER TABLE `production_order` DROP CHECK `CHK_production_order_priority`')) {
+            if (state.failDropCheck) {
+              throw new Error('Syntax error dropping check');
+            }
+            state.hasCheckConstraint = false;
+            return [];
+          }
+          if (q.includes('WHERE `priority` NOT IN')) {
+            return state.ordersWithInvalidPriority;
+          }
+          return [];
         },
       };
 
-      // Execute up
-      await migration.up(mockQueryRunner);
-      assert.equal(addedColumns.length, 1);
-      assert.equal(addedColumns[0].col.name, 'priority');
-      assert.equal(addedColumns[0].col.default, "'NORMAL'");
-      assert.equal(addedColumns[0].col.isNullable, false);
+      return runner;
+    }
 
-      const hasUpdate = executedQueries.some((q) => q.includes("UPDATE `production_order` SET `priority` = 'NORMAL'"));
-      assert.ok(hasUpdate, 'Must set existing rows to NORMAL');
+    it('Migration 0016: Scenario A — Clean Up creates column, CHECK constraint, and index', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+      assert.equal(migration.name, 'AddProductionOrderPriority1710000000016');
 
-      const hasCheck = executedQueries.some((q) => q.includes("CHK_production_order_priority") && q.includes("'CRITICAL', 'HIGH', 'NORMAL', 'LOW'"));
-      assert.ok(hasCheck, 'Must add CHECK constraint allowing exactly the 4 priorities');
+      const runner = createMockMigrationRunner({
+        hasPriorityColumn: false,
+        hasCheckConstraint: false,
+        hasPriorityIndex: false,
+      });
 
-      assert.equal(createdIndices.length, 1);
-      assert.equal(createdIndices[0].idx.name, 'IDX_production_order_priority');
+      await migration.up(runner);
 
-      // Execute down
-      const mockDownRunner: any = {
-        getTable: async () => ({
-          findColumnByName: (name: string) => ({ name: 'priority' }),
-          indices: [{ name: 'IDX_production_order_priority' }],
-        }),
-        dropIndex: async (table: string, idx: any) => {
-          droppedIndices.push(idx.name || idx);
+      assert.equal(runner.addedColumns.length, 1);
+      assert.equal(runner.addedColumns[0].col.name, 'priority');
+      assert.equal(runner.addedColumns[0].col.default, "'NORMAL'");
+      assert.equal(runner.addedColumns[0].col.isNullable, false);
+
+      const hasUpdate = runner.executedQueries.some((q) => q.includes("UPDATE `production_order` SET `priority` = 'NORMAL'"));
+      assert.ok(hasUpdate, 'Must normalize existing empty/null rows to NORMAL');
+
+      assert.ok(runner.state.hasCheckConstraint, 'Must have CHECK constraint after up');
+      assert.equal(runner.createdIndices.length, 1);
+      assert.equal(runner.createdIndices[0].idx.name, 'IDX_production_order_priority');
+      assert.ok(runner.state.hasPriorityIndex, 'Must have index after up');
+    });
+
+    it('Migration 0016: Scenario B — Partial State (column only) recovers missing CHECK and index without recreating column', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+      const runner = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: false,
+        hasPriorityIndex: false,
+      });
+
+      await migration.up(runner);
+
+      assert.equal(runner.addedColumns.length, 0, 'Must NOT recreate column if it already exists');
+      assert.ok(runner.state.hasCheckConstraint, 'Must create missing CHECK constraint');
+      assert.equal(runner.createdIndices.length, 1, 'Must create missing index');
+      assert.equal(runner.createdIndices[0].idx.name, 'IDX_production_order_priority');
+    });
+
+    it('Migration 0016: Scenario C — Partial State (column + CHECK) recovers missing index without duplicating CHECK', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+      const runner = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: true,
+        hasPriorityIndex: false,
+      });
+
+      await migration.up(runner);
+
+      assert.equal(runner.addedColumns.length, 0, 'Must not recreate column');
+      const addCheckQueries = runner.executedQueries.filter((q) => q.includes('ADD CONSTRAINT `CHK_production_order_priority`'));
+      assert.equal(addCheckQueries.length, 0, 'Must not recreate existing CHECK');
+      assert.equal(runner.createdIndices.length, 1, 'Must create missing index');
+    });
+
+    it('Migration 0016: Scenario D — Partial State (column + index) recovers missing CHECK without duplicating index', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+      const runner = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: false,
+        hasPriorityIndex: true,
+      });
+
+      await migration.up(runner);
+
+      assert.equal(runner.addedColumns.length, 0, 'Must not recreate column');
+      assert.equal(runner.createdIndices.length, 0, 'Must not recreate existing index');
+      assert.ok(runner.state.hasCheckConstraint, 'Must create missing CHECK constraint');
+    });
+
+    it('Migration 0016: Scenario E — Fully Applied state is idempotent and creates no duplicates', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+      const runner = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: true,
+        hasPriorityIndex: true,
+      });
+
+      await migration.up(runner);
+
+      assert.equal(runner.addedColumns.length, 0, 'Must not add column');
+      assert.equal(runner.createdIndices.length, 0, 'Must not add index');
+      const addCheckQueries = runner.executedQueries.filter((q) => q.includes('ADD CONSTRAINT `CHK_production_order_priority`'));
+      assert.equal(addCheckQueries.length, 0, 'Must not add CHECK');
+    });
+
+    it('Migration 0016: Scenario F — Down from full state drops CHECK, index, and column', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+      const runner = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: true,
+        hasPriorityIndex: true,
+      });
+
+      await migration.down(runner);
+
+      assert.ok(!runner.state.hasCheckConstraint, 'Must drop CHECK constraint');
+      assert.ok(runner.droppedIndices.includes('IDX_production_order_priority'), 'Must drop index');
+      assert.ok(runner.droppedColumns.includes('priority'), 'Must drop column');
+    });
+
+    it('Migration 0016: Scenario G — Down safely handles partial states and does not swallow unexpected errors', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+
+      // Case 1: Only column present (CHECK and index already missing)
+      const runner1 = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: false,
+        hasPriorityIndex: false,
+      });
+      await migration.down(runner1);
+      assert.equal(runner1.droppedIndices.length, 0, 'Should not attempt to drop missing index');
+      assert.ok(runner1.droppedColumns.includes('priority'), 'Should drop priority column');
+
+      // Case 2: MariaDB/MySQL 8.0.16 fallback: DROP CONSTRAINT fails, falls back to DROP CHECK
+      const runner2 = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: true,
+        hasPriorityIndex: true,
+        failDropConstraint: true, // triggers fallback to DROP CHECK
+      });
+      await migration.down(runner2);
+      assert.ok(!runner2.state.hasCheckConstraint, 'Fallback DROP CHECK must succeed');
+
+      // Case 3: Genuine unexpected failure in dropping CHECK is NOT masked
+      const runner3 = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: true,
+        hasPriorityIndex: true,
+        failDropConstraint: true,
+        failDropCheck: true, // both fail -> genuine unexpected error
+      });
+      await assert.rejects(
+        async () => {
+          await migration.down(runner3);
         },
-        dropColumn: async (table: string, colName: string) => {
-          droppedColumns.push(colName);
-        },
-        query: async (q: string) => {
-          executedQueries.push(q);
-        },
-      };
+        /Migration 1710000000016 down failed to drop CHECK constraint/
+      );
+    });
 
-      await migration.down(mockDownRunner);
-      assert.ok(droppedIndices.includes('IDX_production_order_priority'), 'Must drop index in down');
-      assert.ok(droppedColumns.includes('priority'), 'Must drop priority column in down');
+    it('Migration 0016: Scenario H — Invalid business data throws and is never silently rewritten', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+      const runner = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        hasCheckConstraint: false,
+        hasPriorityIndex: false,
+        ordersWithInvalidPriority: [
+          { id: 'bad-ord-1', order_number: 'PO-000999', priority: 'URGENT' },
+          { id: 'bad-ord-2', order_number: 'PO-000998', priority: '1' },
+        ],
+      });
+
+      await assert.rejects(
+        async () => {
+          await migration.up(runner);
+        },
+        (err: any) => {
+          return (
+            err instanceof Error &&
+            err.message.includes('Migration 1710000000016 up failed: Found 2 production orders with invalid priority values') &&
+            err.message.includes('PO-000999') &&
+            err.message.includes('URGENT') &&
+            err.message.includes('PO-000998')
+          );
+        }
+      );
+    });
+
+    it('Migration 0016: Fails loudly if base table does not exist or column type is incompatible', async () => {
+      const migration = new AddProductionOrderPriority1710000000016();
+
+      // Missing base table
+      const runnerNoTable = createMockMigrationRunner({ tableExists: false });
+      await assert.rejects(
+        async () => {
+          await migration.up(runnerNoTable);
+        },
+        /Base table 'production_order' does not exist/
+      );
+
+      // Incompatible column type
+      const runnerBadType = createMockMigrationRunner({
+        hasPriorityColumn: true,
+        columnType: 'int',
+      });
+      await assert.rejects(
+        async () => {
+          await migration.up(runnerBadType);
+        },
+        /Column 'priority' already exists but has incompatible type 'int'/
+      );
     });
 
     // ----------------------------------------------------
